@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>RevitBridge</AssemblyName>
+    <RootNamespace>RevitBridge</RootNamespace>
+    <OutputType>WinExe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="RevitAPI" />
+    <Reference Include="RevitAPIUI" />
+  </ItemGroup>
+</Project>

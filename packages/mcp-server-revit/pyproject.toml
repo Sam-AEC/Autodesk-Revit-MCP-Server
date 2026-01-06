@@ -1,0 +1,23 @@
+[project]
+name = "revit-mcp-server"
+version = "0.1.0"
+description = "Mockable MCP server exporting 25 Revit tools"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.5",
+    "pydantic-settings>=1.3",
+    "httpx>=0.24",
+    "python-dotenv>=1.0",
+    "pytest>=8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.0",
+    "mypy>=1.8",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
