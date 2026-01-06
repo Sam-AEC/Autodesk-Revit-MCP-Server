@@ -7,11 +7,17 @@
 <br/>
 
 <p align="center">
-  <img src="https://cdn.worldvectorlogo.com/logos/autodesk-revit.svg" alt="Revit" height="60"/>
+  <img src="https://raw.githubusercontent.com/modelcontextprotocol/docs/main/logo/light.svg" alt="MCP" height="60"/>
   &nbsp;&nbsp;&nbsp;
-  <span style="font-size: 2em;">→</span>
+  <span style="font-size: 2em;">+</span>
+  &nbsp;&nbsp;&nbsp;
+  <img src="https://seeklogo.com/images/A/autodesk-revit-logo-0BEB642AE2-seeklogo.com.png" alt="Revit" height="60"/>
+  &nbsp;&nbsp;&nbsp;
+  <span style="font-size: 2em;">=</span>
   &nbsp;&nbsp;&nbsp;
   <img src="https://www.vectorlogo.zone/logos/python/python-icon.svg" alt="Python" height="60"/>
+  &nbsp;&nbsp;&nbsp;
+  <span style="font-size: 2em;">+</span>
   &nbsp;&nbsp;&nbsp;
   <img src="https://cdn.worldvectorlogo.com/logos/c--4.svg" alt="C#" height="60"/>
 </p>
