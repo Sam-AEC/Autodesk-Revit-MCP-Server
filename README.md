@@ -11,7 +11,7 @@
   &nbsp;&nbsp;&nbsp;
   <span style="font-size: 2em;">+</span>
   &nbsp;&nbsp;&nbsp;
-  <img src="https://seeklogo.com/vector-logo/538734/autodesk-revit-icon" alt="Revit" height="60"/>
+  <img src="https://iconlogovector.com/logo/revit" alt="Revit" height="60"/>
   &nbsp;&nbsp;&nbsp;
   <span style="font-size: 2em;">=</span>
   &nbsp;&nbsp;&nbsp;
