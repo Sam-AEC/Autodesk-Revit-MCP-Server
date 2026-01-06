@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <style>
+      .logo-text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-weight: 600; }
+      .logo-primary { fill: #2563eb; }
+      .logo-secondary { fill: #1e40af; }
+    </style>
+  </defs>
+
+  <!-- MCP Symbol (left) -->
+  <circle cx="50" cy="100" r="8" class="logo-primary"/>
+  <circle cx="75" cy="80" r="6" class="logo-secondary"/>
+  <circle cx="75" cy="120" r="6" class="logo-secondary"/>
+  <line x1="50" y1="100" x2="75" y2="80" stroke="#2563eb" stroke-width="2"/>
+  <line x1="50" y1="100" x2="75" y2="120" stroke="#2563eb" stroke-width="2"/>
+
+  <!-- Bridge Symbol (center) -->
+  <path d="M 90 100 Q 100 85, 110 100" stroke="#1e40af" stroke-width="3" fill="none"/>
+  <path d="M 90 100 Q 100 115, 110 100" stroke="#2563eb" stroke-width="3" fill="none"/>
+  <line x1="90" y1="100" x2="90" y2="105" stroke="#2563eb" stroke-width="2"/>
+  <line x1="110" y1="100" x2="110" y2="105" stroke="#2563eb" stroke-width="2"/>
+
+  <!-- Revit Symbol (right) -->
+  <rect x="125" y="85" width="25" height="30" rx="2" stroke="#2563eb" stroke-width="2" fill="none"/>
+  <line x1="130" y1="95" x2="145" y2="95" stroke="#1e40af" stroke-width="2"/>
+  <line x1="130" y1="105" x2="145" y2="105" stroke="#1e40af" stroke-width="2"/>
+
+  <!-- Text -->
+  <text x="100" y="150" text-anchor="middle" class="logo-text logo-primary" font-size="18">MCP Revit Bridge</text>
+</svg>

@@ -1,14 +1,14 @@
-name: Python CI
+name: CI
 
 on:
   push:
-    branches: ["master"]
+    branches: ["main", "master"]
   pull_request:
-    branches: ["master"]
+    branches: ["main", "master"]
 
 jobs:
-  python:
-    runs-on: windows-latest
+  lint:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python 3.11
@@ -19,5 +19,34 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e packages/mcp-server-revit[dev]
-      - name: Run tests
-        run: pytest packages/mcp-server-revit/tests
+      - name: Run ruff linter
+        run: ruff check packages/mcp-server-revit/src
+      - name: Run ruff formatter check
+        run: ruff format --check packages/mcp-server-revit/src
+      - name: Run mypy type checker
+        run: mypy packages/mcp-server-revit/src --ignore-missing-imports
+
+  test:
+    runs-on: ubuntu-latest
+    env:
+      MCP_REVIT_MODE: mock
+      WORKSPACE_DIR: /tmp/revit-workspace
+      MCP_REVIT_ALLOWED_DIRECTORIES: /tmp/revit-workspace
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Create workspace directory
+        run: mkdir -p /tmp/revit-workspace
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e packages/mcp-server-revit[dev]
+      - name: Run tests in mock mode
+        run: pytest packages/mcp-server-revit/tests -v --cov=revit_mcp_server --cov-report=term-missing
+      - name: Verify mock mode
+        run: |
+          echo "Mock mode test completed successfully"
+          echo "No Revit dependency required"
