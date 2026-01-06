@@ -1,0 +1,29 @@
+# Placeholder for demo.gif
+
+This file should be replaced with an actual 6-10 second animated GIF demonstrating the MCP Revit Bridge workflow.
+
+## Recommended Demo Flow
+
+1. Terminal showing mock mode startup: `python -m revit_mcp_server`
+2. Demo client sending tool requests
+3. Output showing:
+   - Health check response
+   - Document opened
+   - Export quantities generated (CSV file)
+4. File explorer showing generated artifacts in workspace
+5. Audit log file showing request tracking
+
+## Creating the Demo GIF
+
+Use tools like:
+- **ScreenToGif** (Windows): https://www.screentogif.com/
+- **LICEcap** (Cross-platform): https://www.cockos.com/licecap/
+- **Peek** (Linux): https://github.com/phw/peek
+
+Keep file size under 2MB by:
+- Recording at 10 FPS
+- Using 640x400 resolution
+- Limiting to 8-10 seconds
+- Optimizing with tools like gifsicle
+
+Replace this placeholder file with the actual GIF before release.
