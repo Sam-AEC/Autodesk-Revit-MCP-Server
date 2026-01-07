@@ -37,7 +37,11 @@ class MCPServer:
             if not self.config.bridge_url:
                 raise ValueError("Bridge mode requires MCP_REVIT_BRIDGE_URL")
             bridge_factory = factory or (lambda url: BridgeClient(url))
-            return bridge_factory(self.config.bridge_url)
+            bridge = bridge_factory(self.config.bridge_url)
+            # Initialize bridge connection and fetch tool catalog
+            if hasattr(bridge, 'initialize'):
+                bridge.initialize()
+            return bridge
         return MockBridge()
 
     def handle_tool(self, tool_name: str, payload: dict) -> dict:

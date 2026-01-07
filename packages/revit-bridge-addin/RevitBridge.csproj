@@ -3,11 +3,28 @@
     <TargetFramework>net48</TargetFramework>
     <AssemblyName>RevitBridge</AssemblyName>
     <RootNamespace>RevitBridge</RootNamespace>
-    <OutputType>WinExe</OutputType>
+    <OutputType>Library</OutputType>
+    <RevitVersion Condition="'$(RevitVersion)'==''">2024</RevitVersion>
+    <OutputPath>bin\$(Configuration)\$(RevitVersion)\</OutputPath>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
-    <Reference Include="RevitAPI" />
-    <Reference Include="RevitAPIUI" />
+    <Reference Include="RevitAPI">
+      <HintPath Condition="'$(RevitVersion)'=='2024'">C:\Program Files\Autodesk\Revit 2024\RevitAPI.dll</HintPath>
+      <HintPath Condition="'$(RevitVersion)'=='2025'">C:\Program Files\Autodesk\Revit 2025\RevitAPI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath Condition="'$(RevitVersion)'=='2024'">C:\Program Files\Autodesk\Revit 2024\RevitAPIUI.dll</HintPath>
+      <HintPath Condition="'$(RevitVersion)'=='2025'">C:\Program Files\Autodesk\Revit 2025\RevitAPIUI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Serilog" Version="3.1.1" />
+    <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
   </ItemGroup>
 </Project>
