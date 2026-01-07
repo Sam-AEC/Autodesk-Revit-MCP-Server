@@ -11,22 +11,27 @@
    <img src="assets/logos/dotnet.svg" alt=".NET" height="36"/>
 </p>
 
-# RevitMCP: Model Context Protocol for Autodesk Revit
+# 🏗️ RevitMCP: AI-Powered Revit Automation
 
-**Production-grade MCP server enabling AI agents and automation tools to control Autodesk Revit**
+### **Production-grade MCP server enabling AI agents to control Autodesk Revit**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/)
-[![.NET Framework 4.8](https://img.shields.io/badge/.NET-4.8-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com/)
-[![Revit 2024-2025](https://img.shields.io/badge/Revit-2024--2025-0696D7?style=flat-square)](https://www.autodesk.com/products/revit)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![.NET Framework 4.8](https://img.shields.io/badge/.NET-4.8-512BD4?style=for-the-badge&logo=dotnet)](https://dotnet.microsoft.com/)
+[![Revit 2024-2025](https://img.shields.io/badge/Revit-2024--2025-0696D7?style=for-the-badge)](https://www.autodesk.com/products/revit)
 
-[Quick Start](#quick-start) • [Features](#features) • [Architecture](#architecture) • [Copilot Integration](#microsoft-copilot-studio-integration) • [Docs](#documentation)
+[![Tools](https://img.shields.io/badge/Tools-80+-00D084?style=for-the-badge&logo=revit)](docs/tools.md)
+[![Build](https://img.shields.io/badge/Build-Passing-success?style=for-the-badge&logo=github-actions)](https://github.com/Sam-AEC/Autodesk-Revit-MCP-Server/actions)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=for-the-badge)](CONTRIBUTING.md)
+[![GitHub Stars](https://img.shields.io/github/stars/Sam-AEC/Autodesk-Revit-MCP-Server?style=for-the-badge&logo=github)](https://github.com/Sam-AEC/Autodesk-Revit-MCP-Server/stargazers)
+
+[🚀 Quick Start](#quick-start) • [✨ Features](#features) • [🏛️ Architecture](#architecture) • [🤖 Copilot Integration](#microsoft-copilot-studio-integration) • [📚 Docs](#documentation)
 
 </div>
 
 ---
 
-## What is RevitMCP?
+## 🎯 What is RevitMCP?
 
 RevitMCP bridges the [Model Context Protocol](https://modelcontextprotocol.io) with Autodesk Revit, enabling:
 
@@ -35,32 +40,78 @@ RevitMCP bridges the [Model Context Protocol](https://modelcontextprotocol.io) w
 - **Batch automation** for exports, audits, and data extraction
 - **Secure-by-default** localhost-only bridge with enterprise HTTPS/OAuth options
 
-### Key Features
+> **🎉 Latest Update:** Now with **80+ tools** across Geometry, Parameters, Sheets, Annotation, Structure, MEP, Editing, Worksharing, Groups, and Links!
+> 
+> **🚀 Roadmap:** Expanding to 100+ tools with Advanced MEP, Materials & Visuals, and Family Management capabilities.
 
-✅ **25 Revit Tools** - Document management, export (PDF/IFC/DWG/CSV), QA audits, batch operations
-✅ **Enterprise Ready** - MSI installer, OAuth2, audit logging, workspace sandboxing
-✅ **Copilot Studio** - Pre-built integration guide for Microsoft 365
-✅ **Dual Mode** - Mock mode for CI/testing, bridge mode for live Revit
-✅ **Production Threading** - ExternalEvent queue with proper Revit main thread execution
-✅ **Security First** - Localhost-only by default, path validation, structured audit logs
+### ✨ Key Features
+
+<table>
+<tr>
+<td width="50%">
+
+#### 🛠️ **80+ Revit Tools**
+- Document management & automation
+- Advanced exports (PDF/IFC/DWG/CSV)
+- Geometry creation (walls, floors, roofs)
+- MEP systems (ducts, pipes, cable trays)
+- Parameters & properties management
+- Sheets & documentation workflows
+
+</td>
+<td width="50%">
+
+#### 🚀 **Enterprise Ready**
+- Production-grade threading model
+- OAuth2 & audit logging
+- Workspace sandboxing
+- Multi-version support (2024/2025)
+- CI/CD pipeline included
+- Mock mode for testing
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+#### 🤖 **AI Integration**
+- Microsoft Copilot Studio ready
+- Claude Desktop compatible
+- Natural language control
+- Conversational Revit automation
+- Pre-built integration guides
+
+</td>
+<td width="50%">
+
+#### 🔒 **Security First**
+- Localhost-only by default
+- Path validation & sanitization
+- Structured JSONL audit logs
+- Enterprise HTTPS/OAuth options
+- Workspace allowlisting
+
+</td>
+</tr>
+</table>
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
-### Installation (Windows)
+### 📦 Installation (Windows)
 
-**Download the installer:**
+**Option 1: Download the installer**
 
 1. Go to [Releases](https://github.com/Sam-AEC/Autodesk-Revit-MCP-Server/releases)
 2. Download `RevitMCP-1.0.0.zip`
 3. Extract and run:
 
 ```powershell
-.\install.ps1 -RevitVersion 2024
+.\scripts\install.ps1 -RevitVersion 2024
 ```
 
-**Or install from source:**
+**Option 2: Install from source**
 
 ```powershell
 git clone https://github.com/Sam-AEC/Autodesk-Revit-MCP-Server.git
@@ -69,32 +120,34 @@ cd Autodesk-Revit-MCP-Server
 .\scripts\install.ps1 -RevitVersion 2024
 ```
 
-### Verify Installation
+### ✅ Verify Installation
 
-1. **Start Revit 2024**
-2. **Check bridge health:**
-   ```powershell
-   curl http://localhost:3000/health
-   ```
-   Expected response:
-   ```json
-   {
-     "status": "healthy",
-     "revit_version": "2024",
-     "active_document": "YourProject.rvt"
-   }
-   ```
+**1. Start Revit 2024**
 
-3. **Run MCP server:**
-   ```powershell
-   # Install Python package
-   pip install -e packages/mcp-server-revit
+**2. Check bridge health:**
+```powershell
+curl http://localhost:3000/health
+```
 
-   # Start server
-   python -m revit_mcp_server
-   ```
+Expected response:
+```json
+{
+  "status": "healthy",
+  "revit_version": "2024",
+  "active_document": "YourProject.rvt"
+}
+```
 
-### Test a Tool
+**3. Run MCP server:**
+```powershell
+# Install Python package
+pip install -e packages/mcp-server-revit
+
+# Start server
+python -m revit_mcp_server
+```
+
+### 🧪 Test a Tool
 
 ```powershell
 # List all views in active document
@@ -105,106 +158,16 @@ curl -X POST http://localhost:3000/execute `
 
 ---
 
-## Demo
-
-- **Quick demo GIF:** place your recorded demo file in the repository root and name it `demo.gif`. GitHub will render animated GIFs inline in the README.
-
-PowerShell (copy from your Downloads to the repo):
-
-```powershell
-# Replace the source path below if different
-Copy-Item -Path "C:\Users\samo3\Downloads\Recording 2026-01-07 153612.gif" -Destination "c:\Users\samo3\OneDrive - Heijmans N.V\Documenten\GitHub\Autodesk-Revit-MCP-Server\demo.gif"
-
-# Verify the file exists
-Test-Path .\demo.gif
-```
-
-Bash / WSL / Git Bash:
-
-```bash
-# from a bash shell
-cp "/mnt/c/Users/samo3/Downloads/Recording 2026-01-07 153612.gif" "./demo.gif"
-ls -l demo.gif
-```
-
-After copying, add and commit to git to publish the GIF on GitHub:
-
-```bash
-git add demo.gif
-git commit -m "Add demo GIF"
-git push
-```
-
-If you prefer the repo to contain a placeholder, create an empty text file named `demo.gif.placeholder` and copy the real GIF later.
+## 🎬 Demo
 
 <!-- If `demo.gif` is present it will display here on GitHub -->
 <p align="center">
    <img src="demo.gif" alt="Demo" width="900"/>
 </p>
 
-## Installation (updated)
+> **Note:** To add a demo, place your recorded demo file in the repository root and name it `demo.gif`. GitHub will render animated GIFs inline in the README.
 
-The project targets Python 3.11+ and the C# bridge targets the .NET Framework used by the Revit version you build for (typically .NET Framework 4.8 for Revit 2024). Use the steps below for a reliable local install from source.
-
-1. Install Python 3.11 (recommended) and ensure `python --version` shows 3.11.x or later.
-2. Create and activate a virtual environment (PowerShell):
-
-```powershell
-python -m venv .venv
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip setuptools wheel
-```
-
-Or (Bash / WSL):
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip setuptools wheel
-```
-
-3. Install the Python package in editable mode (this installs local package dependencies):
-
-```powershell
-cd packages/mcp-server-revit
-pip install -e .
-```
-
-4. Build the C# Revit add-in (requires Visual Studio Build Tools / .NET targeting pack appropriate for your Revit version):
-
-```powershell
-cd \path\to\repo\scripts
-#.\build-addin.ps1 -RevitVersion 2024
-```
-
-5. Install the add-in into Revit (the install script copies the .addin and DLLs into the Revit Addins folder):
-
-```powershell
-.\scripts\install.ps1 -RevitVersion 2024
-```
-
-6. Start Revit, then start the MCP server locally:
-
-```powershell
-# from repo root
-python -m revit_mcp_server
-# or run with an explicit python path if using multiple installs
-.\.venv\Scripts\python -m revit_mcp_server
-```
-
-7. Confirm health endpoint:
-
-```powershell
-curl http://127.0.0.1:3000/health
-```
-
-Notes:
-- If you plan to expose the server for Copilot Studio or remote access, configure HTTPS + OAuth as documented in `docs/security.md` and `docs/copilot-integration.md`.
-- For CI and tests, the repository includes a mock bridge to run `pytest` without Revit.
-
-
-## Architecture
+## 🏛️ Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
