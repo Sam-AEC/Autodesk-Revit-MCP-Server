@@ -4,6 +4,9 @@ using System.Linq;
 using System.Text.Json;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using Autodesk.Revit.DB.Structure;
+using Autodesk.Revit.DB.Mechanical;
+using Autodesk.Revit.DB.Plumbing;
 
 namespace RevitBridge.Bridge;
 
@@ -79,6 +82,28 @@ public static class BridgeCommandFactory
             "revit.export_image" => ExecuteExportImage(app, payload),
             "revit.render_3d_view" => ExecuteRender3DView(app, payload),
 
+            // Batch 2: Selection
+            "revit.get_selection" => ExecuteGetSelection(app),
+            "revit.set_selection" => ExecuteSetSelection(app, payload),
+
+            // Batch 2: Annotation
+            "revit.create_text_note" => ExecuteCreateTextNote(app, payload),
+            "revit.create_dimension" => ExecuteCreateDimension(app, payload),
+            "revit.create_tag" => ExecuteCreateTag(app, payload),
+
+            // Batch 2: Structure
+            "revit.create_column" => ExecuteCreateColumn(app, payload),
+            "revit.create_beam" => ExecuteCreateBeam(app, payload),
+            "revit.create_foundation" => ExecuteCreateFoundation(app, payload),
+
+            // Batch 2: MEP
+            "revit.create_duct" => ExecuteCreateDuct(app, payload),
+            "revit.create_pipe" => ExecuteCreatePipe(app, payload),
+
+            // Batch 2: General Helper
+            "revit.get_categories" => ExecuteGetCategories(app),
+            "revit.get_element_type" => ExecuteGetElementType(app, payload),
+
             _ => new { status = "error", message = $"Unknown tool: {tool}" }
         };
     }
@@ -151,7 +176,29 @@ public static class BridgeCommandFactory
             "revit.export_ifc_with_settings",
             "revit.export_navisworks",
             "revit.export_image",
-            "revit.render_3d_view"
+            "revit.render_3d_view",
+
+            // Batch 2: Selection
+            "revit.get_selection",
+            "revit.set_selection",
+
+            // Batch 2: Annotation
+            "revit.create_text_note",
+            "revit.create_dimension",
+            "revit.create_tag",
+
+            // Batch 2: Structure
+            "revit.create_column",
+            "revit.create_beam",
+            "revit.create_foundation",
+
+            // Batch 2: MEP
+            "revit.create_duct",
+            "revit.create_pipe",
+
+            // Batch 2: General Helper
+            "revit.get_categories",
+            "revit.get_element_type"
         };
     }
 
@@ -2404,6 +2451,284 @@ public static class BridgeCommandFactory
                 note = "Exported 3D view image via ImageExportOptions.",
                 status = "success"
             };
+        }
+    }
+
+    // ==================== BATCH 2: SELECTION & ANNOTATION IMPL ====================
+
+    private static object ExecuteGetSelection(UIApplication app)
+    {
+        var uidoc = app.ActiveUIDocument;
+        if (uidoc == null) throw new InvalidOperationException("No active UIDocument");
+
+        var ids = uidoc.Selection.GetElementIds().Select(id => id.Value).ToList();
+        return new { count = ids.Count, element_ids = ids };
+    }
+
+    private static object ExecuteSetSelection(UIApplication app, JsonElement payload)
+    {
+        var uidoc = app.ActiveUIDocument;
+        if (uidoc == null) throw new InvalidOperationException("No active UIDocument");
+
+        var ids = payload.GetProperty("element_ids").EnumerateArray()
+            .Select(x => new ElementId((long)x.GetInt32()))
+            .ToList();
+
+        uidoc.Selection.SetElementIds(ids);
+        return new { selected_count = ids.Count };
+    }
+
+    private static object ExecuteCreateTextNote(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var text = payload.GetProperty("text").GetString();
+        var location = ParseXYZ(payload.GetProperty("location"));
+        var viewId = payload.TryGetProperty("view_id", out var v) ? v.GetInt32() : doc.ActiveView.Id.Value;
+
+        using (var trans = new Transaction(doc, "Create Text Note"))
+        {
+            trans.Start();
+            var view = doc.GetElement(new ElementId((long)viewId)) as View;
+            var note = TextNote.Create(doc, view.Id, location, text, new ElementId(BuiltInParameter.TEXT_SIZE)); // Using default type logic simplifiction
+            trans.Commit();
+
+            return new { text_note_id = note.Id.Value, text = note.Text, view_id = view.Id.Value };
+        }
+    }
+
+    private static object ExecuteCreateDimension(UIApplication app, JsonElement payload)
+    {
+         var doc = app.ActiveUIDocument?.Document;
+         if (doc == null) throw new InvalidOperationException("No active document");
+         
+         // Simplified: In real usage, getting References via API from JSON is hard. 
+         // Implementation skipped for now or requires selecting elements first?
+         // For now, let's implement a placeholder or simple grid-to-grid dimension if possible.
+         // Actually, let's defer Dimension creation as it requires Reference objects which are hard to serialize.
+         return new { status = "not_implemented", message = "Dimension creation requires complex Reference handling." };
+    }
+
+    private static object ExecuteCreateTag(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var elementId = payload.GetProperty("element_id").GetInt32();
+        var location = ParseXYZ(payload.GetProperty("location"));
+        var viewId = payload.TryGetProperty("view_id", out var v) ? v.GetInt32() : doc.ActiveView.Id.Value;
+
+        using (var trans = new Transaction(doc, "Create Tag"))
+        {
+            trans.Start();
+            var view = doc.GetElement(new ElementId((long)viewId)) as View;
+            // IndependentTag.Create replaced NewTag in 2018+
+            // For Revit 2024 it's Create
+            var element = doc.GetElement(new ElementId((long)elementId));
+            if (element == null) throw new ArgumentException($"Element {elementId} not found");
+            var tag = IndependentTag.Create(doc, view.Id, new Reference(element), false, TagMode.TM_ADDBY_CATEGORY, TagOrientation.Horizontal, location);
+            trans.Commit();
+            return new { tag_id = tag.Id.Value, tagged_element_id = elementId };
+        }
+    }
+
+    // ==================== BATCH 2: STRUCTURE IMPL ====================
+    
+    private static object ExecuteCreateColumn(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var location = ParseXYZ(payload.GetProperty("location"));
+        var levelName = payload.GetProperty("level").GetString();
+        var familyName = payload.GetProperty("family_name").GetString();
+        var typeName = payload.GetProperty("type_name").GetString();
+
+        using (var trans = new Transaction(doc, "Create Structural Column"))
+        {
+             trans.Start();
+             var level = GetLevelByName(doc, levelName);
+             var symbol = GetFamilySymbolByName(doc, familyName, typeName);
+             if(!symbol.IsActive) { symbol.Activate(); doc.Regenerate(); }
+             
+             var instance = doc.Create.NewFamilyInstance(location, symbol, level, StructuralType.Column);
+             trans.Commit();
+             
+             return new { column_id = instance.Id.Value, family = familyName, type = typeName };
+        }
+    }
+
+    private static object ExecuteCreateBeam(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var start = ParseXYZ(payload.GetProperty("start_point"));
+        var end = ParseXYZ(payload.GetProperty("end_point"));
+        var levelName = payload.GetProperty("level").GetString();
+        var familyName = payload.GetProperty("family_name").GetString();
+        var typeName = payload.GetProperty("type_name").GetString();
+
+        using (var trans = new Transaction(doc, "Create Beam"))
+        {
+             trans.Start();
+             var level = GetLevelByName(doc, levelName);
+             var symbol = GetFamilySymbolByName(doc, familyName, typeName);
+             if(!symbol.IsActive) { symbol.Activate(); doc.Regenerate(); }
+             
+             var line = Line.CreateBound(start, end);
+             var instance = doc.Create.NewFamilyInstance(line, symbol, level, StructuralType.Beam);
+             trans.Commit();
+             
+             return new { beam_id = instance.Id.Value, family = familyName, type = typeName, length = line.Length };
+        }
+    }
+
+    private static object ExecuteCreateFoundation(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var location = ParseXYZ(payload.GetProperty("location"));
+        var levelName = payload.GetProperty("level").GetString();
+        var familyName = payload.GetProperty("family_name").GetString();
+        var typeName = payload.GetProperty("type_name").GetString();
+
+        using (var trans = new Transaction(doc, "Create Foundation"))
+        {
+             trans.Start();
+             var level = GetLevelByName(doc, levelName);
+             var symbol = GetFamilySymbolByName(doc, familyName, typeName);
+             if(!symbol.IsActive) { symbol.Activate(); doc.Regenerate(); }
+             
+             var instance = doc.Create.NewFamilyInstance(location, symbol, level, StructuralType.Footing);
+             trans.Commit();
+             
+             return new { foundation_id = instance.Id.Value, family = familyName, type = typeName };
+        }
+    }
+
+    // ==================== BATCH 2: MEP IMPL ====================
+
+    private static object ExecuteCreateDuct(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var start = ParseXYZ(payload.GetProperty("start_point"));
+        var end = ParseXYZ(payload.GetProperty("end_point"));
+        var levelName = payload.GetProperty("level").GetString();
+        var systemTypeName = payload.TryGetProperty("system_type", out var s) ? s.GetString() : "Supply Air";
+        var ductTypeName = payload.TryGetProperty("duct_type", out var d) ? d.GetString() : null; // Default to first available
+
+        using (var trans = new Transaction(doc, "Create Duct"))
+        {
+             trans.Start();
+             var level = GetLevelByName(doc, levelName);
+             
+             // Get System Type
+             var mechanicalSystemType = new FilteredElementCollector(doc)
+                 .OfClass(typeof(MEPSystemType))
+                 .Cast<MEPSystemType>()
+                 .FirstOrDefault(x => x.Name.Contains(systemTypeName)) 
+                 ?? throw new ArgumentException($"MEP System Type '{systemTypeName}' not found");
+
+             // Get Duct Type
+             var ductType = new FilteredElementCollector(doc)
+                 .OfClass(typeof(DuctType))
+                 .Cast<DuctType>()
+                 .FirstOrDefault(x => ductTypeName == null || x.Name == ductTypeName); // First available if null
+             
+             if (ductType == null) throw new ArgumentException("No Duct Type found");
+
+             var duct = Duct.Create(doc, mechanicalSystemType.Id, ductType.Id, level.Id, start, end);
+             trans.Commit();
+             
+             return new { duct_id = duct.Id.Value, system_type = mechanicalSystemType.Name, duct_type = ductType.Name };
+        }
+    }
+
+    private static object ExecuteCreatePipe(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var start = ParseXYZ(payload.GetProperty("start_point"));
+        var end = ParseXYZ(payload.GetProperty("end_point"));
+        var levelName = payload.GetProperty("level").GetString();
+        var systemTypeName = payload.TryGetProperty("system_type", out var s) ? s.GetString() : "Hydronic Supply";
+        var pipeTypeName = payload.TryGetProperty("pipe_type", out var p) ? p.GetString() : null;
+
+        using (var trans = new Transaction(doc, "Create Pipe"))
+        {
+             trans.Start();
+             var level = GetLevelByName(doc, levelName);
+             
+             var pipingSystemType = new FilteredElementCollector(doc)
+                 .OfClass(typeof(MEPSystemType))
+                 .Cast<MEPSystemType>()
+                 .FirstOrDefault(x => x.Name.Contains(systemTypeName))
+                 ?? throw new ArgumentException($"Piping System Type '{systemTypeName}' not found");
+
+             var pipeType = new FilteredElementCollector(doc)
+                 .OfClass(typeof(PipeType))
+                 .Cast<PipeType>()
+                 .FirstOrDefault(x => pipeTypeName == null || x.Name == pipeTypeName);
+             
+             if (pipeType == null) throw new ArgumentException("No Pipe Type found");
+
+             var pipe = Pipe.Create(doc, pipingSystemType.Id, pipeType.Id, level.Id, start, end);
+             trans.Commit();
+             
+             return new { pipe_id = pipe.Id.Value, system_type = pipingSystemType.Name, pipe_type = pipeType.Name };
+        }
+    }
+
+    // ==================== BATCH 2: GENERAL HELPER IMPL ====================
+
+    private static object ExecuteGetCategories(UIApplication app)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var categories = doc.Settings.Categories.Cast<Category>()
+            .Where(c => c.CategoryType == CategoryType.Model && c.CanAddSubcategory) // Filter mainly model categories
+            .Select(c => c.Name)
+            .OrderBy(n => n)
+            .ToList();
+            
+        return new { categories };
+    }
+    
+    private static object ExecuteGetElementType(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+        
+        var categoryName = payload.GetProperty("category_name").GetString();
+        var familyName = payload.TryGetProperty("family_name", out var f) ? f.GetString() : null;
+        
+        var category = GetCategoryByName(doc, categoryName);
+        var collector = new FilteredElementCollector(doc)
+            .OfClass(typeof(ElementType))
+            .OfCategoryId(category.Id);
+            
+        if (!string.IsNullOrEmpty(familyName))
+        {
+            // Filter by family name if provided
+             var types = collector.Cast<ElementType>()
+                .Where(x => x.FamilyName == familyName)
+                .Select(x => new { family = x.FamilyName, type = x.Name, id = x.Id.Value })
+                .ToList();
+             return new { types };
+        }
+        else
+        {
+             var types = collector.Cast<ElementType>()
+                .Select(x => new { family = x.FamilyName, type = x.Name, id = x.Id.Value })
+                .ToList();
+             return new { types };
         }
     }
 }
