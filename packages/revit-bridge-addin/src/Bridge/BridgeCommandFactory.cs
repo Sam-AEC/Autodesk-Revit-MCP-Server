@@ -138,6 +138,12 @@ public static class BridgeCommandFactory
             "revit.get_rvt_links" => ExecuteGetRvtLinks(app),
             "revit.get_link_instances" => ExecuteGetLinkInstances(app),
 
+            // Batch 5: Advanced MEP & Engineering
+            "revit.create_cable_tray" => ExecuteCreateCableTray(app, payload),
+            "revit.create_conduit" => ExecuteCreateConduit(app, payload),
+            "revit.get_mep_systems" => ExecuteGetMepSystems(app, payload),
+            "revit.check_clashes" => ExecuteCheckClashes(app, payload),
+
             _ => new { status = "error", message = $"Unknown tool: {tool}" }
         };
     }
@@ -266,7 +272,13 @@ public static class BridgeCommandFactory
 
             // Batch 4: Links
             "revit.get_rvt_links",
-            "revit.get_link_instances"
+            "revit.get_link_instances",
+
+            // Batch 5: Advanced MEP & Engineering
+            "revit.create_cable_tray",
+            "revit.create_conduit",
+            "revit.get_mep_systems",
+            "revit.check_clashes"
         };
     }
 
@@ -3184,5 +3196,293 @@ public static class BridgeCommandFactory
             .ToList();
 
         return new { instances };
+    }
+
+    // ==================== BATCH 5: ADVANCED MEP & ENGINEERING ====================
+
+    private static object ExecuteCreateCableTray(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var startPoint = ParseXYZ(payload.GetProperty("start_point"));
+        var endPoint = ParseXYZ(payload.GetProperty("end_point"));
+        var levelName = payload.GetProperty("level").GetString();
+        var width = payload.TryGetProperty("width", out var w) ? w.GetDouble() : 12.0 / 12.0; // Default 12 inches
+        var height = payload.TryGetProperty("height", out var h) ? h.GetDouble() : 4.0 / 12.0; // Default 4 inches
+        var cableTrayTypeName = payload.TryGetProperty("cable_tray_type", out var ct) ? ct.GetString() : null;
+
+        using (var trans = new Transaction(doc, "Create Cable Tray"))
+        {
+            trans.Start();
+
+            var level = GetLevelByName(doc, levelName);
+            
+            // Get cable tray type
+            CableTrayType cableTrayType = null;
+            if (!string.IsNullOrEmpty(cableTrayTypeName))
+            {
+                cableTrayType = new FilteredElementCollector(doc)
+                    .OfClass(typeof(CableTrayType))
+                    .Cast<CableTrayType>()
+                    .FirstOrDefault(t => t.Name.Equals(cableTrayTypeName, StringComparison.OrdinalIgnoreCase));
+            }
+            
+            if (cableTrayType == null)
+            {
+                cableTrayType = new FilteredElementCollector(doc)
+                    .OfClass(typeof(CableTrayType))
+                    .Cast<CableTrayType>()
+                    .FirstOrDefault();
+            }
+
+            if (cableTrayType == null)
+                throw new InvalidOperationException("No cable tray types found in document");
+
+            // Create cable tray
+            var cableTray = Autodesk.Revit.DB.Electrical.CableTray.Create(
+                doc, 
+                cableTrayType.Id, 
+                startPoint, 
+                endPoint, 
+                level.Id
+            );
+
+            // Set width and height if parameters exist
+            var widthParam = cableTray.get_Parameter(BuiltInParameter.RBS_CABLETRAY_WIDTH_PARAM);
+            if (widthParam != null && !widthParam.IsReadOnly)
+            {
+                widthParam.Set(width);
+            }
+
+            var heightParam = cableTray.get_Parameter(BuiltInParameter.RBS_CABLETRAY_HEIGHT_PARAM);
+            if (heightParam != null && !heightParam.IsReadOnly)
+            {
+                heightParam.Set(height);
+            }
+
+            trans.Commit();
+
+            var length = startPoint.DistanceTo(endPoint);
+
+            return new
+            {
+                cable_tray_id = cableTray.Id.Value,
+                length_ft = length,
+                length_m = UnitUtils.ConvertFromInternalUnits(length, UnitTypeId.Meters),
+                width_ft = width,
+                height_ft = height,
+                level = levelName
+            };
+        }
+    }
+
+    private static object ExecuteCreateConduit(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var startPoint = ParseXYZ(payload.GetProperty("start_point"));
+        var endPoint = ParseXYZ(payload.GetProperty("end_point"));
+        var levelName = payload.GetProperty("level").GetString();
+        var diameter = payload.TryGetProperty("diameter", out var d) ? d.GetDouble() : 0.75 / 12.0; // Default 0.75 inches
+        var conduitTypeName = payload.TryGetProperty("conduit_type", out var ct) ? ct.GetString() : null;
+
+        using (var trans = new Transaction(doc, "Create Conduit"))
+        {
+            trans.Start();
+
+            var level = GetLevelByName(doc, levelName);
+            
+            // Get conduit type
+            Autodesk.Revit.DB.Electrical.ConduitType conduitType = null;
+            if (!string.IsNullOrEmpty(conduitTypeName))
+            {
+                conduitType = new FilteredElementCollector(doc)
+                    .OfClass(typeof(Autodesk.Revit.DB.Electrical.ConduitType))
+                    .Cast<Autodesk.Revit.DB.Electrical.ConduitType>()
+                    .FirstOrDefault(t => t.Name.Equals(conduitTypeName, StringComparison.OrdinalIgnoreCase));
+            }
+            
+            if (conduitType == null)
+            {
+                conduitType = new FilteredElementCollector(doc)
+                    .OfClass(typeof(Autodesk.Revit.DB.Electrical.ConduitType))
+                    .Cast<Autodesk.Revit.DB.Electrical.ConduitType>()
+                    .FirstOrDefault();
+            }
+
+            if (conduitType == null)
+                throw new InvalidOperationException("No conduit types found in document");
+
+            // Create conduit
+            var conduit = Autodesk.Revit.DB.Electrical.Conduit.Create(
+                doc, 
+                conduitType.Id, 
+                startPoint, 
+                endPoint, 
+                level.Id
+            );
+
+            // Set diameter if parameter exists
+            var diameterParam = conduit.get_Parameter(BuiltInParameter.RBS_CONDUIT_DIAMETER_PARAM);
+            if (diameterParam != null && !diameterParam.IsReadOnly)
+            {
+                diameterParam.Set(diameter);
+            }
+
+            trans.Commit();
+
+            var length = startPoint.DistanceTo(endPoint);
+
+            return new
+            {
+                conduit_id = conduit.Id.Value,
+                length_ft = length,
+                length_m = UnitUtils.ConvertFromInternalUnits(length, UnitTypeId.Meters),
+                diameter_ft = diameter,
+                diameter_inches = diameter * 12.0,
+                level = levelName
+            };
+        }
+    }
+
+    private static object ExecuteGetMepSystems(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var systemType = payload.TryGetProperty("system_type", out var st) ? st.GetString() : "all";
+
+        var systems = new FilteredElementCollector(doc)
+            .OfClass(typeof(MEPSystem))
+            .Cast<MEPSystem>()
+            .Where(s => systemType.Equals("all", StringComparison.OrdinalIgnoreCase) || 
+                       s.GetType().Name.Contains(systemType, StringComparison.OrdinalIgnoreCase))
+            .Select(s => new
+            {
+                id = s.Id.Value,
+                name = s.Name,
+                system_type = s.GetType().Name,
+                is_well_connected = s.IsWellConnected,
+                element_count = s.Elements.Size,
+                base_equipment_id = s.BaseEquipment?.Id.Value ?? -1,
+                base_equipment_name = s.BaseEquipment?.Name ?? "None"
+            })
+            .ToList();
+
+        return new
+        {
+            systems,
+            count = systems.Count,
+            filter = systemType
+        };
+    }
+
+    private static object ExecuteCheckClashes(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var category1Name = payload.GetProperty("category1").GetString();
+        var category2Name = payload.GetProperty("category2").GetString();
+        var tolerance = payload.TryGetProperty("tolerance", out var tol) ? tol.GetDouble() : 0.01; // Default 0.01 ft
+
+        // Get built-in categories
+        var cat1 = GetBuiltInCategoryByName(category1Name);
+        var cat2 = GetBuiltInCategoryByName(category2Name);
+
+        // Collect elements from both categories
+        var elements1 = new FilteredElementCollector(doc)
+            .OfCategory(cat1)
+            .WhereElementIsNotElementType()
+            .ToList();
+
+        var elements2 = new FilteredElementCollector(doc)
+            .OfCategory(cat2)
+            .WhereElementIsNotElementType()
+            .ToList();
+
+        var clashes = new List<object>();
+
+        // Check for clashes using bounding box intersection
+        foreach (var elem1 in elements1)
+        {
+            var bb1 = elem1.get_BoundingBox(null);
+            if (bb1 == null) continue;
+
+            foreach (var elem2 in elements2)
+            {
+                if (elem1.Id == elem2.Id) continue;
+
+                var bb2 = elem2.get_BoundingBox(null);
+                if (bb2 == null) continue;
+
+                // Expand bounding boxes by tolerance
+                var expandedBB1 = new BoundingBoxXYZ
+                {
+                    Min = new XYZ(bb1.Min.X - tolerance, bb1.Min.Y - tolerance, bb1.Min.Z - tolerance),
+                    Max = new XYZ(bb1.Max.X + tolerance, bb1.Max.Y + tolerance, bb1.Max.Z + tolerance)
+                };
+
+                // Check if bounding boxes intersect
+                if (BoundingBoxesIntersect(expandedBB1, bb2))
+                {
+                    clashes.Add(new
+                    {
+                        element1_id = elem1.Id.Value,
+                        element1_name = elem1.Name,
+                        element1_category = elem1.Category?.Name,
+                        element2_id = elem2.Id.Value,
+                        element2_name = elem2.Name,
+                        element2_category = elem2.Category?.Name,
+                        clash_type = "bounding_box_intersection"
+                    });
+                }
+            }
+        }
+
+        return new
+        {
+            clashes,
+            clash_count = clashes.Count,
+            category1 = category1Name,
+            category2 = category2Name,
+            tolerance_ft = tolerance,
+            elements_checked_cat1 = elements1.Count,
+            elements_checked_cat2 = elements2.Count
+        };
+    }
+
+    // Helper method for bounding box intersection
+    private static bool BoundingBoxesIntersect(BoundingBoxXYZ bb1, BoundingBoxXYZ bb2)
+    {
+        return !(bb1.Max.X < bb2.Min.X || bb1.Min.X > bb2.Max.X ||
+                 bb1.Max.Y < bb2.Min.Y || bb1.Min.Y > bb2.Max.Y ||
+                 bb1.Max.Z < bb2.Min.Z || bb1.Min.Z > bb2.Max.Z);
+    }
+
+    // Helper method to get BuiltInCategory by name
+    private static BuiltInCategory GetBuiltInCategoryByName(string categoryName)
+    {
+        return categoryName.ToLower() switch
+        {
+            "walls" => BuiltInCategory.OST_Walls,
+            "floors" => BuiltInCategory.OST_Floors,
+            "roofs" => BuiltInCategory.OST_Roofs,
+            "columns" => BuiltInCategory.OST_Columns,
+            "beams" => BuiltInCategory.OST_StructuralFraming,
+            "ducts" => BuiltInCategory.OST_DuctCurves,
+            "pipes" => BuiltInCategory.OST_PipeCurves,
+            "cable_trays" => BuiltInCategory.OST_CableTray,
+            "conduits" => BuiltInCategory.OST_Conduit,
+            "doors" => BuiltInCategory.OST_Doors,
+            "windows" => BuiltInCategory.OST_Windows,
+            "furniture" => BuiltInCategory.OST_Furniture,
+            "mechanical_equipment" => BuiltInCategory.OST_MechanicalEquipment,
+            "electrical_equipment" => BuiltInCategory.OST_ElectricalEquipment,
+            "plumbing_fixtures" => BuiltInCategory.OST_PlumbingFixtures,
+            _ => throw new ArgumentException($"Unknown category: {categoryName}")
+        };
     }
 }

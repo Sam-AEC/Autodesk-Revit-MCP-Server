@@ -643,7 +643,12 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             "boundary_points": [
                 {"x": p.get("x", 0), "y": p.get("y", 0), "z": p.get("z", 0)}
                 for p in arguments.get("points", [])
-            ],
+                # Batch 5: Advanced MEP & Engineering
+        Tool(name="revit_create_cable_tray", description="Create cable tray run", inputSchema={"type": "object", "properties": {"level": {"type": "string"}, "start_x": {"type": "number"}, "start_y": {"type": "number"}, "start_z": {"type": "number", "default": 10}, "end_x": {"type": "number"}, "end_y": {"type": "number"}, "end_z": {"type": "number", "default": 10}, "width": {"type": "number", "default": 1.0}, "height": {"type": "number", "default": 0.33}}, "required": ["level", "start_x", "start_y", "end_x", "end_y"]}),
+        Tool(name="revit_create_conduit", description="Create electrical conduit", inputSchema={"type": "object", "properties": {"level": {"type": "string"}, "start_x": {"type": "number"}, "start_y": {"type": "number"}, "start_z": {"type": "number", "default": 10}, "end_x": {"type": "number"}, "end_y": {"type": "number"}, "end_z": {"type": "number", "default": 10}, "diameter": {"type": "number", "default": 0.0625}}, "required": ["level", "start_x", "start_y", "end_x", "end_y"]}),
+        Tool(name="revit_get_mep_systems", description="Get MEP systems info", inputSchema={"type": "object", "properties": {"system_type": {"type": "string", "default": "all"}}}),
+        Tool(name="revit_check_clashes", description="Check clashes between categories", inputSchema={"type": "object", "properties": {"category1": {"type": "string"}, "category2": {"type": "string"}, "tolerance": {"type": "number", "default": 0.01}}, "required": ["category1", "category2"]}),
+    ],
             "level": arguments.get("level", "L1")
         }),
         "revit_create_roof": ("revit.create_roof", {
@@ -725,6 +730,31 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         # Batch 4: Links
         "revit_get_rvt_links": ("revit.get_rvt_links", {}),
         "revit_get_link_instances": ("revit.get_link_instances", {}),
+
+        # Batch 5: Advanced MEP & Engineering
+        "revit_create_cable_tray": ("revit.create_cable_tray", {
+            "level": arguments.get("level"),
+            "start_point": {"x": arguments.get("start_x"), "y": arguments.get("start_y"), "z": arguments.get("start_z", 10)},
+            "end_point": {"x": arguments.get("end_x"), "y": arguments.get("end_y"), "z": arguments.get("end_z", 10)},
+            "width": arguments.get("width", 1.0),
+            "height": arguments.get("height", 0.33),
+            "cable_tray_type": arguments.get("cable_tray_type")
+        }),
+        "revit_create_conduit": ("revit.create_conduit", {
+            "level": arguments.get("level"),
+            "start_point": {"x": arguments.get("start_x"), "y": arguments.get("start_y"), "z": arguments.get("start_z", 10)},
+            "end_point": {"x": arguments.get("end_x"), "y": arguments.get("end_y"), "z": arguments.get("end_z", 10)},
+            "diameter": arguments.get("diameter", 0.0625),
+            "conduit_type": arguments.get("conduit_type")
+        }),
+        "revit_get_mep_systems": ("revit.get_mep_systems", {
+            "system_type": arguments.get("system_type", "all")
+        }),
+        "revit_check_clashes": ("revit.check_clashes", {
+            "category1": arguments.get("category1"),
+            "category2": arguments.get("category2"),
+            "tolerance": arguments.get("tolerance", 0.01)
+        }),
     }
 
         if name not in tool_mapping:
@@ -778,3 +808,4 @@ def run_mcp_server():
 
 if __name__ == "__main__":
     run_mcp_server()
+
