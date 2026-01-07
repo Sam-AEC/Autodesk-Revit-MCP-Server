@@ -2,13 +2,13 @@
 
 <img src="https://raw.githubusercontent.com/modelcontextprotocol/docs/main/logo/light.svg" alt="MCP Logo" width="120"/>
 
-<!-- Official logos: place images in `assets/logos/` with the filenames below to render here -->
+<!-- Logos -->
 <p>
-   <img src="assets/logos/autodesk-revit.png" alt="Autodesk Revit" height="36" style="margin-right:12px;"/>
-   <img src="assets/logos/microsoft-copilot.png" alt="Microsoft Copilot" height="36" style="margin-right:12px;"/>
-   <img src="assets/logos/model-context-protocol.svg" alt="Model Context Protocol" height="36" style="margin-right:12px;"/>
-   <img src="assets/logos/python.svg" alt="Python" height="36" style="margin-right:12px;"/>
-   <img src="assets/logos/dotnet.svg" alt=".NET" height="36"/>
+   <img src="https://upload.wikimedia.org/wikipedia/commons/9/9d/Autodesk_Revit_icon.svg" alt="Autodesk Revit" height="40" style="margin-right:15px;"/>
+   <img src="https://upload.wikimedia.org/wikipedia/commons/2/2a/Microsoft_365_Copilot_Icon.svg" alt="Microsoft Copilot" height="40" style="margin-right:15px;"/>
+   <img src="https://modelcontextprotocol.io/images/logo.svg" alt="Model Context Protocol" height="40" style="margin-right:15px;"/>
+   <img src="https://upload.wikimedia.org/wikipedia/commons/c/c3/Python-logo-notext.svg" alt="Python" height="40" style="margin-right:15px;"/>
+   <img src="https://upload.wikimedia.org/wikipedia/commons/7/7d/Microsoft_.NET_logo.svg" alt=".NET" height="40"/>
 </p>
 
 # 🏗️ RevitMCP: AI-Powered Revit Automation

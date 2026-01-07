@@ -652,6 +652,9 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         Tool(name="revit_create_material", description="Create a new material with color and properties", inputSchema={"type": "object", "properties": {"name": {"type": "string"}, "color": {"type": "object", "properties": {"r": {"type": "integer"}, "g": {"type": "integer"}, "b": {"type": "integer"}}}, "transparency": {"type": "integer", "default": 0}, "shininess": {"type": "integer", "default": 50}, "smoothness": {"type": "integer", "default": 50}}, "required": ["name"]}),
         Tool(name="revit_set_element_material", description="Set material for an element or specific face", inputSchema={"type": "object", "properties": {"element_id": {"type": "integer"}, "material_name": {"type": "string"}, "face_index": {"type": "integer", "description": "Optional face index for face-specific material"}}, "required": ["element_id", "material_name"]}),
         Tool(name="revit_get_render_settings", description="Get rendering settings from document", inputSchema={"type": "object", "properties": {}}),
+        # Batch 7: Family Management
+        Tool(name="revit_convert_to_group", description="Convert elements into a group", inputSchema={"type": "object", "properties": {"element_ids": {"type": "array", "items": {"type": "integer"}}, "name": {"type": "string"}}, "required": ["element_ids"]}),
+        Tool(name="revit_edit_family", description="Open a family for editing", inputSchema={"type": "object", "properties": {"family_name": {"type": "string"}, "family_symbol_id": {"type": "integer"}, "family_instance_id": {"type": "integer"}}, "required": []}),
     ],
             "level": arguments.get("level", "L1")
         }),
@@ -812,5 +815,6 @@ def run_mcp_server():
 
 if __name__ == "__main__":
     run_mcp_server()
+
 
 
