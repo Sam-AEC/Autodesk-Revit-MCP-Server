@@ -1,19 +1,40 @@
 param(
-    [string]$Version = "1.0.0"
+    [string]$Version = "1.0.0",
+    [string]$RevitVersion = "All"
 )
 
 $ErrorActionPreference = "Stop"
 
+# Path Guard: Prevent Execution in System32 or Windows
+if ($PSScriptRoot -like "*C:\Windows*") {
+    Write-Error "Dangerous path detected: $PSScriptRoot"
+    Write-Error "Please clone the repo to a safe location (e.g., $env:USERPROFILE\src) and run from there."
+    exit 1
+}
+
 $distDir = "$PSScriptRoot\..\dist\RevitMCP"
 Write-Host "Creating distribution package: $distDir" -ForegroundColor Cyan
 
-# Clean and create dist directory
-Remove-Item $distDir -Recurse -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Path $distDir | Out-Null
+# Clean dist directory only if building everything or if it doesn't exist
+if (-not (Test-Path $distDir)) {
+    New-Item -ItemType Directory -Path $distDir -Force | Out-Null
+}
 
-# Build C# for both 2024 and 2025
-Write-Host "`nBuilding C# add-in for Revit 2024 and 2025..." -ForegroundColor Yellow
-foreach ($year in @("2024", "2025")) {
+# Define versions to build
+$versionsToBuild = @("2024", "2025")
+if ($RevitVersion -ne "All") {
+    if ($versionsToBuild -notcontains $RevitVersion) {
+        Write-Error "Unsupported Revit version: $RevitVersion. Supported: $($versionsToBuild -join ', ')"
+        exit 1
+    }
+    $versionsToBuild = @($RevitVersion)
+}
+
+# Build C# add-in
+Write-Host "`nBuilding C# add-in for: $($versionsToBuild -join ', ')..." -ForegroundColor Yellow
+
+foreach ($year in $versionsToBuild) {
+    Write-Host "  Building for Revit $year..." -ForegroundColor Cyan
     & "$PSScriptRoot\build-addin.ps1" -RevitVersion $year -Configuration Release
 
     if ($LASTEXITCODE -ne 0) {
@@ -25,11 +46,20 @@ foreach ($year in @("2024", "2025")) {
     New-Item -ItemType Directory -Path $binDir -Force | Out-Null
 
     $sourcePath = "$PSScriptRoot\..\packages\revit-bridge-addin\bin\Release\$year"
+    # Adjust source path for net8.0-windows if 2025
+    if ($year -ge "2025" -and (Test-Path "$sourcePath\net8.0-windows")) {
+        $sourcePath = "$sourcePath\net8.0-windows"
+    }
+    elseif (Test-Path "$sourcePath\net48") {
+        $sourcePath = "$sourcePath\net48"
+    }
+
     if (Test-Path $sourcePath) {
         Copy-Item "$sourcePath\*" $binDir -Recurse -Force
-        Write-Host "  Copied binaries for Revit $year" -ForegroundColor Green
-    } else {
-        Write-Warning "Build output not found at $sourcePath"
+        Write-Host "    Copied binaries for Revit $year" -ForegroundColor Green
+    }
+    else {
+        Write-Warning "    Build output not found at $sourcePath"
     }
 }
 
@@ -48,7 +78,8 @@ try {
         pyinstaller --onefile --name revit_mcp_server --distpath $serverDir src/revit_mcp_server/__main__.py
         if ($LASTEXITCODE -eq 0) {
             Write-Host "  Created revit_mcp_server.exe" -ForegroundColor Green
-        } else {
+        }
+        else {
             Write-Warning "PyInstaller build failed, falling back to wheel"
         }
     }
@@ -59,7 +90,8 @@ try {
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  Created Python wheel" -ForegroundColor Green
     }
-} finally {
+}
+finally {
     Pop-Location
 }
 
@@ -77,13 +109,13 @@ New-Item -ItemType Directory -Path $configDir -Force | Out-Null
 
 $defaultConfig = @{
     version = $Version
-    bridge = @{
-        host = "127.0.0.1"
-        port = 3000
+    bridge  = @{
+        host      = "127.0.0.1"
+        port      = 3000
         use_https = $false
     }
-    server = @{
-        mode = "bridge"
+    server  = @{
+        mode      = "bridge"
         workspace = @("C:\RevitProjects", "$env:USERPROFILE\Documents")
     }
 }
@@ -147,3 +179,4 @@ Write-Host "`nNext steps:" -ForegroundColor Yellow
 Write-Host "  1. Test installation: .\scripts\install.ps1 -RevitVersion 2024" -ForegroundColor White
 Write-Host "  2. Create MSI: Build WiX installer from dist\ folder" -ForegroundColor White
 Write-Host "  3. Create release: Compress to RevitMCP-$Version.zip" -ForegroundColor White
+exit 0

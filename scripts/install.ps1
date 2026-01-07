@@ -9,10 +9,23 @@ $ErrorActionPreference = "Stop"
 Write-Host "RevitMCP Installer" -ForegroundColor Cyan
 Write-Host "==================`n" -ForegroundColor Cyan
 
-# Verify dist package exists
-if (-not (Test-Path $DistPath)) {
-    Write-Error "Distribution package not found at: $DistPath`nRun .\scripts\package.ps1 first"
+# Path Guard: Prevent Execution in System32 or Windows
+if ($PSScriptRoot -like "*C:\Windows*") {
+    Write-Error "Dangerous path detected: $PSScriptRoot"
+    Write-Error "Please clone the repo to a safe location (e.g., $env:USERPROFILE\src) and run from there."
     exit 1
+}
+
+# Verify dist package exists, or auto-build it
+if (-not (Test-Path $DistPath)) {
+    Write-Host "Distribution package not found at: $DistPath" -ForegroundColor Yellow
+    Write-Host "Auto-triggering packaging for Revit $RevitVersion..." -ForegroundColor Cyan
+    & "$PSScriptRoot\package.ps1" -RevitVersion $RevitVersion -Version "1.0.0"
+    
+    if (-not (Test-Path $DistPath)) {
+        Write-Error "Packaging failed. Please run .\scripts\package.ps1 manually to diagnose."
+        exit 1
+    }
 }
 
 # Install binaries to ProgramData
@@ -33,7 +46,8 @@ Write-Host "  Installed to: $targetBin" -ForegroundColor Green
 Write-Host "`nInstalling add-in manifest..." -ForegroundColor Yellow
 $addinDir = if ($AllUsers) {
     "C:\ProgramData\Autodesk\Revit\Addins\$RevitVersion"
-} else {
+}
+else {
     "$env:APPDATA\Autodesk\Revit\Addins\$RevitVersion"
 }
 
@@ -67,7 +81,8 @@ Write-Host "  4. Expected response: {`"status`":`"healthy`",`"revit_version`":`"
 Write-Host "`nTo install MCP server:" -ForegroundColor Yellow
 if (Test-Path "$DistPath\server\revit_mcp_server.exe") {
     Write-Host "  Run: $DistPath\server\revit_mcp_server.exe" -ForegroundColor White
-} else {
+}
+else {
     $wheel = Get-ChildItem "$DistPath\server\*.whl" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($wheel) {
         Write-Host "  pip install $($wheel.FullName)" -ForegroundColor White
