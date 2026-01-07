@@ -149,6 +149,10 @@ public static class BridgeCommandFactory
             "revit.set_element_material" => ExecuteSetElementMaterial(app, payload),
             "revit.get_render_settings" => ExecuteGetRenderSettings(app),
 
+            // Batch 7: Family Management
+            "revit.convert_to_group" => ExecuteConvertToGroup(app, payload),
+            "revit.edit_family" => ExecuteEditFamily(app, payload),
+
             _ => new { status = "error", message = $"Unknown tool: {tool}" }
         };
     }
@@ -288,7 +292,11 @@ public static class BridgeCommandFactory
             // Batch 6: Materials & Visuals
             "revit.create_material",
             "revit.set_element_material",
-            "revit.get_render_settings"
+            "revit.get_render_settings",
+
+            // Batch 7: Family Management
+            "revit.convert_to_group",
+            "revit.edit_family"
         };
     }
 
@@ -3692,5 +3700,114 @@ public static class BridgeCommandFactory
             return new Color(r, g, b);
         }
         return new Color(128, 128, 128); // Default gray
+    }
+
+    // ==================== BATCH 7: FAMILY MANAGEMENT ====================
+
+    private static object ExecuteConvertToGroup(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        JsonElement idsElement;
+        if (!payload.TryGetProperty("element_ids", out idsElement))
+            throw new ArgumentException("element_ids is required");
+
+        var elementIds = new List<ElementId>();
+        foreach (var id in idsElement.EnumerateArray())
+        {
+            elementIds.Add(new ElementId((long)id.GetInt32()));
+        }
+
+        if (elementIds.Count == 0)
+            throw new ArgumentException("element_ids list cannot be empty");
+
+        var name = payload.TryGetProperty("name", out var n) ? n.GetString() : null;
+
+        using (var trans = new Transaction(doc, "Create Group"))
+        {
+            trans.Start();
+
+            var group = doc.Create.NewGroup(elementIds);
+            
+            if (!string.IsNullOrEmpty(name))
+            {
+                // Uniqueness check handled by Revit usually, but good practice to handle errors
+                try {
+                    group.GroupType.Name = name;
+                } catch {
+                    // Ignore name conflict if auto-naming is acceptable, or handle specifically
+                }
+            }
+
+            trans.Commit();
+
+            return new
+            {
+                group_id = group.Id.Value,
+                group_name = group.Name,
+                group_type_name = group.GroupType.Name,
+                member_count = elementIds.Count
+            };
+        }
+    }
+
+    private static object ExecuteEditFamily(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        // This is a special command - it might change the Active Document context
+        // This generally works best in the UI context, but for API automation, we open the family document.
+
+        var familyName = payload.TryGetProperty("family_name", out var fn) ? fn.GetString() : null;
+        var familySymbolId = payload.TryGetProperty("family_symbol_id", out var fsid) ? (int?)fsid.GetInt32() : null;
+        var familyInstanceId = payload.TryGetProperty("family_instance_id", out var fiid) ? (int?)fiid.GetInt32() : null;
+
+        Family family = null;
+
+        if (familyInstanceId.HasValue)
+        {
+            var instance = doc.GetElement(new ElementId((long)familyInstanceId.Value)) as FamilyInstance;
+            family = instance?.Symbol.Family;
+        }
+        else if (familySymbolId.HasValue)
+        {
+            var symbol = doc.GetElement(new ElementId((long)familySymbolId.Value)) as FamilySymbol;
+            family = symbol?.Family;
+        }
+        else if (!string.IsNullOrEmpty(familyName))
+        {
+            family = new FilteredElementCollector(doc)
+                .OfClass(typeof(Family))
+                .Cast<Family>()
+                .FirstOrDefault(f => f.Name.Equals(familyName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (family == null)
+            throw new ArgumentException("Could not identify family to edit from provided arguments");
+
+        if (!family.IsEditable)
+            throw new InvalidOperationException($"Family '{family.Name}' is not editable");
+
+        // Open the family document
+        var familyDoc = doc.EditFamily(family);
+        
+        // In a real UI workflow, this would switch the view. In API context, it returns the document.
+        // We can't easily "switch" the user's view via pure API without some hacks, 
+        // but we can make it the active document if using the OpenAndActivateDocument method (UIApp).
+        // For now, we return info that it was opened, but the user might need to manually switch or we can try to activate it.
+
+        // Attempt to activate (only works if no other command is running, tricky in nested context)
+        // app.OpenAndActivateDocument(familyDoc.PathName); // PathName might be empty for in-memory edit
+
+        return new
+        {
+            status = "family_document_opened",
+            family_name = family.Name,
+            family_document_title = familyDoc.Title,
+            is_family_document = familyDoc.IsFamilyDocument,
+            categories = new FilteredElementCollector(familyDoc).OfClass(typeof(Category)).Cast<Category>().Select(c => c.Name).Take(10).ToList()
+        };
     }
 }
