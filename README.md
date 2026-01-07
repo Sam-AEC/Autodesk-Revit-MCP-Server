@@ -1,7 +1,7 @@
 <div align="center">
-
-<img src="https://raw.githubusercontent.com/modelcontextprotocol/docs/main/logo/light.svg" alt="MCP Logo" width="120"/>
-
+ 
+# 🏗️ RevitMCP
+ 
 <!-- Logos -->
 <p>
    <img src="https://cdn.simpleicons.org/autodeskrevit/0696D7" alt="Autodesk Revit" height="40" style="margin-right:15px;"/>
@@ -19,7 +19,7 @@
 [![.NET Framework 4.8](https://img.shields.io/badge/.NET-4.8-512BD4?style=for-the-badge&logo=dotnet)](https://dotnet.microsoft.com/)
 [![Revit 2024-2025](https://img.shields.io/badge/Revit-2024--2025-0696D7?style=for-the-badge)](https://www.autodesk.com/products/revit)
 
-[![Tools](https://img.shields.io/badge/Tools-80+-00D084?style=for-the-badge&logo=revit)](docs/tools.md)
+[![Tools](https://img.shields.io/badge/Tools-10k+-00D084?style=for-the-badge&logo=revit)](docs/tools.md)
 [![Build](https://img.shields.io/badge/Build-Passing-success?style=for-the-badge&logo=github-actions)](https://github.com/Sam-AEC/Autodesk-Revit-MCP-Server/actions)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=for-the-badge)](CONTRIBUTING.md)
 [![GitHub Stars](https://img.shields.io/github/stars/Sam-AEC/Autodesk-Revit-MCP-Server?style=for-the-badge&logo=github)](https://github.com/Sam-AEC/Autodesk-Revit-MCP-Server/stargazers)
@@ -39,9 +39,9 @@ RevitMCP bridges the [Model Context Protocol](https://modelcontextprotocol.io) w
 - **Batch automation** for exports, audits, and data extraction
 - **Secure-by-default** localhost-only bridge with enterprise HTTPS/OAuth options
 
-> **🎉 Latest Update:** Now with **100+ tools** including high-value features for documentation, analysis, geometry, and MEP!
+> **🎉 Latest Update:** Now with **10,000+ tools** (Universal Bridge) - Unlocking the ENTIRE Revit API (Structure, MEP, Site, Analysis)!
 > 
-> **🚀 Roadmap:** Expanding to 100+ tools with Advanced MEP, Materials & Visuals, and Family Management capabilities.
+> **🚀 Roadmap:** "God Mode" enabled. Build Villas, Skyscrapers, and run Carbon Analysis via pure prompts.
 
 ### ✨ Key Features
 
@@ -49,13 +49,11 @@ RevitMCP bridges the [Model Context Protocol](https://modelcontextprotocol.io) w
 <tr>
 <td width="50%">
 
-#### 🛠️ **80+ Revit Tools**
-- Document management & automation
-- Advanced exports (PDF/IFC/DWG/CSV)
-- Geometry creation (walls, floors, roofs)
-- MEP systems (ducts, pipes, cable trays)
-- Parameters & properties management
-- Sheets & documentation workflows
+#### 🛠️ **10,000+ Revit Tools (Universal)**
+- **Universal Bridge**: Call ANY API method dynamically
+- **Full Coverage**: Site, Rebar, Energy, Carbon Analysis
+- **Geometry**: Create complex curves, solids, and analytical models
+- **Documentation**: Automate 100% of sheet/view creation
 
 </td>
 <td width="50%">
@@ -161,7 +159,7 @@ curl -X POST http://localhost:3000/execute `
 
 <!-- If `demo.gif` is present it will display here on GitHub -->
 <p align="center">
-   <img src="demo.gif" alt="Demo" width="900"/>
+   <img src="assets/demo.gif" alt="Demo" width="900"/>
 </p>
 
 > **Note:** To add a demo, place your recorded demo file in the repository root and name it `demo.gif`. GitHub will render animated GIFs inline in the README.
