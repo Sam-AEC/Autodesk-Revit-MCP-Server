@@ -34,7 +34,17 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {},
                 "required": []
-            }
+                # Batch 7: Family Management
+        "revit_convert_to_group": ("revit.convert_to_group", {
+            "element_ids": arguments.get("element_ids"),
+            "name": arguments.get("name")
+        }),
+        "revit_edit_family": ("revit.edit_family", {
+            "family_name": arguments.get("family_name"),
+            "family_symbol_id": arguments.get("family_symbol_id"),
+            "family_instance_id": arguments.get("family_instance_id")
+        }),
+    }
         ),
         Tool(
             name="revit_create_wall",
@@ -815,6 +825,7 @@ def run_mcp_server():
 
 if __name__ == "__main__":
     run_mcp_server()
+
 
 
 

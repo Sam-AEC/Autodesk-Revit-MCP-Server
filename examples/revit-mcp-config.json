@@ -1,6 +1,0 @@
-{
-  "mode": "mock",
-  "workspace_dir": "C:/RevitProjects",
-  "allowed_directories": ["C:/RevitProjects"],
-  "bridge_url": "http://localhost:3000"
-}
