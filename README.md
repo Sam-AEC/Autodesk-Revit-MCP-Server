@@ -2,6 +2,15 @@
 
 <img src="https://raw.githubusercontent.com/modelcontextprotocol/docs/main/logo/light.svg" alt="MCP Logo" width="120"/>
 
+<!-- Official logos: place images in `assets/logos/` with the filenames below to render here -->
+<p>
+   <img src="assets/logos/autodesk-revit.png" alt="Autodesk Revit" height="36" style="margin-right:12px;"/>
+   <img src="assets/logos/microsoft-copilot.png" alt="Microsoft Copilot" height="36" style="margin-right:12px;"/>
+   <img src="assets/logos/model-context-protocol.svg" alt="Model Context Protocol" height="36" style="margin-right:12px;"/>
+   <img src="assets/logos/python.svg" alt="Python" height="36" style="margin-right:12px;"/>
+   <img src="assets/logos/dotnet.svg" alt=".NET" height="36"/>
+</p>
+
 # RevitMCP: Model Context Protocol for Autodesk Revit
 
 **Production-grade MCP server enabling AI agents and automation tools to control Autodesk Revit**
@@ -95,6 +104,105 @@ curl -X POST http://localhost:3000/execute `
 ```
 
 ---
+
+## Demo
+
+- **Quick demo GIF:** place your recorded demo file in the repository root and name it `demo.gif`. GitHub will render animated GIFs inline in the README.
+
+PowerShell (copy from your Downloads to the repo):
+
+```powershell
+# Replace the source path below if different
+Copy-Item -Path "C:\Users\samo3\Downloads\Recording 2026-01-07 153612.gif" -Destination "c:\Users\samo3\OneDrive - Heijmans N.V\Documenten\GitHub\Autodesk-Revit-MCP-Server\demo.gif"
+
+# Verify the file exists
+Test-Path .\demo.gif
+```
+
+Bash / WSL / Git Bash:
+
+```bash
+# from a bash shell
+cp "/mnt/c/Users/samo3/Downloads/Recording 2026-01-07 153612.gif" "./demo.gif"
+ls -l demo.gif
+```
+
+After copying, add and commit to git to publish the GIF on GitHub:
+
+```bash
+git add demo.gif
+git commit -m "Add demo GIF"
+git push
+```
+
+If you prefer the repo to contain a placeholder, create an empty text file named `demo.gif.placeholder` and copy the real GIF later.
+
+<!-- If `demo.gif` is present it will display here on GitHub -->
+<p align="center">
+   <img src="demo.gif" alt="Demo" width="900"/>
+</p>
+
+## Installation (updated)
+
+The project targets Python 3.11+ and the C# bridge targets the .NET Framework used by the Revit version you build for (typically .NET Framework 4.8 for Revit 2024). Use the steps below for a reliable local install from source.
+
+1. Install Python 3.11 (recommended) and ensure `python --version` shows 3.11.x or later.
+2. Create and activate a virtual environment (PowerShell):
+
+```powershell
+python -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip setuptools wheel
+```
+
+Or (Bash / WSL):
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+```
+
+3. Install the Python package in editable mode (this installs local package dependencies):
+
+```powershell
+cd packages/mcp-server-revit
+pip install -e .
+```
+
+4. Build the C# Revit add-in (requires Visual Studio Build Tools / .NET targeting pack appropriate for your Revit version):
+
+```powershell
+cd \path\to\repo\scripts
+#.\build-addin.ps1 -RevitVersion 2024
+```
+
+5. Install the add-in into Revit (the install script copies the .addin and DLLs into the Revit Addins folder):
+
+```powershell
+.\scripts\install.ps1 -RevitVersion 2024
+```
+
+6. Start Revit, then start the MCP server locally:
+
+```powershell
+# from repo root
+python -m revit_mcp_server
+# or run with an explicit python path if using multiple installs
+.\.venv\Scripts\python -m revit_mcp_server
+```
+
+7. Confirm health endpoint:
+
+```powershell
+curl http://127.0.0.1:3000/health
+```
+
+Notes:
+- If you plan to expose the server for Copilot Studio or remote access, configure HTTPS + OAuth as documented in `docs/security.md` and `docs/copilot-integration.md`.
+- For CI and tests, the repository includes a mock bridge to run `pytest` without Revit.
+
 
 ## Architecture
 
