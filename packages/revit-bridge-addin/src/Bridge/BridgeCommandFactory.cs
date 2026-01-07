@@ -48,6 +48,37 @@ public static class BridgeCommandFactory
             "revit.create_3d_view" => ExecuteCreate3DView(app, payload),
             "revit.create_section_view" => ExecuteCreateSectionView(app, payload),
 
+            // Parameters & Properties (10 new)
+            "revit.get_element_parameters" => ExecuteGetElementParameters(app, payload),
+            "revit.set_parameter_value" => ExecuteSetParameterValue(app, payload),
+            "revit.get_parameter_value" => ExecuteGetParameterValue(app, payload),
+            "revit.list_shared_parameters" => ExecuteListSharedParameters(app),
+            "revit.create_shared_parameter" => ExecuteCreateSharedParameter(app, payload),
+            "revit.list_project_parameters" => ExecuteListProjectParameters(app),
+            "revit.create_project_parameter" => ExecuteCreateProjectParameter(app, payload),
+            "revit.batch_set_parameters" => ExecuteBatchSetParameters(app, payload),
+            "revit.get_type_parameters" => ExecuteGetTypeParameters(app, payload),
+            "revit.set_type_parameter" => ExecuteSetTypeParameter(app, payload),
+
+            // Sheets & Documentation (10 new)
+            "revit.list_sheets" => ExecuteListSheets(app),
+            "revit.create_sheet" => ExecuteCreateSheet(app, payload),
+            "revit.delete_sheet" => ExecuteDeleteSheet(app, payload),
+            "revit.place_viewport_on_sheet" => ExecutePlaceViewportOnSheet(app, payload),
+            "revit.batch_create_sheets_from_csv" => ExecuteBatchCreateSheetsFromCsv(app, payload),
+            "revit.populate_titleblock" => ExecutePopulateTitleblock(app, payload),
+            "revit.list_titleblocks" => ExecuteListTitleblocks(app),
+            "revit.get_sheet_info" => ExecuteGetSheetInfo(app, payload),
+            "revit.duplicate_sheet" => ExecuteDuplicateSheet(app, payload),
+            "revit.renumber_sheets" => ExecuteRenumberSheets(app, payload),
+
+            // Advanced Exports (5 new)
+            "revit.export_dwg_by_view" => ExecuteExportDwgByView(app, payload),
+            "revit.export_ifc_with_settings" => ExecuteExportIfcWithSettings(app, payload),
+            "revit.export_navisworks" => ExecuteExportNavisworks(app, payload),
+            "revit.export_image" => ExecuteExportImage(app, payload),
+            "revit.render_3d_view" => ExecuteRender3DView(app, payload),
+
             _ => new { status = "error", message = $"Unknown tool: {tool}" }
         };
     }
@@ -89,7 +120,38 @@ public static class BridgeCommandFactory
             // View Creation
             "revit.create_floor_plan_view",
             "revit.create_3d_view",
-            "revit.create_section_view"
+            "revit.create_section_view",
+
+            // Parameters & Properties
+            "revit.get_element_parameters",
+            "revit.set_parameter_value",
+            "revit.get_parameter_value",
+            "revit.list_shared_parameters",
+            "revit.create_shared_parameter",
+            "revit.list_project_parameters",
+            "revit.create_project_parameter",
+            "revit.batch_set_parameters",
+            "revit.get_type_parameters",
+            "revit.set_type_parameter",
+
+            // Sheets & Documentation
+            "revit.list_sheets",
+            "revit.create_sheet",
+            "revit.delete_sheet",
+            "revit.place_viewport_on_sheet",
+            "revit.batch_create_sheets_from_csv",
+            "revit.populate_titleblock",
+            "revit.list_titleblocks",
+            "revit.get_sheet_info",
+            "revit.duplicate_sheet",
+            "revit.renumber_sheets",
+
+            // Advanced Exports
+            "revit.export_dwg_by_view",
+            "revit.export_ifc_with_settings",
+            "revit.export_navisworks",
+            "revit.export_image",
+            "revit.render_3d_view"
         };
     }
 
@@ -1041,5 +1103,1249 @@ public static class BridgeCommandFactory
     {
         var invalidChars = System.IO.Path.GetInvalidFileNameChars();
         return new string(fileName.Select(c => invalidChars.Contains(c) ? '_' : c).ToArray());
+    }
+
+    // ==================== PARAMETERS & PROPERTIES TOOLS ====================
+
+    private static object ExecuteGetElementParameters(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var elementId = payload.GetProperty("element_id").GetInt32();
+        var element = doc.GetElement(new ElementId(elementId));
+        if (element == null)
+            throw new ArgumentException($"Element with ID {elementId} not found");
+
+        var parameters = element.Parameters
+            .Cast<Parameter>()
+            .Where(p => p.HasValue)
+            .Select(p => new
+            {
+                name = p.Definition.Name,
+                value = GetParameterValueAsString(p),
+                parameter_type = p.Definition.ParameterType.ToString(),
+                storage_type = p.StorageType.ToString(),
+                is_read_only = p.IsReadOnly,
+                is_shared = p.IsShared,
+                guid = p.GUID.ToString()
+            })
+            .ToList();
+
+        return new
+        {
+            element_id = elementId,
+            element_type = element.GetType().Name,
+            element_name = element.Name,
+            parameter_count = parameters.Count,
+            parameters
+        };
+    }
+
+    private static object ExecuteSetParameterValue(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var elementId = payload.GetProperty("element_id").GetInt32();
+        var parameterName = payload.GetProperty("parameter_name").GetString();
+        var value = payload.GetProperty("value");
+
+        var element = doc.GetElement(new ElementId(elementId));
+        if (element == null)
+            throw new ArgumentException($"Element with ID {elementId} not found");
+
+        using (var trans = new Transaction(doc, "Set Parameter Value"))
+        {
+            trans.Start();
+
+            var parameter = element.LookupParameter(parameterName);
+            if (parameter == null)
+                throw new ArgumentException($"Parameter '{parameterName}' not found on element");
+
+            if (parameter.IsReadOnly)
+                throw new InvalidOperationException($"Parameter '{parameterName}' is read-only");
+
+            SetParameterValue(parameter, value);
+
+            trans.Commit();
+
+            return new
+            {
+                element_id = elementId,
+                parameter_name = parameterName,
+                new_value = GetParameterValueAsString(parameter),
+                status = "success"
+            };
+        }
+    }
+
+    private static object ExecuteGetParameterValue(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var elementId = payload.GetProperty("element_id").GetInt32();
+        var parameterName = payload.GetProperty("parameter_name").GetString();
+
+        var element = doc.GetElement(new ElementId(elementId));
+        if (element == null)
+            throw new ArgumentException($"Element with ID {elementId} not found");
+
+        var parameter = element.LookupParameter(parameterName);
+        if (parameter == null)
+            throw new ArgumentException($"Parameter '{parameterName}' not found on element");
+
+        return new
+        {
+            element_id = elementId,
+            parameter_name = parameterName,
+            value = GetParameterValueAsString(parameter),
+            storage_type = parameter.StorageType.ToString(),
+            parameter_type = parameter.Definition.ParameterType.ToString(),
+            is_read_only = parameter.IsReadOnly
+        };
+    }
+
+    private static object ExecuteListSharedParameters(UIApplication app)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var sharedParams = new FilteredElementCollector(doc)
+            .OfClass(typeof(SharedParameterElement))
+            .Cast<SharedParameterElement>()
+            .Select(sp => new
+            {
+                name = sp.Name,
+                guid = sp.GuidValue.ToString(),
+                definition_group = sp.GetDefinition()?.ParameterGroup.ToString()
+            })
+            .ToList();
+
+        return new
+        {
+            count = sharedParams.Count,
+            shared_parameters = sharedParams
+        };
+    }
+
+    private static object ExecuteCreateSharedParameter(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var parameterName = payload.GetProperty("name").GetString();
+        var parameterType = payload.GetProperty("parameter_type").GetString();
+        var groupName = payload.GetProperty("group_name").GetString();
+        var categoryNames = payload.GetProperty("categories").EnumerateArray()
+            .Select(e => e.GetString())
+            .ToList();
+
+        // Note: Creating shared parameters requires a shared parameter file
+        // This is a simplified implementation
+        throw new NotImplementedException(
+            "Creating shared parameters requires a shared parameter file to be configured. " +
+            "Use Revit UI to set up shared parameter file first, or provide file path in payload.");
+    }
+
+    private static object ExecuteListProjectParameters(UIApplication app)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var projectParams = new FilteredElementCollector(doc)
+            .OfClass(typeof(ParameterElement))
+            .Cast<ParameterElement>()
+            .Select(pe => new
+            {
+                name = pe.Name,
+                id = pe.Id.IntegerValue,
+                parameter_type = pe.get_Parameter(BuiltInParameter.ELEM_TYPE_PARAM)?.AsValueString() ?? "Unknown"
+            })
+            .ToList();
+
+        return new
+        {
+            count = projectParams.Count,
+            project_parameters = projectParams
+        };
+    }
+
+    private static object ExecuteCreateProjectParameter(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var parameterName = payload.GetProperty("name").GetString();
+        var parameterType = payload.GetProperty("parameter_type").GetString();
+        var groupName = payload.GetProperty("group").GetString();
+        var isInstance = payload.GetProperty("is_instance").GetBoolean();
+
+        // Note: Creating project parameters is complex and requires category binding
+        throw new NotImplementedException(
+            "Creating project parameters requires category binding setup. " +
+            "This functionality is planned for a future release.");
+    }
+
+    private static object ExecuteBatchSetParameters(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var updates = payload.GetProperty("updates").EnumerateArray()
+            .Select(item => new
+            {
+                ElementId = item.GetProperty("element_id").GetInt32(),
+                ParameterName = item.GetProperty("parameter_name").GetString(),
+                Value = item.GetProperty("value")
+            })
+            .ToList();
+
+        var results = new List<object>();
+        var successCount = 0;
+        var errorCount = 0;
+
+        using (var trans = new Transaction(doc, "Batch Set Parameters"))
+        {
+            trans.Start();
+
+            foreach (var update in updates)
+            {
+                try
+                {
+                    var element = doc.GetElement(new ElementId(update.ElementId));
+                    if (element == null)
+                    {
+                        results.Add(new { element_id = update.ElementId, status = "error", message = "Element not found" });
+                        errorCount++;
+                        continue;
+                    }
+
+                    var parameter = element.LookupParameter(update.ParameterName);
+                    if (parameter == null)
+                    {
+                        results.Add(new { element_id = update.ElementId, status = "error", message = $"Parameter '{update.ParameterName}' not found" });
+                        errorCount++;
+                        continue;
+                    }
+
+                    SetParameterValue(parameter, update.Value);
+                    results.Add(new { element_id = update.ElementId, parameter_name = update.ParameterName, status = "success" });
+                    successCount++;
+                }
+                catch (Exception ex)
+                {
+                    results.Add(new { element_id = update.ElementId, status = "error", message = ex.Message });
+                    errorCount++;
+                }
+            }
+
+            trans.Commit();
+        }
+
+        return new
+        {
+            total = updates.Count,
+            success_count = successCount,
+            error_count = errorCount,
+            results
+        };
+    }
+
+    private static object ExecuteGetTypeParameters(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var elementId = payload.GetProperty("element_id").GetInt32();
+        var element = doc.GetElement(new ElementId(elementId));
+        if (element == null)
+            throw new ArgumentException($"Element with ID {elementId} not found");
+
+        var elementType = doc.GetElement(element.GetTypeId()) as ElementType;
+        if (elementType == null)
+            throw new InvalidOperationException("Element has no associated type");
+
+        var typeParameters = elementType.Parameters
+            .Cast<Parameter>()
+            .Where(p => p.HasValue)
+            .Select(p => new
+            {
+                name = p.Definition.Name,
+                value = GetParameterValueAsString(p),
+                parameter_type = p.Definition.ParameterType.ToString(),
+                storage_type = p.StorageType.ToString(),
+                is_read_only = p.IsReadOnly
+            })
+            .ToList();
+
+        return new
+        {
+            element_id = elementId,
+            type_id = elementType.Id.IntegerValue,
+            type_name = elementType.Name,
+            type_family = elementType.FamilyName,
+            parameter_count = typeParameters.Count,
+            parameters = typeParameters
+        };
+    }
+
+    private static object ExecuteSetTypeParameter(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var typeId = payload.GetProperty("type_id").GetInt32();
+        var parameterName = payload.GetProperty("parameter_name").GetString();
+        var value = payload.GetProperty("value");
+
+        var elementType = doc.GetElement(new ElementId(typeId)) as ElementType;
+        if (elementType == null)
+            throw new ArgumentException($"Element type with ID {typeId} not found");
+
+        using (var trans = new Transaction(doc, "Set Type Parameter"))
+        {
+            trans.Start();
+
+            var parameter = elementType.LookupParameter(parameterName);
+            if (parameter == null)
+                throw new ArgumentException($"Parameter '{parameterName}' not found on type");
+
+            if (parameter.IsReadOnly)
+                throw new InvalidOperationException($"Parameter '{parameterName}' is read-only");
+
+            SetParameterValue(parameter, value);
+
+            trans.Commit();
+
+            return new
+            {
+                type_id = typeId,
+                type_name = elementType.Name,
+                parameter_name = parameterName,
+                new_value = GetParameterValueAsString(parameter),
+                status = "success"
+            };
+        }
+    }
+
+    // Helper methods for parameter handling
+    private static string GetParameterValueAsString(Parameter parameter)
+    {
+        if (!parameter.HasValue)
+            return null;
+
+        return parameter.StorageType switch
+        {
+            StorageType.String => parameter.AsString(),
+            StorageType.Integer => parameter.AsInteger().ToString(),
+            StorageType.Double => parameter.AsDouble().ToString(),
+            StorageType.ElementId => parameter.AsElementId().IntegerValue.ToString(),
+            _ => parameter.AsValueString()
+        };
+    }
+
+    private static void SetParameterValue(Parameter parameter, JsonElement value)
+    {
+        switch (parameter.StorageType)
+        {
+            case StorageType.String:
+                parameter.Set(value.GetString());
+                break;
+
+            case StorageType.Integer:
+                parameter.Set(value.GetInt32());
+                break;
+
+            case StorageType.Double:
+                parameter.Set(value.GetDouble());
+                break;
+
+            case StorageType.ElementId:
+                parameter.Set(new ElementId(value.GetInt32()));
+                break;
+
+            default:
+                throw new InvalidOperationException($"Unsupported storage type: {parameter.StorageType}");
+        }
+    }
+
+    // ==================== SHEETS & DOCUMENTATION TOOLS ====================
+
+    private static object ExecuteListSheets(UIApplication app)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var sheets = new FilteredElementCollector(doc)
+            .OfClass(typeof(ViewSheet))
+            .Cast<ViewSheet>()
+            .Select(sheet => new
+            {
+                id = sheet.Id.IntegerValue,
+                sheet_number = sheet.SheetNumber,
+                sheet_name = sheet.Name,
+                is_placeholder = sheet.IsPlaceholder,
+                titleblock_id = sheet.GetAllViewports().Count > 0
+                    ? doc.GetElement(sheet.GetAllViewports().First())?.GetTypeId().IntegerValue
+                    : (int?)null,
+                viewport_count = sheet.GetAllViewports().Count
+            })
+            .OrderBy(s => s.sheet_number)
+            .ToList();
+
+        return new
+        {
+            count = sheets.Count,
+            sheets
+        };
+    }
+
+    private static object ExecuteCreateSheet(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var sheetNumber = payload.GetProperty("sheet_number").GetString();
+        var sheetName = payload.GetProperty("sheet_name").GetString();
+        var titleblockName = payload.TryGetProperty("titleblock_name", out var tbName)
+            ? tbName.GetString()
+            : null;
+
+        using (var trans = new Transaction(doc, "Create Sheet"))
+        {
+            trans.Start();
+
+            ViewSheet sheet;
+            if (string.IsNullOrEmpty(titleblockName))
+            {
+                // Create placeholder sheet
+                sheet = ViewSheet.CreatePlaceholder(doc);
+            }
+            else
+            {
+                // Get titleblock family symbol
+                var titleblock = new FilteredElementCollector(doc)
+                    .OfClass(typeof(FamilySymbol))
+                    .Cast<FamilySymbol>()
+                    .FirstOrDefault(fs =>
+                        fs.Family.FamilyCategory.Name == "Title Blocks" &&
+                        fs.Family.Name.Equals(titleblockName, StringComparison.OrdinalIgnoreCase));
+
+                if (titleblock == null)
+                    throw new ArgumentException($"Titleblock '{titleblockName}' not found");
+
+                sheet = ViewSheet.Create(doc, titleblock.Id);
+            }
+
+            sheet.SheetNumber = sheetNumber;
+            sheet.Name = sheetName;
+
+            trans.Commit();
+
+            return new
+            {
+                sheet_id = sheet.Id.IntegerValue,
+                sheet_number = sheet.SheetNumber,
+                sheet_name = sheet.Name,
+                is_placeholder = sheet.IsPlaceholder,
+                status = "success"
+            };
+        }
+    }
+
+    private static object ExecuteDeleteSheet(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var sheetId = payload.GetProperty("sheet_id").GetInt32();
+
+        using (var trans = new Transaction(doc, "Delete Sheet"))
+        {
+            trans.Start();
+
+            var sheet = doc.GetElement(new ElementId(sheetId)) as ViewSheet;
+            if (sheet == null)
+                throw new ArgumentException($"Sheet with ID {sheetId} not found");
+
+            var sheetNumber = sheet.SheetNumber;
+            var sheetName = sheet.Name;
+
+            doc.Delete(new ElementId(sheetId));
+
+            trans.Commit();
+
+            return new
+            {
+                sheet_id = sheetId,
+                sheet_number = sheetNumber,
+                sheet_name = sheetName,
+                status = "deleted"
+            };
+        }
+    }
+
+    private static object ExecutePlaceViewportOnSheet(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var sheetId = payload.GetProperty("sheet_id").GetInt32();
+        var viewId = payload.GetProperty("view_id").GetInt32();
+        var location = payload.TryGetProperty("location", out var loc)
+            ? ParseXYZ(loc)
+            : new XYZ(0.5, 0.5, 0);
+
+        using (var trans = new Transaction(doc, "Place Viewport"))
+        {
+            trans.Start();
+
+            var sheet = doc.GetElement(new ElementId(sheetId)) as ViewSheet;
+            if (sheet == null)
+                throw new ArgumentException($"Sheet with ID {sheetId} not found");
+
+            var view = doc.GetElement(new ElementId(viewId)) as View;
+            if (view == null)
+                throw new ArgumentException($"View with ID {viewId} not found");
+
+            if (view.ViewType == ViewType.DrawingSheet)
+                throw new InvalidOperationException("Cannot place a sheet view on another sheet");
+
+            if (Viewport.CanAddViewToSheet(doc, sheetId, viewId))
+            {
+                var viewport = Viewport.Create(doc, sheet.Id, view.Id, location);
+
+                trans.Commit();
+
+                return new
+                {
+                    viewport_id = viewport.Id.IntegerValue,
+                    sheet_id = sheetId,
+                    view_id = viewId,
+                    view_name = view.Name,
+                    status = "success"
+                };
+            }
+            else
+            {
+                throw new InvalidOperationException($"View '{view.Name}' cannot be placed on sheet (may already be on another sheet)");
+            }
+        }
+    }
+
+    private static object ExecuteBatchCreateSheetsFromCsv(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var sheets = payload.GetProperty("sheets").EnumerateArray()
+            .Select(item => new
+            {
+                SheetNumber = item.GetProperty("sheet_number").GetString(),
+                SheetName = item.GetProperty("sheet_name").GetString(),
+                TitleblockName = item.TryGetProperty("titleblock_name", out var tb) ? tb.GetString() : null
+            })
+            .ToList();
+
+        var results = new List<object>();
+        var successCount = 0;
+        var errorCount = 0;
+
+        using (var trans = new Transaction(doc, "Batch Create Sheets"))
+        {
+            trans.Start();
+
+            foreach (var sheetData in sheets)
+            {
+                try
+                {
+                    ViewSheet sheet;
+                    if (string.IsNullOrEmpty(sheetData.TitleblockName))
+                    {
+                        sheet = ViewSheet.CreatePlaceholder(doc);
+                    }
+                    else
+                    {
+                        var titleblock = new FilteredElementCollector(doc)
+                            .OfClass(typeof(FamilySymbol))
+                            .Cast<FamilySymbol>()
+                            .FirstOrDefault(fs =>
+                                fs.Family.FamilyCategory.Name == "Title Blocks" &&
+                                fs.Family.Name.Equals(sheetData.TitleblockName, StringComparison.OrdinalIgnoreCase));
+
+                        if (titleblock == null)
+                        {
+                            results.Add(new { sheet_number = sheetData.SheetNumber, status = "error", message = $"Titleblock '{sheetData.TitleblockName}' not found" });
+                            errorCount++;
+                            continue;
+                        }
+
+                        sheet = ViewSheet.Create(doc, titleblock.Id);
+                    }
+
+                    sheet.SheetNumber = sheetData.SheetNumber;
+                    sheet.Name = sheetData.SheetName;
+
+                    results.Add(new {
+                        sheet_id = sheet.Id.IntegerValue,
+                        sheet_number = sheet.SheetNumber,
+                        sheet_name = sheet.Name,
+                        status = "success"
+                    });
+                    successCount++;
+                }
+                catch (Exception ex)
+                {
+                    results.Add(new { sheet_number = sheetData.SheetNumber, status = "error", message = ex.Message });
+                    errorCount++;
+                }
+            }
+
+            trans.Commit();
+        }
+
+        return new
+        {
+            total = sheets.Count,
+            success_count = successCount,
+            error_count = errorCount,
+            results
+        };
+    }
+
+    private static object ExecutePopulateTitleblock(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var sheetId = payload.GetProperty("sheet_id").GetInt32();
+        var parameters = payload.GetProperty("parameters").EnumerateObject()
+            .ToDictionary(p => p.Name, p => p.Value);
+
+        using (var trans = new Transaction(doc, "Populate Titleblock"))
+        {
+            trans.Start();
+
+            var sheet = doc.GetElement(new ElementId(sheetId)) as ViewSheet;
+            if (sheet == null)
+                throw new ArgumentException($"Sheet with ID {sheetId} not found");
+
+            var updated = new List<string>();
+            var failed = new List<string>();
+
+            foreach (var param in parameters)
+            {
+                try
+                {
+                    var parameter = sheet.LookupParameter(param.Key);
+                    if (parameter != null && !parameter.IsReadOnly)
+                    {
+                        SetParameterValue(parameter, param.Value);
+                        updated.Add(param.Key);
+                    }
+                    else
+                    {
+                        failed.Add(param.Key);
+                    }
+                }
+                catch (Exception)
+                {
+                    failed.Add(param.Key);
+                }
+            }
+
+            trans.Commit();
+
+            return new
+            {
+                sheet_id = sheetId,
+                sheet_number = sheet.SheetNumber,
+                updated_count = updated.Count,
+                failed_count = failed.Count,
+                updated_parameters = updated,
+                failed_parameters = failed,
+                status = "success"
+            };
+        }
+    }
+
+    private static object ExecuteListTitleblocks(UIApplication app)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var titleblocks = new FilteredElementCollector(doc)
+            .OfClass(typeof(FamilySymbol))
+            .Cast<FamilySymbol>()
+            .Where(fs => fs.Family.FamilyCategory.Name == "Title Blocks")
+            .Select(fs => new
+            {
+                id = fs.Id.IntegerValue,
+                family_name = fs.Family.Name,
+                type_name = fs.Name,
+                full_name = $"{fs.Family.Name}: {fs.Name}"
+            })
+            .ToList();
+
+        return new
+        {
+            count = titleblocks.Count,
+            titleblocks
+        };
+    }
+
+    private static object ExecuteGetSheetInfo(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var sheetId = payload.GetProperty("sheet_id").GetInt32();
+
+        var sheet = doc.GetElement(new ElementId(sheetId)) as ViewSheet;
+        if (sheet == null)
+            throw new ArgumentException($"Sheet with ID {sheetId} not found");
+
+        var viewports = sheet.GetAllViewports()
+            .Select(vpId => doc.GetElement(vpId) as Viewport)
+            .Where(vp => vp != null)
+            .Select(vp => new
+            {
+                viewport_id = vp.Id.IntegerValue,
+                view_id = vp.ViewId.IntegerValue,
+                view_name = doc.GetElement(vp.ViewId)?.Name
+            })
+            .ToList();
+
+        var parameters = sheet.Parameters
+            .Cast<Parameter>()
+            .Where(p => p.HasValue)
+            .Select(p => new
+            {
+                name = p.Definition.Name,
+                value = GetParameterValueAsString(p)
+            })
+            .ToDictionary(p => p.name, p => p.value);
+
+        return new
+        {
+            sheet_id = sheetId,
+            sheet_number = sheet.SheetNumber,
+            sheet_name = sheet.Name,
+            is_placeholder = sheet.IsPlaceholder,
+            viewport_count = viewports.Count,
+            viewports,
+            parameters
+        };
+    }
+
+    private static object ExecuteDuplicateSheet(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var sourceSheetId = payload.GetProperty("source_sheet_id").GetInt32();
+        var newSheetNumber = payload.GetProperty("new_sheet_number").GetString();
+        var newSheetName = payload.GetProperty("new_sheet_name").GetString();
+        var duplicateViewports = payload.TryGetProperty("duplicate_viewports", out var dv)
+            ? dv.GetBoolean()
+            : false;
+
+        using (var trans = new Transaction(doc, "Duplicate Sheet"))
+        {
+            trans.Start();
+
+            var sourceSheet = doc.GetElement(new ElementId(sourceSheetId)) as ViewSheet;
+            if (sourceSheet == null)
+                throw new ArgumentException($"Source sheet with ID {sourceSheetId} not found");
+
+            // Get titleblock from source sheet
+            ViewSheet newSheet;
+            if (sourceSheet.IsPlaceholder)
+            {
+                newSheet = ViewSheet.CreatePlaceholder(doc);
+            }
+            else
+            {
+                var titleblockId = sourceSheet.GetAllElements()
+                    .OfType<FamilyInstance>()
+                    .FirstOrDefault(fi => fi.Category.Name == "Title Blocks")?.GetTypeId();
+
+                if (titleblockId == null)
+                    throw new InvalidOperationException("Cannot find titleblock on source sheet");
+
+                newSheet = ViewSheet.Create(doc, titleblockId);
+            }
+
+            newSheet.SheetNumber = newSheetNumber;
+            newSheet.Name = newSheetName;
+
+            // Copy parameters
+            foreach (Parameter sourceParam in sourceSheet.Parameters)
+            {
+                if (!sourceParam.IsReadOnly && sourceParam.HasValue)
+                {
+                    var targetParam = newSheet.LookupParameter(sourceParam.Definition.Name);
+                    if (targetParam != null && !targetParam.IsReadOnly)
+                    {
+                        try
+                        {
+                            switch (sourceParam.StorageType)
+                            {
+                                case StorageType.String:
+                                    targetParam.Set(sourceParam.AsString());
+                                    break;
+                                case StorageType.Integer:
+                                    targetParam.Set(sourceParam.AsInteger());
+                                    break;
+                                case StorageType.Double:
+                                    targetParam.Set(sourceParam.AsDouble());
+                                    break;
+                            }
+                        }
+                        catch { /* Skip parameters that can't be copied */ }
+                    }
+                }
+            }
+
+            var viewportInfo = new List<object>();
+            if (duplicateViewports)
+            {
+                // Note: This creates new viewports but doesn't duplicate the views themselves
+                foreach (var vpId in sourceSheet.GetAllViewports())
+                {
+                    var sourceVp = doc.GetElement(vpId) as Viewport;
+                    if (sourceVp != null)
+                    {
+                        viewportInfo.Add(new
+                        {
+                            note = "Viewport duplication requires view duplication - not implemented",
+                            source_view_id = sourceVp.ViewId.IntegerValue
+                        });
+                    }
+                }
+            }
+
+            trans.Commit();
+
+            return new
+            {
+                new_sheet_id = newSheet.Id.IntegerValue,
+                new_sheet_number = newSheet.SheetNumber,
+                new_sheet_name = newSheet.Name,
+                source_sheet_id = sourceSheetId,
+                viewports_duplicated = viewportInfo.Count,
+                viewport_info = viewportInfo,
+                status = "success"
+            };
+        }
+    }
+
+    private static object ExecuteRenumberSheets(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var renumbering = payload.GetProperty("sheets").EnumerateArray()
+            .Select(item => new
+            {
+                SheetId = item.GetProperty("sheet_id").GetInt32(),
+                NewNumber = item.GetProperty("new_sheet_number").GetString()
+            })
+            .ToList();
+
+        var results = new List<object>();
+        var successCount = 0;
+        var errorCount = 0;
+
+        using (var trans = new Transaction(doc, "Renumber Sheets"))
+        {
+            trans.Start();
+
+            foreach (var item in renumbering)
+            {
+                try
+                {
+                    var sheet = doc.GetElement(new ElementId(item.SheetId)) as ViewSheet;
+                    if (sheet == null)
+                    {
+                        results.Add(new { sheet_id = item.SheetId, status = "error", message = "Sheet not found" });
+                        errorCount++;
+                        continue;
+                    }
+
+                    var oldNumber = sheet.SheetNumber;
+                    sheet.SheetNumber = item.NewNumber;
+
+                    results.Add(new
+                    {
+                        sheet_id = item.SheetId,
+                        old_number = oldNumber,
+                        new_number = sheet.SheetNumber,
+                        sheet_name = sheet.Name,
+                        status = "success"
+                    });
+                    successCount++;
+                }
+                catch (Exception ex)
+                {
+                    results.Add(new { sheet_id = item.SheetId, status = "error", message = ex.Message });
+                    errorCount++;
+                }
+            }
+
+            trans.Commit();
+        }
+
+        return new
+        {
+            total = renumbering.Count,
+            success_count = successCount,
+            error_count = errorCount,
+            results
+        };
+    }
+
+    // ==================== ADVANCED EXPORT TOOLS ====================
+
+    private static object ExecuteExportDwgByView(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var viewIds = payload.GetProperty("view_ids").EnumerateArray()
+            .Select(e => new ElementId(e.GetInt32()))
+            .ToList();
+        var outputDirectory = payload.GetProperty("output_directory").GetString();
+        var dwgVersion = payload.TryGetProperty("dwg_version", out var ver)
+            ? ver.GetString()
+            : "AutoCAD2018";
+
+        if (!System.IO.Directory.Exists(outputDirectory))
+            System.IO.Directory.CreateDirectory(outputDirectory);
+
+        var exportedFiles = new List<object>();
+        var dwgOptions = new DWGExportOptions
+        {
+            FileVersion = dwgVersion switch
+            {
+                "AutoCAD2018" => ACADVersion.R2018,
+                "AutoCAD2013" => ACADVersion.R2013,
+                "AutoCAD2010" => ACADVersion.R2010,
+                _ => ACADVersion.R2018
+            }
+        };
+
+        using (var trans = new Transaction(doc, "Export DWG"))
+        {
+            trans.Start();
+
+            foreach (var viewId in viewIds)
+            {
+                var view = doc.GetElement(viewId) as View;
+                if (view == null)
+                {
+                    exportedFiles.Add(new { view_id = viewId.IntegerValue, status = "error", message = "View not found" });
+                    continue;
+                }
+
+                var fileName = SanitizeFileName(view.Name);
+                var filePath = System.IO.Path.Combine(outputDirectory, $"{fileName}.dwg");
+
+                try
+                {
+                    doc.Export(outputDirectory, fileName, new List<ElementId> { viewId }, dwgOptions);
+                    exportedFiles.Add(new {
+                        view_id = viewId.IntegerValue,
+                        view_name = view.Name,
+                        file_path = filePath,
+                        status = "success"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    exportedFiles.Add(new {
+                        view_id = viewId.IntegerValue,
+                        view_name = view.Name,
+                        status = "error",
+                        message = ex.Message
+                    });
+                }
+            }
+
+            trans.Commit();
+        }
+
+        return new
+        {
+            exported_count = exportedFiles.Count(f => ((dynamic)f).status == "success"),
+            error_count = exportedFiles.Count(f => ((dynamic)f).status == "error"),
+            files = exportedFiles
+        };
+    }
+
+    private static object ExecuteExportIfcWithSettings(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var outputPath = payload.GetProperty("output_path").GetString();
+        var ifcVersion = payload.TryGetProperty("ifc_version", out var ver)
+            ? ver.GetString()
+            : "IFC2x3";
+        var exportBaseQuantities = payload.TryGetProperty("export_base_quantities", out var ebq)
+            ? ebq.GetBoolean()
+            : true;
+
+        var options = new IFCExportOptions
+        {
+            FileVersion = ifcVersion switch
+            {
+                "IFC4" => IFCVersion.IFC4,
+                "IFC2x3" => IFCVersion.IFC2x3,
+                "IFC2x2" => IFCVersion.IFC2x2,
+                _ => IFCVersion.IFC2x3
+            },
+            ExportBaseQuantities = exportBaseQuantities,
+            WallAndColumnSplitting = true,
+            SpaceBoundaryLevel = 1
+        };
+
+        using (var trans = new Transaction(doc, "Export IFC"))
+        {
+            trans.Start();
+
+            var result = doc.Export(
+                System.IO.Path.GetDirectoryName(outputPath),
+                System.IO.Path.GetFileNameWithoutExtension(outputPath),
+                options
+            );
+
+            trans.Commit();
+
+            return new
+            {
+                file_path = outputPath,
+                ifc_version = ifcVersion,
+                export_succeeded = result,
+                file_size_bytes = System.IO.File.Exists(outputPath)
+                    ? new System.IO.FileInfo(outputPath).Length
+                    : (long?)null,
+                status = result ? "success" : "error"
+            };
+        }
+    }
+
+    private static object ExecuteExportNavisworks(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var outputPath = payload.GetProperty("output_path").GetString();
+        var viewId = payload.TryGetProperty("view_id", out var vId)
+            ? new ElementId(vId.GetInt32())
+            : doc.ActiveView.Id;
+        var exportScope = payload.TryGetProperty("export_scope", out var scope)
+            ? scope.GetString()
+            : "EntireProject";
+
+        var options = new NavisworksExportOptions
+        {
+            ExportScope = exportScope switch
+            {
+                "CurrentView" => NavisworksExportScope.View,
+                "EntireProject" => NavisworksExportScope.Model,
+                _ => NavisworksExportScope.Model
+            },
+            ExportLinks = true,
+            ExportRoomAsAttribute = true,
+            ExportRoomGeometry = true,
+            ConvertElementProperties = true,
+            Coordinates = NavisworksCoordinates.Shared
+        };
+
+        if (exportScope == "CurrentView")
+        {
+            options.ViewId = viewId;
+        }
+
+        using (var trans = new Transaction(doc, "Export Navisworks"))
+        {
+            trans.Start();
+
+            var result = doc.Export(
+                System.IO.Path.GetDirectoryName(outputPath),
+                System.IO.Path.GetFileNameWithoutExtension(outputPath),
+                options
+            );
+
+            trans.Commit();
+
+            return new
+            {
+                file_path = outputPath,
+                export_scope = exportScope,
+                view_id = viewId.IntegerValue,
+                export_succeeded = result,
+                file_size_bytes = System.IO.File.Exists(outputPath)
+                    ? new System.IO.FileInfo(outputPath).Length
+                    : (long?)null,
+                status = result ? "success" : "error"
+            };
+        }
+    }
+
+    private static object ExecuteExportImage(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var viewId = payload.GetProperty("view_id").GetInt32();
+        var outputPath = payload.GetProperty("output_path").GetString();
+        var imageFormat = payload.TryGetProperty("format", out var fmt)
+            ? fmt.GetString()
+            : "PNG";
+        var resolution = payload.TryGetProperty("resolution", out var res)
+            ? res.GetInt32()
+            : 150;
+
+        var view = doc.GetElement(new ElementId(viewId)) as View;
+        if (view == null)
+            throw new ArgumentException($"View with ID {viewId} not found");
+
+        var options = new ImageExportOptions
+        {
+            ZoomType = ZoomFitType.FitToPage,
+            PixelSize = resolution,
+            ImageResolution = ImageResolution.DPI_150,
+            FilePath = System.IO.Path.GetDirectoryName(outputPath),
+            FitDirection = FitDirectionType.Horizontal,
+            HLRandWFViewsFileType = imageFormat switch
+            {
+                "PNG" => ImageFileType.PNG,
+                "JPG" => ImageFileType.JPEGLossless,
+                "JPEG" => ImageFileType.JPEGLossless,
+                "BMP" => ImageFileType.BMP,
+                "TIFF" => ImageFileType.TIFF,
+                _ => ImageFileType.PNG
+            },
+            ExportRange = ExportRange.SetOfViews
+        };
+
+        options.SetViewsAndSheets(new List<ElementId> { view.Id });
+
+        using (var trans = new Transaction(doc, "Export Image"))
+        {
+            trans.Start();
+
+            doc.ExportImage(options);
+
+            trans.Commit();
+
+            var expectedFile = System.IO.Path.Combine(
+                System.IO.Path.GetDirectoryName(outputPath),
+                $"{SanitizeFileName(view.Name)}.{imageFormat.ToLower()}"
+            );
+
+            return new
+            {
+                view_id = viewId,
+                view_name = view.Name,
+                expected_file_path = expectedFile,
+                format = imageFormat,
+                resolution_dpi = resolution,
+                file_exists = System.IO.File.Exists(expectedFile),
+                status = "success"
+            };
+        }
+    }
+
+    private static object ExecuteRender3DView(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null)
+            throw new InvalidOperationException("No active document");
+
+        var viewId = payload.GetProperty("view_id").GetInt32();
+        var outputPath = payload.GetProperty("output_path").GetString();
+        var renderQuality = payload.TryGetProperty("quality", out var qual)
+            ? qual.GetString()
+            : "Medium";
+        var imageWidth = payload.TryGetProperty("width", out var w)
+            ? w.GetInt32()
+            : 1920;
+        var imageHeight = payload.TryGetProperty("height", out var h)
+            ? h.GetInt32()
+            : 1080;
+
+        var view = doc.GetElement(new ElementId(viewId)) as View3D;
+        if (view == null)
+            throw new ArgumentException($"3D View with ID {viewId} not found");
+
+        var renderingSettings = new RenderingSettings(doc);
+        renderingSettings.Quality = renderQuality switch
+        {
+            "Draft" => RenderingQualityType.Draft,
+            "Medium" => RenderingQualityType.Medium,
+            "High" => RenderingQualityType.High,
+            _ => RenderingQualityType.Medium
+        };
+        renderingSettings.Resolution = RenderingResolution.Custom;
+        renderingSettings.ResolutionWidth = imageWidth;
+        renderingSettings.ResolutionHeight = imageHeight;
+
+        using (var trans = new Transaction(doc, "Render 3D View"))
+        {
+            trans.Start();
+
+            var renderOptions = new RenderingImageExportOptions
+            {
+                ImageExportName = System.IO.Path.GetFileNameWithoutExtension(outputPath),
+                FilePath = System.IO.Path.GetDirectoryName(outputPath)
+            };
+
+            // Note: Rendering is typically an asynchronous operation in Revit
+            // This may require additional handling for production use
+            view.Render(renderingSettings, renderOptions);
+
+            trans.Commit();
+
+            return new
+            {
+                view_id = viewId,
+                view_name = view.Name,
+                output_path = outputPath,
+                quality = renderQuality,
+                width = imageWidth,
+                height = imageHeight,
+                note = "Rendering may take time to complete. Check output directory.",
+                status = "initiated"
+            };
+        }
     }
 }
