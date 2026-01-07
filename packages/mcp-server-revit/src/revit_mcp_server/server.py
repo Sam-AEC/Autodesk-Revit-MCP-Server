@@ -20,10 +20,10 @@ class BridgeTransport(Protocol):
 class MCPServer:
     def __init__(
         self,
-        config: Config | None = None,
+        config_obj: Config | None = None,
         bridge_factory: Callable[[str], BridgeTransport] | None = None,
     ) -> None:
-        self.config = config or config
+        self.config = config_obj if config_obj is not None else config
         self.workspace = WorkspaceMonitor(self.config.allowed_directories)
         self.audit = AuditRecorder(self.config.audit_log)
         self.handlers: Dict[str, Callable[[dict, WorkspaceMonitor], dict]] = TOOL_HANDLERS

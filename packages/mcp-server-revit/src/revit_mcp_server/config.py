@@ -1,13 +1,36 @@
 from __future__ import annotations
 
+import os
 from enum import Enum
 from json import JSONDecodeError
 from pathlib import Path
 from typing import List
 
+from dotenv import load_dotenv
 from pydantic import DirectoryPath, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic_settings.sources.providers import env as env_source
+
+# Load .env file - search in multiple locations
+# 1. Repository root (when running from source)
+# 2. Current working directory
+# 3. Package directory
+_possible_locations = [
+    Path(__file__).parent.parent.parent.parent.parent / ".env",  # repo root from package
+    Path.cwd() / ".env",  # current directory
+    Path(__file__).parent.parent.parent / ".env",  # package root
+]
+
+_env_loaded = False
+for _env_file in _possible_locations:
+    if _env_file.exists():
+        load_dotenv(_env_file)
+        _env_loaded = True
+        break
+
+if not _env_loaded:
+    # Last resort: try loading from current directory without checking existence
+    load_dotenv()
 
 
 class BridgeMode(str, Enum):
