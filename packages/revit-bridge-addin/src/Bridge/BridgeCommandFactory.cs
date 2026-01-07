@@ -202,7 +202,7 @@ public static class BridgeCommandFactory
             .Where(v => !v.IsTemplate)
             .Select(v => new
             {
-                id = v.Id.IntegerValue,
+                id = v.Id.Value,
                 name = v.Name,
                 type = v.ViewType.ToString(),
                 scale = v.Scale,
@@ -406,7 +406,7 @@ public static class BridgeCommandFactory
             .OrderBy(l => l.Elevation)
             .Select(l => new
             {
-                id = l.Id.IntegerValue,
+                id = l.Id.Value,
                 name = l.Name,
                 elevation = l.Elevation,
                 elevation_ft = l.Elevation,
@@ -458,7 +458,7 @@ public static class BridgeCommandFactory
 
             return new
             {
-                wall_id = wall.Id.IntegerValue,
+                wall_id = wall.Id.Value,
                 length = line.Length,
                 length_ft = line.Length,
                 length_m = UnitUtils.ConvertFromInternalUnits(line.Length, UnitTypeId.Meters),
@@ -516,7 +516,7 @@ public static class BridgeCommandFactory
 
             return new
             {
-                floor_id = floor.Id.IntegerValue,
+                floor_id = floor.Id.Value,
                 area_sf = area,
                 area_sm = UnitUtils.ConvertFromInternalUnits(area, UnitTypeId.SquareMeters),
                 level = levelName
@@ -561,7 +561,7 @@ public static class BridgeCommandFactory
 
             return new
             {
-                roof_id = footprint.Id.IntegerValue,
+                roof_id = footprint.Id.Value,
                 level = levelName,
                 curve_count = curveArray.Size
             };
@@ -588,7 +588,7 @@ public static class BridgeCommandFactory
 
             return new
             {
-                level_id = level.Id.IntegerValue,
+                level_id = level.Id.Value,
                 name = level.Name,
                 elevation = level.Elevation,
                 elevation_ft = level.Elevation,
@@ -623,7 +623,7 @@ public static class BridgeCommandFactory
 
             return new
             {
-                grid_id = grid.Id.IntegerValue,
+                grid_id = grid.Id.Value,
                 name = grid.Name,
                 curve_type = grid.Curve.GetType().Name
             };
@@ -666,7 +666,7 @@ public static class BridgeCommandFactory
 
             return new
             {
-                room_id = room.Id.IntegerValue,
+                room_id = room.Id.Value,
                 name = room.Name,
                 number = room.Number,
                 area_sf = area,
@@ -691,7 +691,7 @@ public static class BridgeCommandFactory
             .WhereElementIsNotElementType()
             .Select(e => new
             {
-                id = e.Id.IntegerValue,
+                id = e.Id.Value,
                 name = e.Name,
                 category = e.Category?.Name,
                 type = doc.GetElement(e.GetTypeId())?.Name
@@ -713,7 +713,7 @@ public static class BridgeCommandFactory
         {
             trans.Start();
 
-            var id = new ElementId(elementId);
+            var id = new ElementId((long)elementId);
             var deletedIds = doc.Delete(id);
 
             trans.Commit();
@@ -721,7 +721,7 @@ public static class BridgeCommandFactory
             return new
             {
                 deleted_count = deletedIds.Count,
-                deleted_ids = deletedIds.Select(i => i.IntegerValue).ToList()
+                deleted_ids = deletedIds.Select(i => i.Value).ToList()
             };
         }
     }
@@ -758,7 +758,7 @@ public static class BridgeCommandFactory
 
             return new
             {
-                instance_id = instance.Id.IntegerValue,
+                instance_id = instance.Id.Value,
                 family = familyName,
                 type = typeName,
                 level = levelName
@@ -781,7 +781,7 @@ public static class BridgeCommandFactory
         {
             trans.Start();
 
-            var wall = doc.GetElement(new ElementId(wallId)) as Wall;
+            var wall = doc.GetElement(new ElementId((long)wallId)) as Wall;
             if (wall == null)
                 throw new ArgumentException($"Wall with ID {wallId} not found");
 
@@ -799,7 +799,7 @@ public static class BridgeCommandFactory
 
             return new
             {
-                door_id = door.Id.IntegerValue,
+                door_id = door.Id.Value,
                 family = familyName,
                 type = typeName,
                 wall_id = wallId
@@ -822,7 +822,7 @@ public static class BridgeCommandFactory
         {
             trans.Start();
 
-            var wall = doc.GetElement(new ElementId(wallId)) as Wall;
+            var wall = doc.GetElement(new ElementId((long)wallId)) as Wall;
             if (wall == null)
                 throw new ArgumentException($"Wall with ID {wallId} not found");
 
@@ -840,7 +840,7 @@ public static class BridgeCommandFactory
 
             return new
             {
-                window_id = window.Id.IntegerValue,
+                window_id = window.Id.Value,
                 family = familyName,
                 type = typeName,
                 wall_id = wallId
@@ -863,12 +863,12 @@ public static class BridgeCommandFactory
                        f.FamilyCategory?.Name.Equals(categoryFilter, StringComparison.OrdinalIgnoreCase) == true)
             .Select(f => new
             {
-                family_id = f.Id.IntegerValue,
+                family_id = f.Id.Value,
                 name = f.Name,
                 category = f.FamilyCategory?.Name,
                 types = GetFamilySymbols(doc, f).Select(fs => new
                 {
-                    type_id = fs.Id.IntegerValue,
+                    type_id = fs.Id.Value,
                     name = fs.Name
                 }).ToList()
             })
@@ -906,7 +906,7 @@ public static class BridgeCommandFactory
 
             return new
             {
-                view_id = view.Id.IntegerValue,
+                view_id = view.Id.Value,
                 name = view.Name,
                 level = levelName,
                 view_type = view.ViewType.ToString()
@@ -934,7 +934,7 @@ public static class BridgeCommandFactory
 
             return new
             {
-                view_id = view3d.Id.IntegerValue,
+                view_id = view3d.Id.Value,
                 name = view3d.Name,
                 view_type = view3d.ViewType.ToString()
             };
@@ -979,7 +979,7 @@ public static class BridgeCommandFactory
 
             return new
             {
-                view_id = section.Id.IntegerValue,
+                view_id = section.Id.Value,
                 name = section.Name,
                 view_type = section.ViewType.ToString()
             };
@@ -1122,7 +1122,7 @@ public static class BridgeCommandFactory
             throw new InvalidOperationException("No active document");
 
         var elementId = payload.GetProperty("element_id").GetInt32();
-        var element = doc.GetElement(new ElementId(elementId));
+        var element = doc.GetElement(new ElementId((long)elementId));
         if (element == null)
             throw new ArgumentException($"Element with ID {elementId} not found");
 
@@ -1161,7 +1161,7 @@ public static class BridgeCommandFactory
         var parameterName = payload.GetProperty("parameter_name").GetString();
         var value = payload.GetProperty("value");
 
-        var element = doc.GetElement(new ElementId(elementId));
+        var element = doc.GetElement(new ElementId((long)elementId));
         if (element == null)
             throw new ArgumentException($"Element with ID {elementId} not found");
 
@@ -1199,7 +1199,7 @@ public static class BridgeCommandFactory
         var elementId = payload.GetProperty("element_id").GetInt32();
         var parameterName = payload.GetProperty("parameter_name").GetString();
 
-        var element = doc.GetElement(new ElementId(elementId));
+        var element = doc.GetElement(new ElementId((long)elementId));
         if (element == null)
             throw new ArgumentException($"Element with ID {elementId} not found");
 
@@ -1274,7 +1274,7 @@ public static class BridgeCommandFactory
             .Select(pe => new
             {
                 name = pe.Name,
-                id = pe.Id.IntegerValue,
+                id = pe.Id.Value,
                 parameter_type = pe.get_Parameter(BuiltInParameter.ELEM_TYPE_PARAM)?.AsValueString() ?? "Unknown"
             })
             .ToList();
@@ -1330,7 +1330,7 @@ public static class BridgeCommandFactory
             {
                 try
                 {
-                    var element = doc.GetElement(new ElementId(update.ElementId));
+                    var element = doc.GetElement(new ElementId((long)update.ElementId));
                     if (element == null)
                     {
                         results.Add(new { element_id = update.ElementId, status = "error", message = "Element not found" });
@@ -1376,7 +1376,7 @@ public static class BridgeCommandFactory
             throw new InvalidOperationException("No active document");
 
         var elementId = payload.GetProperty("element_id").GetInt32();
-        var element = doc.GetElement(new ElementId(elementId));
+        var element = doc.GetElement(new ElementId((long)elementId));
         if (element == null)
             throw new ArgumentException($"Element with ID {elementId} not found");
 
@@ -1400,7 +1400,7 @@ public static class BridgeCommandFactory
         return new
         {
             element_id = elementId,
-            type_id = elementType.Id.IntegerValue,
+            type_id = elementType.Id.Value,
             type_name = elementType.Name,
             type_family = elementType.FamilyName,
             parameter_count = typeParameters.Count,
@@ -1418,7 +1418,7 @@ public static class BridgeCommandFactory
         var parameterName = payload.GetProperty("parameter_name").GetString();
         var value = payload.GetProperty("value");
 
-        var elementType = doc.GetElement(new ElementId(typeId)) as ElementType;
+        var elementType = doc.GetElement(new ElementId((long)typeId)) as ElementType;
         if (elementType == null)
             throw new ArgumentException($"Element type with ID {typeId} not found");
 
@@ -1459,7 +1459,7 @@ public static class BridgeCommandFactory
             StorageType.String => parameter.AsString(),
             StorageType.Integer => parameter.AsInteger().ToString(),
             StorageType.Double => parameter.AsDouble().ToString(),
-            StorageType.ElementId => parameter.AsElementId().IntegerValue.ToString(),
+            StorageType.ElementId => parameter.AsElementId().Value.ToString(),
             _ => parameter.AsValueString()
         };
     }
@@ -1520,7 +1520,7 @@ public static class BridgeCommandFactory
                 break;
 
             case StorageType.ElementId:
-                parameter.Set(new ElementId(value.GetInt32()));
+                parameter.Set(new ElementId(value.GetInt64()));
                 break;
 
             default:
@@ -1541,12 +1541,12 @@ public static class BridgeCommandFactory
             .Cast<ViewSheet>()
             .Select(sheet => new
             {
-                id = sheet.Id.IntegerValue,
+                id = sheet.Id.Value,
                 sheet_number = sheet.SheetNumber,
                 sheet_name = sheet.Name,
                 is_placeholder = sheet.IsPlaceholder,
                 titleblock_id = sheet.GetAllViewports().Count > 0
-                    ? doc.GetElement(sheet.GetAllViewports().First())?.GetTypeId().IntegerValue
+                    ? doc.GetElement(sheet.GetAllViewports().First())?.GetTypeId().Value
                     : (int?)null,
                 viewport_count = sheet.GetAllViewports().Count
             })
@@ -1605,7 +1605,7 @@ public static class BridgeCommandFactory
 
             return new
             {
-                sheet_id = sheet.Id.IntegerValue,
+                sheet_id = sheet.Id.Value,
                 sheet_number = sheet.SheetNumber,
                 sheet_name = sheet.Name,
                 is_placeholder = sheet.IsPlaceholder,
@@ -1626,14 +1626,14 @@ public static class BridgeCommandFactory
         {
             trans.Start();
 
-            var sheet = doc.GetElement(new ElementId(sheetId)) as ViewSheet;
+            var sheet = doc.GetElement(new ElementId((long)sheetId)) as ViewSheet;
             if (sheet == null)
                 throw new ArgumentException($"Sheet with ID {sheetId} not found");
 
             var sheetNumber = sheet.SheetNumber;
             var sheetName = sheet.Name;
 
-            doc.Delete(new ElementId(sheetId));
+            doc.Delete(new ElementId((long)sheetId));
 
             trans.Commit();
 
@@ -1663,18 +1663,18 @@ public static class BridgeCommandFactory
         {
             trans.Start();
 
-            var sheet = doc.GetElement(new ElementId(sheetId)) as ViewSheet;
+            var sheet = doc.GetElement(new ElementId((long)sheetId)) as ViewSheet;
             if (sheet == null)
                 throw new ArgumentException($"Sheet with ID {sheetId} not found");
 
-            var view = doc.GetElement(new ElementId(viewId)) as View;
+            var view = doc.GetElement(new ElementId((long)viewId)) as View;
             if (view == null)
                 throw new ArgumentException($"View with ID {viewId} not found");
 
             if (view.ViewType == ViewType.DrawingSheet)
                 throw new InvalidOperationException("Cannot place a sheet view on another sheet");
 
-            if (Viewport.CanAddViewToSheet(doc, new ElementId(sheetId), new ElementId(viewId)))
+            if (Viewport.CanAddViewToSheet(doc, new ElementId((long)sheetId), new ElementId((long)viewId)))
             {
                 var viewport = Viewport.Create(doc, sheet.Id, view.Id, location);
 
@@ -1682,7 +1682,7 @@ public static class BridgeCommandFactory
 
                 return new
                 {
-                    viewport_id = viewport.Id.IntegerValue,
+                    viewport_id = viewport.Id.Value,
                     sheet_id = sheetId,
                     view_id = viewId,
                     view_name = view.Name,
@@ -1751,7 +1751,7 @@ public static class BridgeCommandFactory
                     sheet.Name = sheetData.SheetName;
 
                     results.Add(new {
-                        sheet_id = sheet.Id.IntegerValue,
+                        sheet_id = sheet.Id.Value,
                         sheet_number = sheet.SheetNumber,
                         sheet_name = sheet.Name,
                         status = "success"
@@ -1791,7 +1791,7 @@ public static class BridgeCommandFactory
         {
             trans.Start();
 
-            var sheet = doc.GetElement(new ElementId(sheetId)) as ViewSheet;
+            var sheet = doc.GetElement(new ElementId((long)sheetId)) as ViewSheet;
             if (sheet == null)
                 throw new ArgumentException($"Sheet with ID {sheetId} not found");
 
@@ -1846,7 +1846,7 @@ public static class BridgeCommandFactory
             .Where(fs => fs.Family.FamilyCategory.Name == "Title Blocks")
             .Select(fs => new
             {
-                id = fs.Id.IntegerValue,
+                id = fs.Id.Value,
                 family_name = fs.Family.Name,
                 type_name = fs.Name,
                 full_name = $"{fs.Family.Name}: {fs.Name}"
@@ -1868,7 +1868,7 @@ public static class BridgeCommandFactory
 
         var sheetId = payload.GetProperty("sheet_id").GetInt32();
 
-        var sheet = doc.GetElement(new ElementId(sheetId)) as ViewSheet;
+        var sheet = doc.GetElement(new ElementId((long)sheetId)) as ViewSheet;
         if (sheet == null)
             throw new ArgumentException($"Sheet with ID {sheetId} not found");
 
@@ -1877,8 +1877,8 @@ public static class BridgeCommandFactory
             .Where(vp => vp != null)
             .Select(vp => new
             {
-                viewport_id = vp.Id.IntegerValue,
-                view_id = vp.ViewId.IntegerValue,
+                viewport_id = vp.Id.Value,
+                view_id = vp.ViewId.Value,
                 view_name = doc.GetElement(vp.ViewId)?.Name
             })
             .ToList();
@@ -1922,7 +1922,7 @@ public static class BridgeCommandFactory
         {
             trans.Start();
 
-            var sourceSheet = doc.GetElement(new ElementId(sourceSheetId)) as ViewSheet;
+            var sourceSheet = doc.GetElement(new ElementId((long)sourceSheetId)) as ViewSheet;
             if (sourceSheet == null)
                 throw new ArgumentException($"Source sheet with ID {sourceSheetId} not found");
 
@@ -1989,7 +1989,7 @@ public static class BridgeCommandFactory
                         viewportInfo.Add(new
                         {
                             note = "Viewport duplication requires view duplication - not implemented",
-                            source_view_id = sourceVp.ViewId.IntegerValue
+                            source_view_id = sourceVp.ViewId.Value
                         });
                     }
                 }
@@ -1999,7 +1999,7 @@ public static class BridgeCommandFactory
 
             return new
             {
-                new_sheet_id = newSheet.Id.IntegerValue,
+                new_sheet_id = newSheet.Id.Value,
                 new_sheet_number = newSheet.SheetNumber,
                 new_sheet_name = newSheet.Name,
                 source_sheet_id = sourceSheetId,
@@ -2036,7 +2036,7 @@ public static class BridgeCommandFactory
             {
                 try
                 {
-                    var sheet = doc.GetElement(new ElementId(item.SheetId)) as ViewSheet;
+                    var sheet = doc.GetElement(new ElementId((long)item.SheetId)) as ViewSheet;
                     if (sheet == null)
                     {
                         results.Add(new { sheet_id = item.SheetId, status = "error", message = "Sheet not found" });
@@ -2085,7 +2085,7 @@ public static class BridgeCommandFactory
             throw new InvalidOperationException("No active document");
 
         var viewIds = payload.GetProperty("view_ids").EnumerateArray()
-            .Select(e => new ElementId(e.GetInt32()))
+            .Select(e => new ElementId(e.GetInt64()))
             .ToList();
         var outputDirectory = payload.GetProperty("output_directory").GetString();
         var dwgVersion = payload.TryGetProperty("dwg_version", out var ver)
@@ -2116,7 +2116,7 @@ public static class BridgeCommandFactory
                 var view = doc.GetElement(viewId) as View;
                 if (view == null)
                 {
-                    exportedFiles.Add(new { view_id = viewId.IntegerValue, status = "error", message = "View not found" });
+                    exportedFiles.Add(new { view_id = viewId.Value, status = "error", message = "View not found" });
                     continue;
                 }
 
@@ -2127,7 +2127,7 @@ public static class BridgeCommandFactory
                 {
                     doc.Export(outputDirectory, fileName, new List<ElementId> { viewId }, dwgOptions);
                     exportedFiles.Add(new {
-                        view_id = viewId.IntegerValue,
+                        view_id = viewId.Value,
                         view_name = view.Name,
                         file_path = filePath,
                         status = "success"
@@ -2136,7 +2136,7 @@ public static class BridgeCommandFactory
                 catch (Exception ex)
                 {
                     exportedFiles.Add(new {
-                        view_id = viewId.IntegerValue,
+                        view_id = viewId.Value,
                         view_name = view.Name,
                         status = "error",
                         message = ex.Message
@@ -2216,7 +2216,7 @@ public static class BridgeCommandFactory
 
         var outputPath = payload.GetProperty("output_path").GetString();
         var viewId = payload.TryGetProperty("view_id", out var vId)
-            ? new ElementId(vId.GetInt32())
+            ? new ElementId(vId.GetInt64())
             : doc.ActiveView.Id;
         var exportScope = payload.TryGetProperty("export_scope", out var scope)
             ? scope.GetString()
@@ -2269,7 +2269,7 @@ public static class BridgeCommandFactory
             {
                 file_path = outputPath,
                 export_scope = exportScope,
-                view_id = viewId.IntegerValue,
+                view_id = viewId.Value,
                 export_succeeded = exportSucceeded,
                 file_size_bytes = System.IO.File.Exists(outputPath)
                     ? new System.IO.FileInfo(outputPath).Length
@@ -2295,7 +2295,7 @@ public static class BridgeCommandFactory
             ? res.GetInt32()
             : 150;
 
-        var view = doc.GetElement(new ElementId(viewId)) as View;
+        var view = doc.GetElement(new ElementId((long)viewId)) as View;
         if (view == null)
             throw new ArgumentException($"View with ID {viewId} not found");
 
@@ -2364,7 +2364,7 @@ public static class BridgeCommandFactory
             ? h.GetInt32()
             : 1080;
 
-        var view = doc.GetElement(new ElementId(viewId)) as View3D;
+        var view = doc.GetElement(new ElementId((long)viewId)) as View3D;
         if (view == null)
             throw new ArgumentException($"3D View with ID {viewId} not found");
 
