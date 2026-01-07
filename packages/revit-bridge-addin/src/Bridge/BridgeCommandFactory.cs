@@ -322,7 +322,12 @@ public static class BridgeCommandFactory
             "revit.calculate_material_quantities",
             "revit.get_room_boundary",
             "revit.get_project_location",
-            "revit.get_warnings"
+            "revit.get_warnings",
+
+            // Batch 9: Universal Reflection
+            "revit.invoke_method",
+            "revit.reflect_get",
+            "revit.reflect_set"
         };
     }
 
@@ -4194,5 +4199,98 @@ public static class BridgeCommandFactory
         }).ToList();
 
         return new { warnings = result, count = warnings.Count };
+    }
+
+    // ==================== BATCH 9: UNIVERSAL REFLECTION BRIDGE ====================
+
+    private static object ExecuteInvokeMethod(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        string className = payload.GetProperty("class_name").GetString();
+        string methodName = payload.GetProperty("method_name").GetString();
+        JsonElement args = payload.GetProperty("arguments");
+        string targetId = payload.TryGetProperty("target_id", out var t) ? t.GetString() : null;
+
+        using (var trans = new Transaction(doc, $"Invoke {methodName}"))
+        {
+            if (payload.TryGetProperty("use_transaction", out var ut) && ut.GetBoolean())
+                trans.Start();
+            
+            try
+            {
+                object result = ReflectionHelper.InvokeMethod(doc, className, methodName, args, targetId);
+                
+                if (trans.GetStatus() == TransactionStatus.Started)
+                    trans.Commit();
+                    
+                return result ?? new { status = "void" };
+            }
+            catch (Exception ex)
+            {
+                if (trans.GetStatus() == TransactionStatus.Started)
+                    trans.RollBack();
+                throw new Exception($"Invocation failed: {ex.Message}", ex);
+            }
+        }
+    }
+
+    private static object ExecuteReflectGet(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        string targetId = payload.GetProperty("target_id").GetString();
+        string propertyName = payload.GetProperty("property_name").GetString();
+
+        object target = ReflectionHelper.GetObject(targetId, doc);
+        if (target == null) throw new Exception($"Target '{targetId}' not found");
+
+        var prop = target.GetType().GetProperty(propertyName);
+        if (prop == null) throw new Exception($"Property '{propertyName}' not found on type '{target.GetType().Name}'");
+
+        object value = prop.GetValue(target);
+        
+        if (value == null) return null;
+        if (value.GetType().IsPrimitive || value is string || value is double || value is int || value is bool) return value;
+        if (value is ElementId eid) return eid.Value;
+        if (value is Element e) return e.Id.Value;
+
+        string refId = ReflectionHelper.RegisterObject(value);
+        return new { type = "reference", id = refId, class_name = value.GetType().Name, str = value.ToString() };
+    }
+
+    private static object ExecuteReflectSet(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        string targetId = payload.GetProperty("target_id").GetString();
+        string propertyName = payload.GetProperty("property_name").GetString();
+        JsonElement valueElement = payload.GetProperty("value");
+
+        using (var trans = new Transaction(doc, $"Set {propertyName}"))
+        {
+            trans.Start();
+            object target = ReflectionHelper.GetObject(targetId, doc);
+            if (target == null) throw new Exception($"Target '{targetId}' not found");
+
+            var prop = target.GetType().GetProperty(propertyName);
+            if (prop == null) throw new Exception($"Property '{propertyName}' not found on type '{target.GetType().Name}'");
+
+            object value = ReflectionHelper.ParseArgument(valueElement, doc);
+            
+            // Convert type if needed
+            if (value != null && !prop.PropertyType.IsAssignableFrom(value.GetType()))
+            {
+                 value = Convert.ChangeType(value, prop.PropertyType);
+            }
+
+            prop.SetValue(target, value);
+            trans.Commit();
+        }
+
+        return new { status = "success", target_id = targetId, property = propertyName };
     }
 }

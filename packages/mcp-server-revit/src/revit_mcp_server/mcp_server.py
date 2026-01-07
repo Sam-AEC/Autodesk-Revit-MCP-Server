@@ -706,6 +706,10 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         Tool(name="revit_get_room_boundary", description="Get room geometric boundary loops", inputSchema={"type": "object", "properties": {"room_id": {"type": "integer"}}, "required": ["room_id"]}),
         Tool(name="revit_get_project_location", description="Get project base and survey points", inputSchema={"type": "object", "properties": {}}),
         Tool(name="revit_get_warnings", description="Get current project warnings", inputSchema={"type": "object", "properties": {}}),
+        # Batch 9: Universal Reflection Bridge (10k+ Tools)
+        Tool(name="revit_invoke_method", description="Invoke any Revit API method dynamically using Reflection", inputSchema={"type": "object", "properties": {"class_name": {"type": "string"}, "method_name": {"type": "string"}, "arguments": {"type": "array", "items": {}}, "target_id": {"type": "string"}, "use_transaction": {"type": "boolean", "default": true}}, "required": ["class_name", "method_name", "arguments"]}),
+        Tool(name="revit_reflect_get", description="Get any Revit property value dynamically", inputSchema={"type": "object", "properties": {"target_id": {"type": "string"}, "property_name": {"type": "string"}}, "required": ["target_id", "property_name"]}),
+        Tool(name="revit_reflect_set", description="Set any Revit property value dynamically", inputSchema={"type": "object", "properties": {"target_id": {"type": "string"}, "property_name": {"type": "string"}, "value": {}}, "required": ["target_id", "property_name", "value"]}),
     ],
             "level": arguments.get("level", "L1")
         }),
@@ -813,6 +817,25 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             "category2": arguments.get("category2"),
             "tolerance": arguments.get("tolerance", 0.01)
         }),
+        "revit_get_warnings": ("revit.get_warnings", {}),
+
+        # Batch 9: Universal Reflection Bridge
+        "revit_invoke_method": ("revit.invoke_method", {
+            "class_name": arguments.get("class_name"),
+            "method_name": arguments.get("method_name"),
+            "arguments": arguments.get("arguments"),
+            "target_id": arguments.get("target_id"),
+            "use_transaction": arguments.get("use_transaction", True)
+        }),
+        "revit_reflect_get": ("revit.reflect_get", {
+            "target_id": arguments.get("target_id"),
+            "property_name": arguments.get("property_name")
+        }),
+        "revit_reflect_set": ("revit.reflect_set", {
+            "target_id": arguments.get("target_id"),
+            "property_name": arguments.get("property_name"),
+            "value": arguments.get("value")
+        }),
     }
 
         if name not in tool_mapping:
@@ -866,6 +889,7 @@ def run_mcp_server():
 
 if __name__ == "__main__":
     run_mcp_server()
+
 
 
 
