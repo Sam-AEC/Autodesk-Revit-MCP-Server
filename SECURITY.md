@@ -2,48 +2,81 @@
 
 ## Supported Versions
 
+We actively support and provide security updates for the following versions:
+
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| 1.x     | ✅ Active support  |
+| < 1.0   | ❌ Not supported   |
 
 ## Reporting a Vulnerability
 
-We take security seriously. If you discover a security vulnerability in MCP Revit Bridge, please report it responsibly.
+**DO NOT** open public GitHub issues for security vulnerabilities.
 
-### How to Report
+### Where to Report
 
-**Do not open a public issue.** Instead, email security details to the maintainers or use GitHub's private security advisory feature:
+Use GitHub's private security advisory feature:
 
-1. Navigate to the repository's Security tab
-2. Click "Report a vulnerability"
-3. Provide detailed information about the vulnerability
+1. Navigate to the repository's **Security** tab
+2. Click **"Report a vulnerability"**
+3. Provide detailed information
 
-Include in your report:
-- Description of the vulnerability
-- Steps to reproduce
-- Potential impact
-- Suggested fix (if any)
+### What to Include
 
-### What to Expect
+- **Description**: Clear description of the vulnerability
+- **Steps to Reproduce**: Detailed steps to demonstrate the issue
+- **Impact Assessment**: What an attacker could achieve
+- **Affected Versions**: Which versions are vulnerable
+- **Suggested Fix** (optional): Your recommendations
 
-- Acknowledgment within 48 hours
-- Assessment and triage within 7 days
-- Regular updates on remediation progress
-- Credit in release notes (unless you prefer to remain anonymous)
+### Response Timeline
 
-### Security Best Practices
+- **Acknowledgment**: Within 48 hours
+- **Initial Triage**: Within 7 days
+- **Fix Development**:
+  - **Critical**: Within 7 days
+  - **High**: Within 30 days
+  - **Medium**: Within 90 days
 
-When using MCP Revit Bridge:
+### Disclosure Policy
 
-1. **Workspace Isolation**: Always configure `WORKSPACE_DIR` and `MCP_REVIT_ALLOWED_DIRECTORIES` to restrict file access
-2. **Network Boundaries**: The bridge runs on localhost only (127.0.0.1:3000) - do not expose to external networks
-3. **Input Validation**: All tool inputs are validated against JSON schemas, but review custom configurations carefully
-4. **Audit Logs**: Enable and monitor audit logs for unexpected tool usage
-5. **Mock Mode Testing**: Use mock mode in CI/CD pipelines to avoid exposing production Revit environments
-6. **Least Privilege**: Run the bridge with minimal Windows permissions required for Revit operations
+We follow **coordinated disclosure**:
+1. Private report received
+2. Fix developed and tested
+3. Patched version released
+4. Public disclosure after 30 days
 
-### Known Limitations
+## Security Best Practices
 
-- The bridge HTTP listener does not implement authentication (localhost-only by design)
-- File operations are restricted to allowed directories but rely on OS permissions
-- Revit API operations inherit Revit's security model and limitations
+### For Users
+
+✅ **Keep localhost-only** - Never bind to `0.0.0.0` without enterprise hardening
+✅ **Update regularly** - Apply security patches within 30 days
+✅ **Enable audit logs** - Monitor `%APPDATA%\RevitMCP\Logs\bridge.jsonl`
+✅ **Workspace sandboxing** - Only allow trusted project directories
+✅ **Enterprise mode** - Follow [docs/security.md](docs/security.md) for HTTPS/OAuth
+
+### For Developers
+
+✅ **Input validation** - All inputs validated against schemas
+✅ **No secrets in code** - Use environment variables
+✅ **Least privilege** - No privilege elevation
+✅ **Exception handling** - Sanitize before returning to client
+
+## Security Hardening Checklist
+
+Before production deployment:
+
+- [ ] Bridge binds to `127.0.0.1` only
+- [ ] Workspace directories limited
+- [ ] Audit logging enabled
+- [ ] HTTPS configured (if remote access)
+- [ ] OAuth2 enabled (if external clients)
+- [ ] Rate limiting configured
+- [ ] Security reviews scheduled
+
+Full guide: [docs/security.md](docs/security.md)
+
+---
+
+**Last Updated**: 2026-01-07
