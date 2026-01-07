@@ -144,6 +144,11 @@ public static class BridgeCommandFactory
             "revit.get_mep_systems" => ExecuteGetMepSystems(app, payload),
             "revit.check_clashes" => ExecuteCheckClashes(app, payload),
 
+            // Batch 6: Materials & Visuals
+            "revit.create_material" => ExecuteCreateMaterial(app, payload),
+            "revit.set_element_material" => ExecuteSetElementMaterial(app, payload),
+            "revit.get_render_settings" => ExecuteGetRenderSettings(app),
+
             _ => new { status = "error", message = $"Unknown tool: {tool}" }
         };
     }
@@ -278,7 +283,12 @@ public static class BridgeCommandFactory
             "revit.create_cable_tray",
             "revit.create_conduit",
             "revit.get_mep_systems",
-            "revit.check_clashes"
+            "revit.check_clashes",
+
+            // Batch 6: Materials & Visuals
+            "revit.create_material",
+            "revit.set_element_material",
+            "revit.get_render_settings"
         };
     }
 
@@ -3484,5 +3494,203 @@ public static class BridgeCommandFactory
             "plumbing_fixtures" => BuiltInCategory.OST_PlumbingFixtures,
             _ => throw new ArgumentException($"Unknown category: {categoryName}")
         };
+    }
+
+    // ==================== BATCH 6: MATERIALS & VISUALS ====================
+
+    private static object ExecuteCreateMaterial(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var name = payload.GetProperty("name").GetString();
+        var color = payload.TryGetProperty("color", out var c) ? ParseColor(c) : new Color(128, 128, 128);
+        var transparency = payload.TryGetProperty("transparency", out var t) ? t.GetInt32() : 0;
+        var shininess = payload.TryGetProperty("shininess", out var s) ? s.GetInt32() : 50;
+        var smoothness = payload.TryGetProperty("smoothness", out var sm) ? sm.GetInt32() : 50;
+
+        using (var trans = new Transaction(doc, "Create Material"))
+        {
+            trans.Start();
+
+            // Create material
+            var materialId = Material.Create(doc, name);
+            var material = doc.GetElement(materialId) as Material;
+
+            if (material == null)
+                throw new InvalidOperationException("Failed to create material");
+
+            // Set appearance properties
+            material.Color = color;
+            material.Transparency = transparency;
+            material.Shininess = shininess;
+            material.Smoothness = smoothness;
+
+            trans.Commit();
+
+            return new
+            {
+                material_id = material.Id.Value,
+                name = material.Name,
+                color = new { r = color.Red, g = color.Green, b = color.Blue },
+                transparency,
+                shininess,
+                smoothness
+            };
+        }
+    }
+
+    private static object ExecuteSetElementMaterial(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var elementId = new ElementId((long)payload.GetProperty("element_id").GetInt32());
+        var materialName = payload.GetProperty("material_name").GetString();
+        var faceIndex = payload.TryGetProperty("face_index", out var fi) ? (int?)fi.GetInt32() : null;
+
+        using (var trans = new Transaction(doc, "Set Element Material"))
+        {
+            trans.Start();
+
+            var element = doc.GetElement(elementId);
+            if (element == null)
+                throw new ArgumentException($"Element not found: {elementId}");
+
+            // Find material by name
+            var material = new FilteredElementCollector(doc)
+                .OfClass(typeof(Material))
+                .Cast<Material>()
+                .FirstOrDefault(m => m.Name.Equals(materialName, StringComparison.OrdinalIgnoreCase));
+
+            if (material == null)
+                throw new ArgumentException($"Material not found: {materialName}");
+
+            // Set material
+            if (faceIndex.HasValue)
+            {
+                // Set material on specific face (for walls, floors, etc.)
+                var geometryElement = element.get_Geometry(new Options());
+                if (geometryElement != null)
+                {
+                    int currentIndex = 0;
+                    foreach (GeometryObject geomObj in geometryElement)
+                    {
+                        if (geomObj is Solid solid)
+                        {
+                            foreach (Face face in solid.Faces)
+                            {
+                                if (currentIndex == faceIndex.Value)
+                                {
+                                    doc.Paint(elementId, face, material.Id);
+                                    trans.Commit();
+                                    return new
+                                    {
+                                        element_id = elementId.Value,
+                                        material_id = material.Id.Value,
+                                        material_name = material.Name,
+                                        face_index = faceIndex.Value,
+                                        method = "face_paint"
+                                    };
+                                }
+                                currentIndex++;
+                            }
+                        }
+                    }
+                    throw new ArgumentException($"Face index {faceIndex} not found");
+                }
+            }
+            else
+            {
+                // Set material on entire element
+                var param = element.get_Parameter(BuiltInParameter.MATERIAL_ID_PARAM);
+                if (param != null && !param.IsReadOnly)
+                {
+                    param.Set(material.Id);
+                }
+                else
+                {
+                    // Try structural material parameter
+                    param = element.get_Parameter(BuiltInParameter.STRUCTURAL_MATERIAL_PARAM);
+                    if (param != null && !param.IsReadOnly)
+                    {
+                        param.Set(material.Id);
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException("Element does not have a settable material parameter");
+                    }
+                }
+            }
+
+            trans.Commit();
+
+            return new
+            {
+                element_id = elementId.Value,
+                material_id = material.Id.Value,
+                material_name = material.Name,
+                method = "parameter"
+            };
+        }
+    }
+
+    private static object ExecuteGetRenderSettings(UIApplication app)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        // Get render settings
+        var renderSettings = RenderingSettings.GetRenderingSettings(doc);
+        
+        if (renderSettings == null)
+        {
+            return new
+            {
+                status = "no_settings",
+                message = "No rendering settings found in document"
+            };
+        }
+
+        // Get quality settings
+        var qualityParam = renderSettings.get_Parameter(BuiltInParameter.RENDER_QUALITY_SETTING);
+        var resolutionParam = renderSettings.get_Parameter(BuiltInParameter.RENDER_RESOLUTION_SETTING);
+        var exposureParam = renderSettings.get_Parameter(BuiltInParameter.RENDER_EXPOSURE_SETTING);
+        var backgroundStyleParam = renderSettings.get_Parameter(BuiltInParameter.RENDER_BACKGROUND_STYLE);
+
+        return new
+        {
+            quality = qualityParam?.AsValueString() ?? "Unknown",
+            resolution = resolutionParam?.AsValueString() ?? "Unknown",
+            exposure = exposureParam?.AsDouble() ?? 0.0,
+            background_style = backgroundStyleParam?.AsValueString() ?? "Unknown",
+            settings_id = renderSettings.Id.Value
+        };
+    }
+
+    // Helper method to parse color from JSON
+    private static Color ParseColor(JsonElement colorElement)
+    {
+        if (colorElement.ValueKind == JsonValueKind.Object)
+        {
+            var r = (byte)colorElement.GetProperty("r").GetInt32();
+            var g = (byte)colorElement.GetProperty("g").GetInt32();
+            var b = (byte)colorElement.GetProperty("b").GetInt32();
+            return new Color(r, g, b);
+        }
+        else if (colorElement.ValueKind == JsonValueKind.String)
+        {
+            // Parse hex color like "#FF0000"
+            var hex = colorElement.GetString();
+            if (hex.StartsWith("#"))
+            {
+                hex = hex.Substring(1);
+            }
+            var r = Convert.ToByte(hex.Substring(0, 2), 16);
+            var g = Convert.ToByte(hex.Substring(2, 2), 16);
+            var b = Convert.ToByte(hex.Substring(4, 2), 16);
+            return new Color(r, g, b);
+        }
+        return new Color(128, 128, 128); // Default gray
     }
 }

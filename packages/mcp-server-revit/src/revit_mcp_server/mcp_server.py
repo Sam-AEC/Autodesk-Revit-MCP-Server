@@ -648,6 +648,10 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         Tool(name="revit_create_conduit", description="Create electrical conduit", inputSchema={"type": "object", "properties": {"level": {"type": "string"}, "start_x": {"type": "number"}, "start_y": {"type": "number"}, "start_z": {"type": "number", "default": 10}, "end_x": {"type": "number"}, "end_y": {"type": "number"}, "end_z": {"type": "number", "default": 10}, "diameter": {"type": "number", "default": 0.0625}}, "required": ["level", "start_x", "start_y", "end_x", "end_y"]}),
         Tool(name="revit_get_mep_systems", description="Get MEP systems info", inputSchema={"type": "object", "properties": {"system_type": {"type": "string", "default": "all"}}}),
         Tool(name="revit_check_clashes", description="Check clashes between categories", inputSchema={"type": "object", "properties": {"category1": {"type": "string"}, "category2": {"type": "string"}, "tolerance": {"type": "number", "default": 0.01}}, "required": ["category1", "category2"]}),
+        # Batch 6: Materials & Visuals
+        Tool(name="revit_create_material", description="Create a new material with color and properties", inputSchema={"type": "object", "properties": {"name": {"type": "string"}, "color": {"type": "object", "properties": {"r": {"type": "integer"}, "g": {"type": "integer"}, "b": {"type": "integer"}}}, "transparency": {"type": "integer", "default": 0}, "shininess": {"type": "integer", "default": 50}, "smoothness": {"type": "integer", "default": 50}}, "required": ["name"]}),
+        Tool(name="revit_set_element_material", description="Set material for an element or specific face", inputSchema={"type": "object", "properties": {"element_id": {"type": "integer"}, "material_name": {"type": "string"}, "face_index": {"type": "integer", "description": "Optional face index for face-specific material"}}, "required": ["element_id", "material_name"]}),
+        Tool(name="revit_get_render_settings", description="Get rendering settings from document", inputSchema={"type": "object", "properties": {}}),
     ],
             "level": arguments.get("level", "L1")
         }),
@@ -808,4 +812,5 @@ def run_mcp_server():
 
 if __name__ == "__main__":
     run_mcp_server()
+
 
