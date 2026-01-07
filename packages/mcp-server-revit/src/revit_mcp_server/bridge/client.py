@@ -54,7 +54,12 @@ class BridgeClient:
                         f"Stack: {response.get('stack_trace', 'N/A')}"
                     )
 
-                return response.get("result", {})
+                result = response.get("result", {})
+
+                # Normalize element ID keys from specific types to generic element_id
+                self._normalize_element_ids(result)
+
+                return result
 
             except httpx.RequestError as e:
                 last_error = e
@@ -87,3 +92,17 @@ class BridgeClient:
             )
             resp.raise_for_status()
             return resp.json()
+
+    def _normalize_element_ids(self, result: dict[str, Any]) -> None:
+        """Normalize specific element ID keys to generic element_id for consistency."""
+        # Map specific element type IDs to generic element_id
+        id_keys = [
+            'wall_id', 'floor_id', 'roof_id', 'door_id', 'window_id',
+            'column_id', 'beam_id', 'level_id', 'view_id', 'sheet_id',
+            'room_id', 'grid_id', 'family_instance_id', 'element_id'
+        ]
+
+        for key in id_keys:
+            if key in result and 'element_id' not in result:
+                result['element_id'] = result[key]
+                break

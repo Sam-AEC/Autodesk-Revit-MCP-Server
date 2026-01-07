@@ -207,8 +207,8 @@ namespace RevitBridge.Bridge
             if (result.GetType().IsPrimitive || result is string) return result;
 
             // It's an object, register it
-            string regId = RegisterObject(result);
-            return new { type = "reference", id = regId, class_name = result.GetType().Name, str = result.ToString() };
+            string resultRegId = RegisterObject(result);
+            return new { type = "reference", id = resultRegId, class_name = result.GetType().Name, str = result.ToString() };
         }
     }
 }

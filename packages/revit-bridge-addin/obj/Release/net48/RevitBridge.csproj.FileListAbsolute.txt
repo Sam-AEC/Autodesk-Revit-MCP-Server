@@ -21,3 +21,11 @@ C:\Users\sammo\OneDrive\Documenten\GitHub\mcp\packages\revit-bridge-addin\obj\Re
 C:\Users\sammo\OneDrive\Documenten\GitHub\mcp\packages\revit-bridge-addin\obj\Release\net48\RevitBri.9B3AB98A.Up2Date
 C:\Users\sammo\OneDrive\Documenten\GitHub\mcp\packages\revit-bridge-addin\obj\Release\net48\RevitBridge.dll
 C:\Users\sammo\OneDrive\Documenten\GitHub\mcp\packages\revit-bridge-addin\obj\Release\net48\RevitBridge.pdb
+C:\Users\samo3\OneDrive - Heijmans N.V\Documenten\GitHub\Autodesk-Revit-MCP-Server\packages\revit-bridge-addin\obj\Release\net48\RevitBridge.csproj.AssemblyReference.cache
+C:\Users\samo3\OneDrive - Heijmans N.V\Documenten\GitHub\Autodesk-Revit-MCP-Server\packages\revit-bridge-addin\obj\Release\net48\RevitBridge.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\samo3\OneDrive - Heijmans N.V\Documenten\GitHub\Autodesk-Revit-MCP-Server\packages\revit-bridge-addin\obj\Release\net48\RevitBridge.AssemblyInfoInputs.cache
+C:\Users\samo3\OneDrive - Heijmans N.V\Documenten\GitHub\Autodesk-Revit-MCP-Server\packages\revit-bridge-addin\obj\Release\net48\RevitBridge.AssemblyInfo.cs
+C:\Users\samo3\OneDrive - Heijmans N.V\Documenten\GitHub\Autodesk-Revit-MCP-Server\packages\revit-bridge-addin\obj\Release\net48\RevitBridge.csproj.CoreCompileInputs.cache
+C:\Users\samo3\OneDrive - Heijmans N.V\Documenten\GitHub\Autodesk-Revit-MCP-Server\packages\revit-bridge-addin\obj\Release\net48\RevitBridge.sourcelink.json
+C:\Users\samo3\OneDrive - Heijmans N.V\Documenten\GitHub\Autodesk-Revit-MCP-Server\packages\revit-bridge-addin\obj\Release\net48\RevitBridge.dll
+C:\Users\samo3\OneDrive - Heijmans N.V\Documenten\GitHub\Autodesk-Revit-MCP-Server\packages\revit-bridge-addin\obj\Release\net48\RevitBridge.pdb

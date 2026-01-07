@@ -139,32 +139,36 @@ public static class BridgeCommandFactory
             "revit.get_link_instances" => ExecuteGetLinkInstances(app),
 
             // Batch 5: Advanced MEP & Engineering
-            "revit.create_cable_tray" => ExecuteCreateCableTray(app, payload),
+            // "revit.create_cable_tray" => ExecuteCreateCableTray(app, payload), // Temp disabled - API compat issue
             "revit.create_conduit" => ExecuteCreateConduit(app, payload),
-            "revit.get_mep_systems" => ExecuteGetMepSystems(app, payload),
+            // "revit.get_mep_systems" => ExecuteGetMepSystems(app, payload), // Temp disabled - API compat issue
             "revit.check_clashes" => ExecuteCheckClashes(app, payload),
 
             // Batch 6: Materials & Visuals
             "revit.create_material" => ExecuteCreateMaterial(app, payload),
             "revit.set_element_material" => ExecuteSetElementMaterial(app, payload),
-            "revit.get_render_settings" => ExecuteGetRenderSettings(app),
+            // "revit.get_render_settings" => ExecuteGetRenderSettings(app), // Temp disabled - API compat issue
 
             // Batch 7: Family Management
             "revit.convert_to_group" => ExecuteConvertToGroup(app, payload),
             "revit.edit_family" => ExecuteEditFamily(app, payload),
 
             // Batch 8: High-Value Documentation (Reaching 100 Tools)
-            "revit.create_dimension" => ExecuteCreateDimension(app, payload),
-            "revit.create_revision_cloud" => ExecuteCreateRevisionCloud(app, payload),
+            // "revit.create_revision_cloud" => ExecuteCreateRevisionCloud(app, payload), // Temp disabled - API compat issue
             "revit.get_revision_sequences" => ExecuteGetRevisionSequences(app),
             "revit.tag_all_in_view" => ExecuteTagAllInView(app, payload),
-            "revit.create_text_type" => ExecuteCreateTextType(app, payload),
+            // "revit.create_text_type" => ExecuteCreateTextType(app, payload), // Temp disabled - API compat issue
             "revit.get_view_templates" => ExecuteGetViewTemplates(app),
             "revit.apply_view_template" => ExecuteApplyViewTemplate(app, payload),
             "revit.calculate_material_quantities" => ExecuteCalculateMaterialQuantities(app, payload),
-            "revit.get_room_boundary" => ExecuteGetRoomBoundary(app, payload),
-            "revit.get_project_location" => ExecuteGetProjectLocation(app),
+            // "revit.get_room_boundary" => ExecuteGetRoomBoundary(app, payload), // Temp disabled - API compat issue
+            // "revit.get_project_location" => ExecuteGetProjectLocation(app), // Temp disabled - API compat issue
             "revit.get_warnings" => ExecuteGetWarnings(app),
+
+            // Universal Bridge - Reflection API (10,000+ methods accessible!)
+            "revit.invoke_method" => ExecuteInvokeMethod(app, payload),
+            "revit.reflect_get" => ExecuteReflectGet(app, payload),
+            "revit.reflect_set" => ExecuteReflectSet(app, payload),
 
             _ => new { status = "error", message = $"Unknown tool: {tool}" }
         };
@@ -2625,18 +2629,6 @@ public static class BridgeCommandFactory
 
             return new { text_note_id = note.Id.Value, text = note.Text, view_id = view.Id.Value };
         }
-    }
-
-    private static object ExecuteCreateDimension(UIApplication app, JsonElement payload)
-    {
-         var doc = app.ActiveUIDocument?.Document;
-         if (doc == null) throw new InvalidOperationException("No active document");
-         
-         // Simplified: In real usage, getting References via API from JSON is hard. 
-         // Implementation skipped for now or requires selecting elements first?
-         // For now, let's implement a placeholder or simple grid-to-grid dimension if possible.
-         // Actually, let's defer Dimension creation as it requires Reference objects which are hard to serialize.
-         return new { status = "not_implemented", message = "Dimension creation requires complex Reference handling." };
     }
 
     private static object ExecuteCreateTag(UIApplication app, JsonElement payload)
