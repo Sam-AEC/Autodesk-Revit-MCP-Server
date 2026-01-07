@@ -5,6 +5,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Path Guard: Prevent Execution in System32 or Windows
+if ($PSScriptRoot -like "*C:\Windows*") {
+    Write-Error "Dangerous path detected: $PSScriptRoot"
+    Write-Error "Please clone the repo to a safe location (e.g., $env:USERPROFILE\src) and run from there."
+    exit 1
+}
+
 $projectPath = "$PSScriptRoot\..\packages\revit-bridge-addin\RevitBridge.csproj"
 
 if (-not (Test-Path $projectPath)) {
@@ -17,7 +24,8 @@ $vsWherePath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhe
 
 if (Test-Path $vsWherePath) {
     $msbuild = & $vsWherePath -latest -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe | Select-Object -First 1
-} else {
+}
+else {
     # Fallback to dotnet build if vswhere not available
     Write-Host "vswhere not found, using dotnet build..." -ForegroundColor Yellow
     $msbuild = "dotnet"
@@ -36,7 +44,8 @@ if ($msbuild -like "*dotnet*") {
         -c $Configuration `
         -p:RevitVersion=$RevitVersion `
         -v:minimal
-} else {
+}
+else {
     & $msbuild $projectPath `
         /p:Configuration=$Configuration `
         /p:RevitVersion=$RevitVersion `

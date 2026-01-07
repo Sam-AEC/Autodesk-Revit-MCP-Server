@@ -1,0 +1,12 @@
+{
+    "revitVersion": "2024",
+    "installScope": "CurrentUser",
+    "installPaths": {
+        "allUsers": "C:\\ProgramData\\Autodesk\\Revit\\Addins",
+        "currentUser": "%APPDATA%\\Autodesk\\Revit\\Addins"
+    },
+    "build": {
+        "configuration": "Release",
+        "sdkPath": ""
+    }
+}
