@@ -1495,10 +1495,6 @@ public static class BridgeCommandFactory
         try
         {
             var groupTypeId = definition.GetGroupTypeId();
-            var label = LabelUtils.GetLabelForGroupTypeId(groupTypeId);
-            if (!string.IsNullOrEmpty(label))
-                return label;
-
             return groupTypeId.TypeId;
         }
         catch
