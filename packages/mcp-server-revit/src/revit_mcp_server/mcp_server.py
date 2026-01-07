@@ -691,6 +691,24 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         "revit_export_navisworks": ("revit.export_navisworks", {"output_path": arguments.get("output_path")}),
         "revit_export_image": ("revit.export_image", {"view_id": arguments.get("view_id"), "output_path": arguments.get("output_path"), "width": arguments.get("width"), "height": arguments.get("height")}),
         "revit_render_3d": ("revit.render_3d_view", {"view_id": arguments.get("view_id"), "output_path": arguments.get("output_path"), "quality": arguments.get("quality", "Medium")}),
+
+        # Batch 3: Editing
+        "revit_move_element": ("revit.move_element", {"element_id": arguments.get("element_id"), "vector": {"x": arguments.get("x"), "y": arguments.get("y"), "z": arguments.get("z", 0)}}),
+        "revit_copy_element": ("revit.copy_element", {"element_id": arguments.get("element_id"), "vector": {"x": arguments.get("x"), "y": arguments.get("y"), "z": arguments.get("z", 0)}}),
+        "revit_rotate_element": ("revit.rotate_element", {"element_id": arguments.get("element_id"), "axis_point": {"x": arguments.get("center_x"), "y": arguments.get("center_y"), "z": arguments.get("center_z", 0)}, "angle_radians": arguments.get("angle_radians")}),
+        "revit_mirror_element": ("revit.mirror_element", {"element_id": arguments.get("element_id"), "plane_origin": {"x": arguments.get("plane_origin_x"), "y": arguments.get("plane_origin_y"), "z": arguments.get("plane_origin_z", 0)}, "plane_normal": {"x": arguments.get("plane_normal_x"), "y": arguments.get("plane_normal_y"), "z": arguments.get("plane_normal_z", 0)}}),
+        "revit_pin_element": ("revit.pin_element", {"element_id": arguments.get("element_id")}),
+        "revit_unpin_element": ("revit.unpin_element", {"element_id": arguments.get("element_id")}),
+
+        # Batch 3: Worksharing
+        "revit_sync_to_central": ("revit.sync_to_central", {"comment": arguments.get("comment", "Sync via MCP"), "relinquish": arguments.get("relinquish", True)}),
+        "revit_relinquish_all": ("revit.relinquish_all", {}),
+        "revit_get_worksets": ("revit.get_worksets", {}),
+
+        # Batch 3: Schedules & Geo
+        "revit_create_schedule": ("revit.create_schedule", {"category_name": arguments.get("category_name"), "name": arguments.get("name")}),
+        "revit_get_schedule_data": ("revit.get_schedule_data", {"schedule_id": arguments.get("schedule_id")}),
+        "revit_get_element_bounding_box": ("revit.get_element_bounding_box", {"element_id": arguments.get("element_id")}),
     }
 
         if name not in tool_mapping:

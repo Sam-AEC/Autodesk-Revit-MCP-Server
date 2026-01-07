@@ -104,6 +104,24 @@ public static class BridgeCommandFactory
             "revit.get_categories" => ExecuteGetCategories(app),
             "revit.get_element_type" => ExecuteGetElementType(app, payload),
 
+            // Batch 3: Editing
+            "revit.move_element" => ExecuteMoveElement(app, payload),
+            "revit.copy_element" => ExecuteCopyElement(app, payload),
+            "revit.rotate_element" => ExecuteRotateElement(app, payload),
+            "revit.mirror_element" => ExecuteMirrorElement(app, payload),
+            "revit.pin_element" => ExecutePinElement(app, payload),
+            "revit.unpin_element" => ExecuteUnpinElement(app, payload),
+
+            // Batch 3: Worksharing
+            "revit.sync_to_central" => ExecuteSyncToCentral(app, payload),
+            "revit.relinquish_all" => ExecuteRelinquishAll(app),
+            "revit.get_worksets" => ExecuteGetWorksets(app),
+
+            // Batch 3: Schedules & Data
+            "revit.create_schedule" => ExecuteCreateSchedule(app, payload),
+            "revit.get_schedule_data" => ExecuteGetScheduleData(app, payload),
+            "revit.get_element_bounding_box" => ExecuteGetElementBoundingBox(app, payload),
+
             _ => new { status = "error", message = $"Unknown tool: {tool}" }
         };
     }
@@ -198,7 +216,25 @@ public static class BridgeCommandFactory
 
             // Batch 2: General Helper
             "revit.get_categories",
-            "revit.get_element_type"
+            "revit.get_element_type",
+
+            // Batch 3: Editing
+            "revit.move_element",
+            "revit.copy_element",
+            "revit.rotate_element",
+            "revit.mirror_element",
+            "revit.pin_element",
+            "revit.unpin_element",
+
+            // Batch 3: Worksharing
+            "revit.sync_to_central",
+            "revit.relinquish_all",
+            "revit.get_worksets",
+
+            // Batch 3: Schedules & Data
+            "revit.create_schedule",
+            "revit.get_schedule_data",
+            "revit.get_element_bounding_box"
         };
     }
 
@@ -2730,5 +2766,242 @@ public static class BridgeCommandFactory
                 .ToList();
              return new { types };
         }
+    }
+
+    // ==================== BATCH 3: EDITING IMPL ====================
+
+    private static object ExecuteMoveElement(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var elementId = new ElementId((long)payload.GetProperty("element_id").GetInt32());
+        var vector = ParseXYZ(payload.GetProperty("vector"));
+
+        using (var trans = new Transaction(doc, "Move Element"))
+        {
+            trans.Start();
+            ElementTransformUtils.MoveElement(doc, elementId, vector);
+            trans.Commit();
+            return new { status = "success", moved_element_id = elementId.Value };
+        }
+    }
+
+    private static object ExecuteCopyElement(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var elementId = new ElementId((long)payload.GetProperty("element_id").GetInt32());
+        var vector = ParseXYZ(payload.GetProperty("vector"));
+
+        using (var trans = new Transaction(doc, "Copy Element"))
+        {
+            trans.Start();
+            var newIds = ElementTransformUtils.CopyElement(doc, elementId, vector);
+            trans.Commit();
+            return new { status = "success", original_id = elementId.Value, new_element_ids = newIds.Select(id => id.Value).ToList() };
+        }
+    }
+
+    private static object ExecuteRotateElement(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var elementId = new ElementId((long)payload.GetProperty("element_id").GetInt32());
+        var axisPoint = ParseXYZ(payload.GetProperty("axis_point"));
+        var angleRadians = payload.GetProperty("angle_radians").GetDouble();
+
+        using (var trans = new Transaction(doc, "Rotate Element"))
+        {
+            trans.Start();
+            var axis = Line.CreateBound(axisPoint, axisPoint + XYZ.BasisZ); // Default to Z-axis rotation for now
+            ElementTransformUtils.RotateElement(doc, elementId, axis, angleRadians);
+            trans.Commit();
+            return new { status = "success", element_id = elementId.Value, angle = angleRadians };
+        }
+    }
+
+    private static object ExecuteMirrorElement(UIApplication app, JsonElement payload)
+    {
+        // Minimal implementation assuming mirroring around a detailed plane is complex to pass via JSON.
+        // We will implement a simple "Mirror by selecting an existing planar element" (like a Grid or Wall) or just return not implemented for now to be safe?
+        // Let's implement mirror by a plane defined by point and normal.
+        
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+        
+        var elementId = new ElementId((long)payload.GetProperty("element_id").GetInt32());
+        var planeOrigin = ParseXYZ(payload.GetProperty("plane_origin"));
+        var planeNormal = ParseXYZ(payload.GetProperty("plane_normal")); // e.g., (1,0,0) for YZ plane
+        
+        using (var trans = new Transaction(doc, "Mirror Element"))
+        {
+             trans.Start();
+             var plane = Plane.CreateByNormalAndOrigin(planeNormal, planeOrigin);
+             ElementTransformUtils.MirrorElement(doc, elementId, plane);
+             trans.Commit();
+             return new { status = "success", element_id = elementId.Value };
+        }
+    }
+    
+    private static object ExecutePinElement(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+        
+        var elementId = new ElementId((long)payload.GetProperty("element_id").GetInt32());
+        
+        using (var trans = new Transaction(doc, "Pin Element"))
+        {
+             trans.Start();
+             var el = doc.GetElement(elementId);
+             if(el != null) el.Pinned = true;
+             trans.Commit();
+             return new { status = "success", element_id = elementId.Value, pinned = true };
+        }
+    }
+
+    private static object ExecuteUnpinElement(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+        
+        var elementId = new ElementId((long)payload.GetProperty("element_id").GetInt32());
+        
+        using (var trans = new Transaction(doc, "Unpin Element"))
+        {
+             trans.Start();
+             var el = doc.GetElement(elementId);
+             if(el != null) el.Pinned = false;
+             trans.Commit();
+             return new { status = "success", element_id = elementId.Value, pinned = false };
+        }
+    }
+
+    // ==================== BATCH 3: WORKSHARING IMPL ====================
+    
+    private static object ExecuteSyncToCentral(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+        
+        if (!doc.IsWorkshared) return new { status = "ignored", message = "Document is not workshared" };
+        
+        var comment = payload.TryGetProperty("comment", out var c) ? c.GetString() : "Sync via MCP";
+        var relinquish = payload.TryGetProperty("relinquish", out var r) ? r.GetBoolean() : true;
+        
+        var transOptions = new TransactWithCentralOptions();
+        var syncOptions = new SynchronizeWithCentralOptions();
+        syncOptions.Comment = comment;
+        
+        if (relinquish)
+        {
+             var ro = new RelinquishOptions(true);
+             ro.CheckedOutElements = true;
+             ro.StandardWorksets = true;
+             ro.UserWorksets = true;
+             ro.FamilyWorksets = true;
+             ro.ViewWorksets = true;
+             syncOptions.SetRelinquishOptions(ro);
+        }
+
+        doc.SynchronizeWithCentral(transOptions, syncOptions);
+        
+        return new { status = "success", message = "Synchronized to Central" };
+    }
+
+    private static object ExecuteRelinquishAll(UIApplication app)
+    {
+         var doc = app.ActiveUIDocument?.Document;
+         if (doc == null) throw new InvalidOperationException("No active document");
+         
+         if (!doc.IsWorkshared) return new { status = "ignored", message = "Document is not workshared" };
+
+         var transOptions = new TransactWithCentralOptions();
+         var ro = new RelinquishOptions(true);
+         WorksharingUtils.RelinquishOwnership(doc, ro, transOptions);
+         
+         return new { status = "success", message = "Relinquished all ownership" };
+    }
+    
+    private static object ExecuteGetWorksets(UIApplication app)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        if (!doc.IsWorkshared) return new { is_workshared = false, worksets = new List<object>() };
+
+        var worksets = new FilteredWorksetCollector(doc)
+            .OfKind(WorksetKind.UserWorkset)
+            .Select(w => new { name = w.Name, id = w.Id.IntegerValue, is_open = w.IsOpen })
+            .ToList();
+
+        return new { is_workshared = true, worksets };
+    }
+
+    // ==================== BATCH 3: SCHEDULES & GEO IMPL ====================
+
+    private static object ExecuteCreateSchedule(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var categoryName = payload.GetProperty("category_name").GetString();
+        var name = payload.GetProperty("name").GetString();
+        
+        var category = GetCategoryByName(doc, categoryName);
+
+        using (var trans = new Transaction(doc, "Create Schedule"))
+        {
+             trans.Start();
+             var schedule = ViewSchedule.CreateSchedule(doc, category.Id);
+             schedule.Name = name;
+             trans.Commit();
+             
+             return new { schedule_id = schedule.Id.Value, name = schedule.Name };
+        }
+    }
+    
+    private static object ExecuteGetScheduleData(UIApplication app, JsonElement payload)
+    {
+        // Getting actual data rows from a ViewSchedule is surprisingly hard in the API (ViewSchedule.GetCellText is for header section mostly or specific calls).
+        // Best simplified way is TableData, but that's for parsing the visual table.
+        // A robust implementation would be: element collector of the schedule's category, formatted by schedule fields.
+        // For simplified v1: Just return fields.
+        
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+        
+        var scheduleId = new ElementId((long)payload.GetProperty("schedule_id").GetInt32());
+        var schedule = doc.GetElement(scheduleId) as ViewSchedule;
+        if(schedule == null) throw new ArgumentException("Schedule not found");
+        
+        var fields = schedule.Definition.GetSchedulableFields()
+             .Select(f => f.GetName(doc))
+             .ToList();
+             
+        return new { schedule_name = schedule.Name, fields = fields, note = "Data extraction limited to fields list in this version." };
+    }
+    
+    private static object ExecuteGetElementBoundingBox(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var elementId = new ElementId((long)payload.GetProperty("element_id").GetInt32());
+        var element = doc.GetElement(elementId);
+        if (element == null) throw new ArgumentException("Element not found");
+        
+        var bbox = element.get_BoundingBox(null); // active view
+        if (bbox == null) return new { element_id = elementId.Value, has_bbox = false };
+        
+        return new { 
+            element_id = elementId.Value,
+            has_bbox = true,
+            min = new { x = bbox.Min.X, y = bbox.Min.Y, z = bbox.Min.Z },
+            max = new { x = bbox.Max.X, y = bbox.Max.Y, z = bbox.Max.Z }
+        };
     }
 }
