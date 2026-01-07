@@ -25,8 +25,7 @@ bridge = BridgeClient(config.bridge_url) if config.bridge_url else None
 @app.list_tools()
 async def list_tools() -> list[Tool]:
     """List all available Revit tools."""
-
-    tools = [
+    return [
         Tool(
             name="revit_health",
             description="Check if Revit is running and get status information",
@@ -34,46 +33,7 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {},
                 "required": []
-                # Batch 7: Family Management
-        "revit_convert_to_group": ("revit.convert_to_group", {
-            "element_ids": arguments.get("element_ids"),
-            "name": arguments.get("name")
-        }),
-        "revit_edit_family": ("revit.edit_family", {
-            "family_name": arguments.get("family_name"),
-            "family_symbol_id": arguments.get("family_symbol_id"),
-            "family_instance_id": arguments.get("family_instance_id")
-        }),
-
-        # Batch 8: High-Value Documentation & Analysis
-        "revit_create_dimension": ("revit.create_dimension", {
-            "start_point": arguments.get("start_point"),
-            "end_point": arguments.get("end_point"),
-            "element1_id": arguments.get("element1_id"),
-            "element2_id": arguments.get("element2_id")
-        }),
-        "revit_create_revision_cloud": ("revit.create_revision_cloud", {
-            "view_id": arguments.get("view_id"),
-            "points": arguments.get("points"),
-            "revision_id": arguments.get("revision_id")
-        }),
-        "revit_get_revision_sequences": ("revit.get_revision_sequences", {}),
-        "revit_tag_all_in_view": ("revit.tag_all_in_view", {"category": arguments.get("category")}),
-        "revit_create_text_type": ("revit.create_text_type", {
-            "name": arguments.get("name"),
-            "font": arguments.get("font"),
-            "size_inches": arguments.get("size_inches")
-        }),
-        "revit_get_view_templates": ("revit.get_view_templates", {}),
-        "revit_apply_view_template": ("revit.apply_view_template", {
-            "view_id": arguments.get("view_id"),
-            "template_id": arguments.get("template_id")
-        }),
-        "revit_calculate_material_quantities": ("revit.calculate_material_quantities", {"category": arguments.get("category")}),
-        "revit_get_room_boundary": ("revit.get_room_boundary", {"room_id": arguments.get("room_id")}),
-        "revit_get_project_location": ("revit.get_project_location", {}),
-        "revit_get_warnings": ("revit.get_warnings", {}),
-    }
+            }
         ),
         Tool(
             name="revit_create_wall",
@@ -285,7 +245,7 @@ async def list_tools() -> list[Tool]:
             name="revit_create_floor_plan_view",
             description="Create a floor plan view for a level",
             inputSchema={
-                "type": "object", 
+                "type": "object",
                 "properties": {"level_name": {"type": "string"}, "view_name": {"type": "string"}},
                 "required": ["level_name"]
             }
@@ -294,7 +254,7 @@ async def list_tools() -> list[Tool]:
             name="revit_create_3d_view",
             description="Create a new 3D view",
             inputSchema={
-                "type": "object", 
+                "type": "object",
                 "properties": {"view_name": {"type": "string"}},
                 "required": ["view_name"]
             }
@@ -303,7 +263,7 @@ async def list_tools() -> list[Tool]:
             name="revit_create_section_view",
             description="Create a section view",
             inputSchema={
-                "type": "object", 
+                "type": "object",
                 "properties": {
                     "view_name": {"type": "string"},
                     "start_x": {"type": "number"}, "start_y": {"type": "number"}, "start_z": {"type": "number"},
@@ -324,12 +284,12 @@ async def list_tools() -> list[Tool]:
             name="revit_set_parameter_value",
             description="Set a parameter value for an element",
             inputSchema={
-                "type": "object", 
+                "type": "object",
                 "properties": {
-                    "element_id": {"type": "integer"}, 
-                    "parameter_name": {"type": "string"}, 
+                    "element_id": {"type": "integer"},
+                    "parameter_name": {"type": "string"},
                     "value": {"type": ["string", "number", "boolean"]}
-                }, 
+                },
                 "required": ["element_id", "parameter_name", "value"]
             }
         ),
@@ -337,8 +297,8 @@ async def list_tools() -> list[Tool]:
             name="revit_get_parameter_value",
             description="Get a specific parameter value",
             inputSchema={
-                "type": "object", 
-                "properties": {"element_id": {"type": "integer"}, "parameter_name": {"type": "string"}}, 
+                "type": "object",
+                "properties": {"element_id": {"type": "integer"}, "parameter_name": {"type": "string"}},
                 "required": ["element_id", "parameter_name"]
             }
         ),
@@ -351,11 +311,11 @@ async def list_tools() -> list[Tool]:
             name="revit_create_shared_parameter",
             description="Create a new shared parameter",
             inputSchema={
-                "type": "object", 
+                "type": "object",
                 "properties": {
-                    "name": {"type": "string"}, "group": {"type": "string"}, 
+                    "name": {"type": "string"}, "group": {"type": "string"},
                     "type": {"type": "string"}, "visible": {"type": "boolean"}
-                }, 
+                },
                 "required": ["name"]
             }
         ),
@@ -368,11 +328,11 @@ async def list_tools() -> list[Tool]:
             name="revit_create_project_parameter",
             description="Create a new project parameter",
             inputSchema={
-                "type": "object", 
+                "type": "object",
                 "properties": {
-                    "name": {"type": "string"}, "category": {"type": "string"}, 
+                    "name": {"type": "string"}, "category": {"type": "string"},
                     "group": {"type": "string"}, "type": {"type": "string"}
-                }, 
+                },
                 "required": ["name", "category"]
             }
         ),
@@ -380,11 +340,11 @@ async def list_tools() -> list[Tool]:
             name="revit_batch_set_parameters",
             description="Set a parameter value for multiple elements",
             inputSchema={
-                "type": "object", 
+                "type": "object",
                 "properties": {
-                    "element_ids": {"type": "array", "items": {"type": "integer"}}, 
+                    "element_ids": {"type": "array", "items": {"type": "integer"}},
                     "parameter_name": {"type": "string"}, "value": {"type": ["string", "number"]}
-                }, 
+                },
                 "required": ["element_ids", "parameter_name", "value"]
             }
         ),
@@ -397,11 +357,11 @@ async def list_tools() -> list[Tool]:
             name="revit_set_type_parameter",
             description="Set a type parameter value",
             inputSchema={
-                "type": "object", 
+                "type": "object",
                 "properties": {
-                    "element_id": {"type": "integer"}, 
+                    "element_id": {"type": "integer"},
                     "parameter_name": {"type": "string"}, "value": {"type": ["string", "number"]}
-                }, 
+                },
                 "required": ["element_id", "parameter_name", "value"]
             }
         ),
@@ -414,8 +374,8 @@ async def list_tools() -> list[Tool]:
             name="revit_create_sheet",
             description="Create a new sheet",
             inputSchema={
-                "type": "object", 
-                "properties": {"name": {"type": "string"}, "number": {"type": "string"}, "titleblock_id": {"type": "integer"}}, 
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "number": {"type": "string"}, "titleblock_id": {"type": "integer"}},
                 "required": ["name", "number"]
             }
         ),
@@ -440,7 +400,7 @@ async def list_tools() -> list[Tool]:
             name="revit_batch_create_sheets_from_csv",
             description="Create multiple sheets from a CSV file",
             inputSchema={
-                "type": "object", "properties": {"csv_path": {"type": "string"}, "titleblock_name": {"type": "string"}}, 
+                "type": "object", "properties": {"csv_path": {"type": "string"}, "titleblock_name": {"type": "string"}},
                 "required": ["csv_path"]
             }
         ),
@@ -448,7 +408,7 @@ async def list_tools() -> list[Tool]:
             name="revit_populate_titleblock",
             description="Populate titleblock parameters",
             inputSchema={
-                "type": "object", "properties": {"sheet_id": {"type": "integer"}, "parameters": {"type": "object"}}, 
+                "type": "object", "properties": {"sheet_id": {"type": "integer"}, "parameters": {"type": "object"}},
                 "required": ["sheet_id", "parameters"]
             }
         ),
@@ -466,8 +426,8 @@ async def list_tools() -> list[Tool]:
             name="revit_duplicate_sheet",
             description="Duplicate a sheet",
             inputSchema={
-                "type": "object", 
-                "properties": {"sheet_id": {"type": "integer"}, "with_views": {"type": "boolean"}, "duplicate_option": {"type": "string"}}, 
+                "type": "object",
+                "properties": {"sheet_id": {"type": "integer"}, "with_views": {"type": "boolean"}, "duplicate_option": {"type": "string"}},
                 "required": ["sheet_id"]
             }
         ),
@@ -475,32 +435,26 @@ async def list_tools() -> list[Tool]:
             name="revit_renumber_sheets",
             description="Batch renumber sheets",
             inputSchema={
-                "type": "object", "properties": {"prefix": {"type": "string"}, "start_number": {"type": "integer"}}, 
+                "type": "object", "properties": {"prefix": {"type": "string"}, "start_number": {"type": "integer"}},
                 "required": ["start_number"]
             }
         ),
-
         # Batch 2: Selection
         Tool(name="revit_get_selection", description="Get currently selected element IDs", inputSchema={"type": "object", "properties": {}}),
         Tool(name="revit_set_selection", description="Set selection by element IDs", inputSchema={"type": "object", "properties": {"element_ids": {"type": "array", "items": {"type": "integer"}}}, "required": ["element_ids"]}),
-
         # Batch 2: Annotation
         Tool(name="revit_create_text_note", description="Create a text note", inputSchema={"type": "object", "properties": {"text": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"}, "view_id": {"type": "integer"}}, "required": ["text", "x", "y"]}),
         Tool(name="revit_create_tag", description="Tag an element", inputSchema={"type": "object", "properties": {"element_id": {"type": "integer"}, "x": {"type": "number"}, "y": {"type": "number"}, "view_id": {"type": "integer"}}, "required": ["element_id", "x", "y"]}),
-
         # Batch 2: Structure
         Tool(name="revit_create_column", description="Create structural column", inputSchema={"type": "object", "properties": {"family_name": {"type": "string"}, "type_name": {"type": "string"}, "level": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"}}, "required": ["family_name", "type_name", "level", "x", "y"]}),
         Tool(name="revit_create_beam", description="Create structural beam", inputSchema={"type": "object", "properties": {"family_name": {"type": "string"}, "type_name": {"type": "string"}, "level": {"type": "string"}, "start_x": {"type": "number"}, "start_y": {"type": "number"}, "end_x": {"type": "number"}, "end_y": {"type": "number"}}, "required": ["family_name", "type_name", "level", "start_x", "start_y", "end_x", "end_y"]}),
         Tool(name="revit_create_foundation", description="Create foundation", inputSchema={"type": "object", "properties": {"family_name": {"type": "string"}, "type_name": {"type": "string"}, "level": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number", "default": 0}}, "required": ["family_name", "type_name", "level", "x", "y"]}),
-
         # Batch 2: MEP
         Tool(name="revit_create_duct", description="Create duct", inputSchema={"type": "object", "properties": {"level": {"type": "string"}, "start_x": {"type": "number"}, "start_y": {"type": "number"}, "end_x": {"type": "number"}, "end_y": {"type": "number"}, "z": {"type": "number", "default": 10}, "system_type": {"type": "string"}, "duct_type": {"type": "string"}}, "required": ["level", "start_x", "start_y", "end_x", "end_y"]}),
         Tool(name="revit_create_pipe", description="Create pipe", inputSchema={"type": "object", "properties": {"level": {"type": "string"}, "start_x": {"type": "number"}, "start_y": {"type": "number"}, "end_x": {"type": "number"}, "end_y": {"type": "number"}, "z": {"type": "number", "default": 0}, "system_type": {"type": "string"}, "pipe_type": {"type": "string"}}, "required": ["level", "start_x", "start_y", "end_x", "end_y"]}),
-
         # Batch 2: Helpers
         Tool(name="revit_get_categories", description="List Revit categories", inputSchema={"type": "object", "properties": {}}),
         Tool(name="revit_get_element_type", description="Find element types/families", inputSchema={"type": "object", "properties": {"category_name": {"type": "string"}, "family_name": {"type": "string"}}, "required": ["category_name"]}),
-
         # Batch 2: Remaining Existing
         Tool(name="revit_close_document", description="Close active document", inputSchema={"type": "object", "properties": {"save_changes": {"type": "boolean", "default": False}}}),
         Tool(name="revit_create_new_document", description="Create new project", inputSchema={"type": "object", "properties": {"template_path": {"type": "string"}}}),
@@ -509,180 +463,34 @@ async def list_tools() -> list[Tool]:
         Tool(name="revit_export_navisworks", description="Export to NWC", inputSchema={"type": "object", "properties": {"output_path": {"type": "string"}}, "required": ["output_path"]}),
         Tool(name="revit_export_image", description="Export view to Image", inputSchema={"type": "object", "properties": {"view_id": {"type": "integer"}, "output_path": {"type": "string"}, "width": {"type": "integer"}, "height": {"type": "integer"}}, "required": ["view_id", "output_path"]}),
         Tool(name="revit_render_3d", description="Render 3D view to image", inputSchema={"type": "object", "properties": {"view_id": {"type": "integer"}, "output_path": {"type": "string"}, "quality": {"type": "string", "enum": ["Draft", "Medium", "High"]}}, "required": ["view_id", "output_path"]}),
-
-    return tools
-
-
-@app.call_tool()
-async def call_tool(name: str, arguments: Any) -> list[TextContent]:
-    """Execute a Revit tool."""
-
-    if not bridge:
-        return [TextContent(
-            type="text",
-            text="Error: Bridge not configured. Set MCP_REVIT_BRIDGE_URL in your .env file."
-        )]
-
-    try:
-        # Map MCP tool names to Revit bridge tools
-        # Geometry (New)
-        "revit_create_grid": ("revit.create_grid", {
-            "start_point": {"x": arguments.get("start_x"), "y": arguments.get("start_y"), "z": arguments.get("start_z")},
-            "end_point": {"x": arguments.get("end_x"), "y": arguments.get("end_y"), "z": arguments.get("end_z")},
-            "name": arguments.get("name")
-        }),
-        "revit_create_room": ("revit.create_room", {
-            "level": arguments.get("level"),
-            "location_point": {"x": arguments.get("x"), "y": arguments.get("y"), "z": 0},
-            "name": arguments.get("name"),
-            "number": arguments.get("number")
-        }),
-        "revit_delete_element": ("revit.delete_element", {
-            "element_id": arguments.get("element_id")
-        }),
-
-        # Placement (New)
-        "revit_place_family_instance": ("revit.place_family_instance", {
-            "family_name": arguments.get("family_name"),
-            "type_name": arguments.get("type_name"),
-            "level": arguments.get("level"),
-            "location": {"x": arguments.get("x"), "y": arguments.get("y"), "z": arguments.get("z")}
-        }),
-        "revit_place_door": ("revit.place_door", {
-            "wall_id": arguments.get("wall_id"),
-            "family_name": arguments.get("family_name"),
-            "type_name": arguments.get("type_name"),
-            "location": {"x": arguments.get("x"), "y": arguments.get("y"), "z": arguments.get("z")}
-        }),
-        "revit_place_window": ("revit.place_window", {
-            "wall_id": arguments.get("wall_id"),
-            "family_name": arguments.get("family_name"),
-            "type_name": arguments.get("type_name"),
-            "location": {"x": arguments.get("x"), "y": arguments.get("y"), "z": arguments.get("z")}
-        }),
-        "revit_list_families": ("revit.list_families", {}),
-
-        # Views (New)
-        "revit_create_floor_plan_view": ("revit.create_floor_plan_view", {
-            "level_name": arguments.get("level_name"),
-            "view_name": arguments.get("view_name")
-        }),
-        "revit_create_3d_view": ("revit.create_3d_view", {
-            "view_name": arguments.get("view_name")
-        }),
-        "revit_create_section_view": ("revit.create_section_view", {
-            "view_name": arguments.get("view_name"),
-            "start_point": {"x": arguments.get("start_x"), "y": arguments.get("start_y"), "z": arguments.get("start_z")},
-            "end_point": {"x": arguments.get("end_x"), "y": arguments.get("end_y"), "z": arguments.get("end_z")},
-            "height": arguments.get("height")
-        }),
-
-        # Parameters (New)
-        "revit_get_element_parameters": ("revit.get_element_parameters", {
-            "element_id": arguments.get("element_id")
-        }),
-        "revit_set_parameter_value": ("revit.set_parameter_value", {
-            "element_id": arguments.get("element_id"),
-            "parameter_name": arguments.get("parameter_name"),
-            "value": arguments.get("value")
-        }),
-        "revit_get_parameter_value": ("revit.get_parameter_value", {
-            "element_id": arguments.get("element_id"),
-            "parameter_name": arguments.get("parameter_name")
-        }),
-        "revit_list_shared_parameters": ("revit.list_shared_parameters", {}),
-        "revit_create_shared_parameter": ("revit.create_shared_parameter", {
-             "name": arguments.get("name"),
-             "group": arguments.get("group", "General"),
-             "type": arguments.get("type", "Text"),
-             "visible": arguments.get("visible", True)
-        }),
-        "revit_list_project_parameters": ("revit.list_project_parameters", {}),
-        "revit_create_project_parameter": ("revit.create_project_parameter", {
-             "name": arguments.get("name"),
-             "group": arguments.get("group", "General"),
-             "type": arguments.get("type", "Text"),
-             "category": arguments.get("category"),
-             "visible": arguments.get("visible", True)
-        }),
-        "revit_batch_set_parameters": ("revit.batch_set_parameters", {
-             "element_ids": arguments.get("element_ids"),
-             "parameter_name": arguments.get("parameter_name"),
-             "value": arguments.get("value")
-        }),
-        "revit_get_type_parameters": ("revit.get_type_parameters", {
-             "element_id": arguments.get("element_id")
-        }),
-        "revit_set_type_parameter": ("revit.set_type_parameter", {
-             "element_id": arguments.get("element_id"),
-             "parameter_name": arguments.get("parameter_name"),
-             "value": arguments.get("value")
-        }),
-
-        # Sheets (New)
-        "revit_list_sheets": ("revit.list_sheets", {}),
-        "revit_create_sheet": ("revit.create_sheet", {
-             "name": arguments.get("name"),
-             "number": arguments.get("number"),
-             "titleblock_id": arguments.get("titleblock_id")
-        }),
-        "revit_delete_sheet": ("revit.delete_sheet", {
-             "sheet_id": arguments.get("sheet_id")
-        }),
-        "revit_place_viewport_on_sheet": ("revit.place_viewport_on_sheet", {
-             "sheet_id": arguments.get("sheet_id"),
-             "view_id": arguments.get("view_id"),
-             "location": {"x": arguments.get("x"), "y": arguments.get("y"), "z": 0}
-        }),
-        "revit_batch_create_sheets_from_csv": ("revit.batch_create_sheets_from_csv", {
-             "csv_path": arguments.get("csv_path"),
-             "titleblock_name": arguments.get("titleblock_name")
-        }),
-        "revit_populate_titleblock": ("revit.populate_titleblock", {
-             "sheet_id": arguments.get("sheet_id"),
-             "parameters": arguments.get("parameters")
-        }),
-        "revit_list_titleblocks": ("revit.list_titleblocks", {}),
-        "revit_get_sheet_info": ("revit.get_sheet_info", {
-             "sheet_id": arguments.get("sheet_id")
-        }),
-        "revit_duplicate_sheet": ("revit.duplicate_sheet", {
-             "sheet_id": arguments.get("sheet_id"),
-             "with_views": arguments.get("with_views", False),
-             "duplicate_option": arguments.get("duplicate_option", "Duplicate")
-        }),
-        "revit_renumber_sheets": ("revit.renumber_sheets", {
-             "prefix": arguments.get("prefix"),
-             "start_number": arguments.get("start_number")
-        }),
-        
-        # Existing
-        "revit_health": ("revit.health", {}),
-        "revit_list_levels": ("revit.list_levels", {}),
-        "revit_list_views": ("revit.list_views", {}),
-        "revit_get_document_info": ("revit.get_document_info", {}),
-        "revit_list_elements": ("revit.list_elements_by_category", {
-            "category": arguments.get("category", "Walls")
-        }),
-        "revit_create_wall": ("revit.create_wall", {
-            "start_point": {
-                "x": arguments.get("start_x", 0),
-                "y": arguments.get("start_y", 0),
-                "z": arguments.get("start_z", 0)
-            },
-            "end_point": {
-                "x": arguments.get("end_x", 0),
-                "y": arguments.get("end_y", 0),
-                "z": arguments.get("end_z", 0)
-            },
-            "height": arguments.get("height", 10),
-            "level": arguments.get("level", "L1")
-        }),
-        "revit_create_floor": ("revit.create_floor", {
-            "boundary_points": [
-                {"x": p.get("x", 0), "y": p.get("y", 0), "z": p.get("z", 0)}
-                for p in arguments.get("points", [])
-                # Batch 5: Advanced MEP & Engineering
+        # Batch 3: Editing
+        Tool(name="revit_move_element", description="Move an element", inputSchema={"type": "object", "properties": {"element_id": {"type": "integer"}, "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number", "default": 0}}, "required": ["element_id", "x", "y"]}),
+        Tool(name="revit_copy_element", description="Copy an element", inputSchema={"type": "object", "properties": {"element_id": {"type": "integer"}, "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number", "default": 0}}, "required": ["element_id", "x", "y"]}),
+        Tool(name="revit_rotate_element", description="Rotate an element", inputSchema={"type": "object", "properties": {"element_id": {"type": "integer"}, "center_x": {"type": "number"}, "center_y": {"type": "number"}, "center_z": {"type": "number", "default": 0}, "angle_radians": {"type": "number"}}, "required": ["element_id", "center_x", "center_y", "angle_radians"]}),
+        Tool(name="revit_mirror_element", description="Mirror an element", inputSchema={"type": "object", "properties": {"element_id": {"type": "integer"}, "plane_origin_x": {"type": "number"}, "plane_origin_y": {"type": "number"}, "plane_origin_z": {"type": "number", "default": 0}, "plane_normal_x": {"type": "number"}, "plane_normal_y": {"type": "number"}, "plane_normal_z": {"type": "number", "default": 0}}, "required": ["element_id", "plane_origin_x", "plane_origin_y", "plane_normal_x", "plane_normal_y"]}),
+        Tool(name="revit_pin_element", description="Pin an element", inputSchema={"type": "object", "properties": {"element_id": {"type": "integer"}}, "required": ["element_id"]}),
+        Tool(name="revit_unpin_element", description="Unpin an element", inputSchema={"type": "object", "properties": {"element_id": {"type": "integer"}}, "required": ["element_id"]}),
+        # Batch 3: Worksharing
+        Tool(name="revit_sync_to_central", description="Sync to central model", inputSchema={"type": "object", "properties": {"comment": {"type": "string"}, "relinquish": {"type": "boolean", "default": True}}}),
+        Tool(name="revit_relinquish_all", description="Relinquish all elements and worksets", inputSchema={"type": "object", "properties": {}}),
+        Tool(name="revit_get_worksets", description="Get all worksets", inputSchema={"type": "object", "properties": {}}),
+        # Batch 3: Schedules & Geo
+        Tool(name="revit_create_schedule", description="Create a schedule", inputSchema={"type": "object", "properties": {"category_name": {"type": "string"}, "name": {"type": "string"}}, "required": ["category_name", "name"]}),
+        Tool(name="revit_get_schedule_data", description="Get schedule data", inputSchema={"type": "object", "properties": {"schedule_id": {"type": "integer"}}, "required": ["schedule_id"]}),
+        Tool(name="revit_get_element_bounding_box", description="Get element bounding box", inputSchema={"type": "object", "properties": {"element_id": {"type": "integer"}}, "required": ["element_id"]}),
+        # Batch 4: Phasing
+        Tool(name="revit_get_phases", description="Get project phases", inputSchema={"type": "object", "properties": {}}),
+        Tool(name="revit_get_phase_filters", description="Get phase filters", inputSchema={"type": "object", "properties": {}}),
+        # Batch 4: Design Options
+        Tool(name="revit_get_design_options", description="Get design options", inputSchema={"type": "object", "properties": {}}),
+        # Batch 4: Groups
+        Tool(name="revit_create_group", description="Create a group", inputSchema={"type": "object", "properties": {"element_ids": {"type": "array", "items": {"type": "integer"}}, "name": {"type": "string"}}, "required": ["element_ids", "name"]}),
+        Tool(name="revit_ungroup", description="Ungroup a group", inputSchema={"type": "object", "properties": {"group_id": {"type": "integer"}}, "required": ["group_id"]}),
+        Tool(name="revit_get_group_members", description="Get group members", inputSchema={"type": "object", "properties": {"group_id": {"type": "integer"}}, "required": ["group_id"]}),
+        # Batch 4: Links
+        Tool(name="revit_get_rvt_links", description="Get RVT links", inputSchema={"type": "object", "properties": {}}),
+        Tool(name="revit_get_link_instances", description="Get link instances", inputSchema={"type": "object", "properties": {}}),
+        # Batch 5: Advanced MEP & Engineering
         Tool(name="revit_create_cable_tray", description="Create cable tray run", inputSchema={"type": "object", "properties": {"level": {"type": "string"}, "start_x": {"type": "number"}, "start_y": {"type": "number"}, "start_z": {"type": "number", "default": 10}, "end_x": {"type": "number"}, "end_y": {"type": "number"}, "end_z": {"type": "number", "default": 10}, "width": {"type": "number", "default": 1.0}, "height": {"type": "number", "default": 0.33}}, "required": ["level", "start_x", "start_y", "end_x", "end_y"]}),
         Tool(name="revit_create_conduit", description="Create electrical conduit", inputSchema={"type": "object", "properties": {"level": {"type": "string"}, "start_x": {"type": "number"}, "start_y": {"type": "number"}, "start_z": {"type": "number", "default": 10}, "end_x": {"type": "number"}, "end_y": {"type": "number"}, "end_z": {"type": "number", "default": 10}, "diameter": {"type": "number", "default": 0.0625}}, "required": ["level", "start_x", "start_y", "end_x", "end_y"]}),
         Tool(name="revit_get_mep_systems", description="Get MEP systems info", inputSchema={"type": "object", "properties": {"system_type": {"type": "string", "default": "all"}}}),
@@ -707,136 +515,340 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         Tool(name="revit_get_project_location", description="Get project base and survey points", inputSchema={"type": "object", "properties": {}}),
         Tool(name="revit_get_warnings", description="Get current project warnings", inputSchema={"type": "object", "properties": {}}),
         # Batch 9: Universal Reflection Bridge (10k+ Tools)
-        Tool(name="revit_invoke_method", description="Invoke any Revit API method dynamically using Reflection", inputSchema={"type": "object", "properties": {"class_name": {"type": "string"}, "method_name": {"type": "string"}, "arguments": {"type": "array", "items": {}}, "target_id": {"type": "string"}, "use_transaction": {"type": "boolean", "default": true}}, "required": ["class_name", "method_name", "arguments"]}),
+        Tool(name="revit_invoke_method", description="Invoke any Revit API method dynamically using Reflection", inputSchema={"type": "object", "properties": {"class_name": {"type": "string"}, "method_name": {"type": "string"}, "arguments": {"type": "array", "items": {}}, "target_id": {"type": "string"}, "use_transaction": {"type": "boolean", "default": True}}, "required": ["class_name", "method_name", "arguments"]}),
         Tool(name="revit_reflect_get", description="Get any Revit property value dynamically", inputSchema={"type": "object", "properties": {"target_id": {"type": "string"}, "property_name": {"type": "string"}}, "required": ["target_id", "property_name"]}),
         Tool(name="revit_reflect_set", description="Set any Revit property value dynamically", inputSchema={"type": "object", "properties": {"target_id": {"type": "string"}, "property_name": {"type": "string"}, "value": {}}, "required": ["target_id", "property_name", "value"]}),
-    ],
-            "level": arguments.get("level", "L1")
-        }),
-        "revit_create_roof": ("revit.create_roof", {
-            "boundary_points": [
-                {"x": p.get("x", 0), "y": p.get("y", 0), "z": p.get("z", 0)}
-                for p in arguments.get("points", [])
-            ],
-            "level": arguments.get("level", "Level 2"),
-            "slope": arguments.get("slope", 0.5)
-        }),
-        "revit_create_level": ("revit.create_level", {
-            "name": arguments.get("name", "New Level"),
-            "elevation": arguments.get("elevation", 10)
-        }),
-        "revit_save_document": ("revit.save_document", {
-            "path": arguments.get("path", "")
-        }),
+    ]
 
-        # Batch 2: Selection
-        "revit_get_selection": ("revit.get_selection", {}),
-        "revit_set_selection": ("revit.set_selection", {"element_ids": arguments.get("element_ids")}),
 
-        # Batch 2: Annotation
-        "revit_create_text_note": ("revit.create_text_note", {"text": arguments.get("text"), "location": {"x": arguments.get("x"), "y": arguments.get("y"), "z": 0}, "view_id": arguments.get("view_id")}),
-        "revit_create_tag": ("revit.create_tag", {"element_id": arguments.get("element_id"), "location": {"x": arguments.get("x"), "y": arguments.get("y"), "z": 0}, "view_id": arguments.get("view_id")}),
+@app.call_tool()
+async def call_tool(name: str, arguments: Any) -> list[TextContent]:
+    """Execute a Revit tool."""
 
-        # Batch 2: Structure
-        "revit_create_column": ("revit.create_column", {"family_name": arguments.get("family_name"), "type_name": arguments.get("type_name"), "level": arguments.get("level"), "location": {"x": arguments.get("x"), "y": arguments.get("y"), "z": 0}}),
-        "revit_create_beam": ("revit.create_beam", {"family_name": arguments.get("family_name"), "type_name": arguments.get("type_name"), "level": arguments.get("level"), "start_point": {"x": arguments.get("start_x"), "y": arguments.get("start_y"), "z": 0}, "end_point": {"x": arguments.get("end_x"), "y": arguments.get("end_y"), "z": 0}}),
-        "revit_create_foundation": ("revit.create_foundation", {"family_name": arguments.get("family_name"), "type_name": arguments.get("type_name"), "level": arguments.get("level"), "location": {"x": arguments.get("x"), "y": arguments.get("y"), "z": arguments.get("z", 0)}}),
+    if not bridge:
+        return [TextContent(
+            type="text",
+            text="Error: Bridge not configured. Set MCP_REVIT_BRIDGE_URL in your .env file."
+        )]
 
-        # Batch 2: MEP
-        "revit_create_duct": ("revit.create_duct", {"level": arguments.get("level"), "start_point": {"x": arguments.get("start_x"), "y": arguments.get("start_y"), "z": arguments.get("z", 10)}, "end_point": {"x": arguments.get("end_x"), "y": arguments.get("end_y"), "z": arguments.get("z", 10)}, "system_type": arguments.get("system_type"), "duct_type": arguments.get("duct_type")}),
-        "revit_create_pipe": ("revit.create_pipe", {"level": arguments.get("level"), "start_point": {"x": arguments.get("start_x"), "y": arguments.get("start_y"), "z": arguments.get("z", 0)}, "end_point": {"x": arguments.get("end_x"), "y": arguments.get("end_y"), "z": arguments.get("z", 0)}, "system_type": arguments.get("system_type"), "pipe_type": arguments.get("pipe_type")}),
-
-        # Batch 2: Helpers
-        "revit_get_categories": ("revit.get_categories", {}),
-        "revit_get_element_type": ("revit.get_element_type", {"category_name": arguments.get("category_name"), "family_name": arguments.get("family_name")}),
-
-        # Batch 2: Remaining Existing
-        "revit_close_document": ("revit.close_document", {"save_changes": arguments.get("save_changes", False)}),
-        "revit_create_new_document": ("revit.create_new_document", {"template_path": arguments.get("template_path")}),
-        "revit_export_dwg": ("revit.export_dwg_by_view", {"view_id": arguments.get("view_id"), "output_path": arguments.get("output_path")}),
-        "revit_export_ifc": ("revit.export_ifc_with_settings", {"output_path": arguments.get("output_path")}),
-        "revit_export_navisworks": ("revit.export_navisworks", {"output_path": arguments.get("output_path")}),
-        "revit_export_image": ("revit.export_image", {"view_id": arguments.get("view_id"), "output_path": arguments.get("output_path"), "width": arguments.get("width"), "height": arguments.get("height")}),
-        "revit_render_3d": ("revit.render_3d_view", {"view_id": arguments.get("view_id"), "output_path": arguments.get("output_path"), "quality": arguments.get("quality", "Medium")}),
-
-        # Batch 3: Editing
-        "revit_move_element": ("revit.move_element", {"element_id": arguments.get("element_id"), "vector": {"x": arguments.get("x"), "y": arguments.get("y"), "z": arguments.get("z", 0)}}),
-        "revit_copy_element": ("revit.copy_element", {"element_id": arguments.get("element_id"), "vector": {"x": arguments.get("x"), "y": arguments.get("y"), "z": arguments.get("z", 0)}}),
-        "revit_rotate_element": ("revit.rotate_element", {"element_id": arguments.get("element_id"), "axis_point": {"x": arguments.get("center_x"), "y": arguments.get("center_y"), "z": arguments.get("center_z", 0)}, "angle_radians": arguments.get("angle_radians")}),
-        "revit_mirror_element": ("revit.mirror_element", {"element_id": arguments.get("element_id"), "plane_origin": {"x": arguments.get("plane_origin_x"), "y": arguments.get("plane_origin_y"), "z": arguments.get("plane_origin_z", 0)}, "plane_normal": {"x": arguments.get("plane_normal_x"), "y": arguments.get("plane_normal_y"), "z": arguments.get("plane_normal_z", 0)}}),
-        "revit_pin_element": ("revit.pin_element", {"element_id": arguments.get("element_id")}),
-        "revit_unpin_element": ("revit.unpin_element", {"element_id": arguments.get("element_id")}),
-
-        # Batch 3: Worksharing
-        "revit_sync_to_central": ("revit.sync_to_central", {"comment": arguments.get("comment", "Sync via MCP"), "relinquish": arguments.get("relinquish", True)}),
-        "revit_relinquish_all": ("revit.relinquish_all", {}),
-        "revit_get_worksets": ("revit.get_worksets", {}),
-
-        # Batch 3: Schedules & Geo
-        "revit_create_schedule": ("revit.create_schedule", {"category_name": arguments.get("category_name"), "name": arguments.get("name")}),
-        "revit_get_schedule_data": ("revit.get_schedule_data", {"schedule_id": arguments.get("schedule_id")}),
-        "revit_get_element_bounding_box": ("revit.get_element_bounding_box", {"element_id": arguments.get("element_id")}),
-
-        # Batch 4: Phasing
-        "revit_get_phases": ("revit.get_phases", {}),
-        "revit_get_phase_filters": ("revit.get_phase_filters", {}),
-
-        # Batch 4: Design Options
-        "revit_get_design_options": ("revit.get_design_options", {}),
-
-        # Batch 4: Groups
-        "revit_create_group": ("revit.create_group", {"element_ids": arguments.get("element_ids"), "name": arguments.get("name")}),
-        "revit_ungroup": ("revit.ungroup", {"group_id": arguments.get("group_id")}),
-        "revit_get_group_members": ("revit.get_group_members", {"group_id": arguments.get("group_id")}),
-
-        # Batch 4: Links
-        "revit_get_rvt_links": ("revit.get_rvt_links", {}),
-        "revit_get_link_instances": ("revit.get_link_instances", {}),
-
-        # Batch 5: Advanced MEP & Engineering
-        "revit_create_cable_tray": ("revit.create_cable_tray", {
-            "level": arguments.get("level"),
-            "start_point": {"x": arguments.get("start_x"), "y": arguments.get("start_y"), "z": arguments.get("start_z", 10)},
-            "end_point": {"x": arguments.get("end_x"), "y": arguments.get("end_y"), "z": arguments.get("end_z", 10)},
-            "width": arguments.get("width", 1.0),
-            "height": arguments.get("height", 0.33),
-            "cable_tray_type": arguments.get("cable_tray_type")
-        }),
-        "revit_create_conduit": ("revit.create_conduit", {
-            "level": arguments.get("level"),
-            "start_point": {"x": arguments.get("start_x"), "y": arguments.get("start_y"), "z": arguments.get("start_z", 10)},
-            "end_point": {"x": arguments.get("end_x"), "y": arguments.get("end_y"), "z": arguments.get("end_z", 10)},
-            "diameter": arguments.get("diameter", 0.0625),
-            "conduit_type": arguments.get("conduit_type")
-        }),
-        "revit_get_mep_systems": ("revit.get_mep_systems", {
-            "system_type": arguments.get("system_type", "all")
-        }),
-        "revit_check_clashes": ("revit.check_clashes", {
-            "category1": arguments.get("category1"),
-            "category2": arguments.get("category2"),
-            "tolerance": arguments.get("tolerance", 0.01)
-        }),
-        "revit_get_warnings": ("revit.get_warnings", {}),
-
-        # Batch 9: Universal Reflection Bridge
-        "revit_invoke_method": ("revit.invoke_method", {
-            "class_name": arguments.get("class_name"),
-            "method_name": arguments.get("method_name"),
-            "arguments": arguments.get("arguments"),
-            "target_id": arguments.get("target_id"),
-            "use_transaction": arguments.get("use_transaction", True)
-        }),
-        "revit_reflect_get": ("revit.reflect_get", {
-            "target_id": arguments.get("target_id"),
-            "property_name": arguments.get("property_name")
-        }),
-        "revit_reflect_set": ("revit.reflect_set", {
-            "target_id": arguments.get("target_id"),
-            "property_name": arguments.get("property_name"),
-            "value": arguments.get("value")
-        }),
-    }
+    try:
+        # Map MCP tool names to Revit bridge tools
+        tool_mapping = {
+            # Existing Core Tools
+            "revit_health": ("revit.health", {}),
+            "revit_list_levels": ("revit.list_levels", {}),
+            "revit_list_views": ("revit.list_views", {}),
+            "revit_get_document_info": ("revit.get_document_info", {}),
+            "revit_list_elements": ("revit.list_elements_by_category", {
+                "category": arguments.get("category", "Walls")
+            }),
+            "revit_create_wall": ("revit.create_wall", {
+                "start_point": {
+                    "x": arguments.get("start_x", 0),
+                    "y": arguments.get("start_y", 0),
+                    "z": arguments.get("start_z", 0)
+                },
+                "end_point": {
+                    "x": arguments.get("end_x", 0),
+                    "y": arguments.get("end_y", 0),
+                    "z": arguments.get("end_z", 0)
+                },
+                "height": arguments.get("height", 10),
+                "level": arguments.get("level", "L1")
+            }),
+            "revit_create_floor": ("revit.create_floor", {
+                "boundary_points": [
+                    {"x": p.get("x", 0), "y": p.get("y", 0), "z": p.get("z", 0)}
+                    for p in arguments.get("points", [])
+                ],
+                "level": arguments.get("level", "L1")
+            }),
+            "revit_create_roof": ("revit.create_roof", {
+                "boundary_points": [
+                    {"x": p.get("x", 0), "y": p.get("y", 0), "z": p.get("z", 0)}
+                    for p in arguments.get("points", [])
+                ],
+                "level": arguments.get("level", "Level 2"),
+                "slope": arguments.get("slope", 0.5)
+            }),
+            "revit_create_level": ("revit.create_level", {
+                "name": arguments.get("name", "New Level"),
+                "elevation": arguments.get("elevation", 10)
+            }),
+            "revit_save_document": ("revit.save_document", {
+                "path": arguments.get("path", "")
+            }),
+            # Geometry (New)
+            "revit_create_grid": ("revit.create_grid", {
+                "start_point": {"x": arguments.get("start_x"), "y": arguments.get("start_y"), "z": arguments.get("start_z")},
+                "end_point": {"x": arguments.get("end_x"), "y": arguments.get("end_y"), "z": arguments.get("end_z")},
+                "name": arguments.get("name")
+            }),
+            "revit_create_room": ("revit.create_room", {
+                "level": arguments.get("level"),
+                "location_point": {"x": arguments.get("x"), "y": arguments.get("y"), "z": 0},
+                "name": arguments.get("name"),
+                "number": arguments.get("number")
+            }),
+            "revit_delete_element": ("revit.delete_element", {
+                "element_id": arguments.get("element_id")
+            }),
+            # Placement (New)
+            "revit_place_family_instance": ("revit.place_family_instance", {
+                "family_name": arguments.get("family_name"),
+                "type_name": arguments.get("type_name"),
+                "level": arguments.get("level"),
+                "location": {"x": arguments.get("x"), "y": arguments.get("y"), "z": arguments.get("z")}
+            }),
+            "revit_place_door": ("revit.place_door", {
+                "wall_id": arguments.get("wall_id"),
+                "family_name": arguments.get("family_name"),
+                "type_name": arguments.get("type_name"),
+                "location": {"x": arguments.get("x"), "y": arguments.get("y"), "z": arguments.get("z")}
+            }),
+            "revit_place_window": ("revit.place_window", {
+                "wall_id": arguments.get("wall_id"),
+                "family_name": arguments.get("family_name"),
+                "type_name": arguments.get("type_name"),
+                "location": {"x": arguments.get("x"), "y": arguments.get("y"), "z": arguments.get("z")}
+            }),
+            "revit_list_families": ("revit.list_families", {}),
+            # Views (New)
+            "revit_create_floor_plan_view": ("revit.create_floor_plan_view", {
+                "level_name": arguments.get("level_name"),
+                "view_name": arguments.get("view_name")
+            }),
+            "revit_create_3d_view": ("revit.create_3d_view", {
+                "view_name": arguments.get("view_name")
+            }),
+            "revit_create_section_view": ("revit.create_section_view", {
+                "view_name": arguments.get("view_name"),
+                "start_point": {"x": arguments.get("start_x"), "y": arguments.get("start_y"), "z": arguments.get("start_z")},
+                "end_point": {"x": arguments.get("end_x"), "y": arguments.get("end_y"), "z": arguments.get("end_z")},
+                "height": arguments.get("height")
+            }),
+            # Parameters (New)
+            "revit_get_element_parameters": ("revit.get_element_parameters", {
+                "element_id": arguments.get("element_id")
+            }),
+            "revit_set_parameter_value": ("revit.set_parameter_value", {
+                "element_id": arguments.get("element_id"),
+                "parameter_name": arguments.get("parameter_name"),
+                "value": arguments.get("value")
+            }),
+            "revit_get_parameter_value": ("revit.get_parameter_value", {
+                "element_id": arguments.get("element_id"),
+                "parameter_name": arguments.get("parameter_name")
+            }),
+            "revit_list_shared_parameters": ("revit.list_shared_parameters", {}),
+            "revit_create_shared_parameter": ("revit.create_shared_parameter", {
+                "name": arguments.get("name"),
+                "group": arguments.get("group", "General"),
+                "type": arguments.get("type", "Text"),
+                "visible": arguments.get("visible", True)
+            }),
+            "revit_list_project_parameters": ("revit.list_project_parameters", {}),
+            "revit_create_project_parameter": ("revit.create_project_parameter", {
+                "name": arguments.get("name"),
+                "group": arguments.get("group", "General"),
+                "type": arguments.get("type", "Text"),
+                "category": arguments.get("category"),
+                "visible": arguments.get("visible", True)
+            }),
+            "revit_batch_set_parameters": ("revit.batch_set_parameters", {
+                "element_ids": arguments.get("element_ids"),
+                "parameter_name": arguments.get("parameter_name"),
+                "value": arguments.get("value")
+            }),
+            "revit_get_type_parameters": ("revit.get_type_parameters", {
+                "element_id": arguments.get("element_id")
+            }),
+            "revit_set_type_parameter": ("revit.set_type_parameter", {
+                "element_id": arguments.get("element_id"),
+                "parameter_name": arguments.get("parameter_name"),
+                "value": arguments.get("value")
+            }),
+            # Sheets (New)
+            "revit_list_sheets": ("revit.list_sheets", {}),
+            "revit_create_sheet": ("revit.create_sheet", {
+                "name": arguments.get("name"),
+                "number": arguments.get("number"),
+                "titleblock_id": arguments.get("titleblock_id")
+            }),
+            "revit_delete_sheet": ("revit.delete_sheet", {
+                "sheet_id": arguments.get("sheet_id")
+            }),
+            "revit_place_viewport_on_sheet": ("revit.place_viewport_on_sheet", {
+                "sheet_id": arguments.get("sheet_id"),
+                "view_id": arguments.get("view_id"),
+                "location": {"x": arguments.get("x"), "y": arguments.get("y"), "z": 0}
+            }),
+            "revit_batch_create_sheets_from_csv": ("revit.batch_create_sheets_from_csv", {
+                "csv_path": arguments.get("csv_path"),
+                "titleblock_name": arguments.get("titleblock_name")
+            }),
+            "revit_populate_titleblock": ("revit.populate_titleblock", {
+                "sheet_id": arguments.get("sheet_id"),
+                "parameters": arguments.get("parameters")
+            }),
+            "revit_list_titleblocks": ("revit.list_titleblocks", {}),
+            "revit_get_sheet_info": ("revit.get_sheet_info", {
+                "sheet_id": arguments.get("sheet_id")
+            }),
+            "revit_duplicate_sheet": ("revit.duplicate_sheet", {
+                "sheet_id": arguments.get("sheet_id"),
+                "with_views": arguments.get("with_views", False),
+                "duplicate_option": arguments.get("duplicate_option", "Duplicate")
+            }),
+            "revit_renumber_sheets": ("revit.renumber_sheets", {
+                "prefix": arguments.get("prefix"),
+                "start_number": arguments.get("start_number")
+            }),
+            # Batch 2: Selection
+            "revit_get_selection": ("revit.get_selection", {}),
+            "revit_set_selection": ("revit.set_selection", {"element_ids": arguments.get("element_ids")}),
+            # Batch 2: Annotation
+            "revit_create_text_note": ("revit.create_text_note", {"text": arguments.get("text"), "location": {"x": arguments.get("x"), "y": arguments.get("y"), "z": 0}, "view_id": arguments.get("view_id")}),
+            "revit_create_tag": ("revit.create_tag", {"element_id": arguments.get("element_id"), "location": {"x": arguments.get("x"), "y": arguments.get("y"), "z": 0}, "view_id": arguments.get("view_id")}),
+            # Batch 2: Structure
+            "revit_create_column": ("revit.create_column", {"family_name": arguments.get("family_name"), "type_name": arguments.get("type_name"), "level": arguments.get("level"), "location": {"x": arguments.get("x"), "y": arguments.get("y"), "z": 0}}),
+            "revit_create_beam": ("revit.create_beam", {"family_name": arguments.get("family_name"), "type_name": arguments.get("type_name"), "level": arguments.get("level"), "start_point": {"x": arguments.get("start_x"), "y": arguments.get("start_y"), "z": 0}, "end_point": {"x": arguments.get("end_x"), "y": arguments.get("end_y"), "z": 0}}),
+            "revit_create_foundation": ("revit.create_foundation", {"family_name": arguments.get("family_name"), "type_name": arguments.get("type_name"), "level": arguments.get("level"), "location": {"x": arguments.get("x"), "y": arguments.get("y"), "z": arguments.get("z", 0)}}),
+            # Batch 2: MEP
+            "revit_create_duct": ("revit.create_duct", {"level": arguments.get("level"), "start_point": {"x": arguments.get("start_x"), "y": arguments.get("start_y"), "z": arguments.get("z", 10)}, "end_point": {"x": arguments.get("end_x"), "y": arguments.get("end_y"), "z": arguments.get("z", 10)}, "system_type": arguments.get("system_type"), "duct_type": arguments.get("duct_type")}),
+            "revit_create_pipe": ("revit.create_pipe", {"level": arguments.get("level"), "start_point": {"x": arguments.get("start_x"), "y": arguments.get("start_y"), "z": arguments.get("z", 0)}, "end_point": {"x": arguments.get("end_x"), "y": arguments.get("end_y"), "z": arguments.get("z", 0)}, "system_type": arguments.get("system_type"), "pipe_type": arguments.get("pipe_type")}),
+            # Batch 2: Helpers
+            "revit_get_categories": ("revit.get_categories", {}),
+            "revit_get_element_type": ("revit.get_element_type", {"category_name": arguments.get("category_name"), "family_name": arguments.get("family_name")}),
+            # Batch 2: Remaining Existing
+            "revit_close_document": ("revit.close_document", {"save_changes": arguments.get("save_changes", False)}),
+            "revit_create_new_document": ("revit.create_new_document", {"template_path": arguments.get("template_path")}),
+            "revit_export_dwg": ("revit.export_dwg_by_view", {"view_id": arguments.get("view_id"), "output_path": arguments.get("output_path")}),
+            "revit_export_ifc": ("revit.export_ifc_with_settings", {"output_path": arguments.get("output_path")}),
+            "revit_export_navisworks": ("revit.export_navisworks", {"output_path": arguments.get("output_path")}),
+            "revit_export_image": ("revit.export_image", {"view_id": arguments.get("view_id"), "output_path": arguments.get("output_path"), "width": arguments.get("width"), "height": arguments.get("height")}),
+            "revit_render_3d": ("revit.render_3d_view", {"view_id": arguments.get("view_id"), "output_path": arguments.get("output_path"), "quality": arguments.get("quality", "Medium")}),
+            # Batch 3: Editing
+            "revit_move_element": ("revit.move_element", {"element_id": arguments.get("element_id"), "vector": {"x": arguments.get("x"), "y": arguments.get("y"), "z": arguments.get("z", 0)}}),
+            "revit_copy_element": ("revit.copy_element", {"element_id": arguments.get("element_id"), "vector": {"x": arguments.get("x"), "y": arguments.get("y"), "z": arguments.get("z", 0)}}),
+            "revit_rotate_element": ("revit.rotate_element", {"element_id": arguments.get("element_id"), "axis_point": {"x": arguments.get("center_x"), "y": arguments.get("center_y"), "z": arguments.get("center_z", 0)}, "angle_radians": arguments.get("angle_radians")}),
+            "revit_mirror_element": ("revit.mirror_element", {"element_id": arguments.get("element_id"), "plane_origin": {"x": arguments.get("plane_origin_x"), "y": arguments.get("plane_origin_y"), "z": arguments.get("plane_origin_z", 0)}, "plane_normal": {"x": arguments.get("plane_normal_x"), "y": arguments.get("plane_normal_y"), "z": arguments.get("plane_normal_z", 0)}}),
+            "revit_pin_element": ("revit.pin_element", {"element_id": arguments.get("element_id")}),
+            "revit_unpin_element": ("revit.unpin_element", {"element_id": arguments.get("element_id")}),
+            # Batch 3: Worksharing
+            "revit_sync_to_central": ("revit.sync_to_central", {"comment": arguments.get("comment", "Sync via MCP"), "relinquish": arguments.get("relinquish", True)}),
+            "revit_relinquish_all": ("revit.relinquish_all", {}),
+            "revit_get_worksets": ("revit.get_worksets", {}),
+            # Batch 3: Schedules & Geo
+            "revit_create_schedule": ("revit.create_schedule", {"category_name": arguments.get("category_name"), "name": arguments.get("name")}),
+            "revit_get_schedule_data": ("revit.get_schedule_data", {"schedule_id": arguments.get("schedule_id")}),
+            "revit_get_element_bounding_box": ("revit.get_element_bounding_box", {"element_id": arguments.get("element_id")}),
+            # Batch 4: Phasing
+            "revit_get_phases": ("revit.get_phases", {}),
+            "revit_get_phase_filters": ("revit.get_phase_filters", {}),
+            # Batch 4: Design Options
+            "revit_get_design_options": ("revit.get_design_options", {}),
+            # Batch 4: Groups
+            "revit_create_group": ("revit.create_group", {"element_ids": arguments.get("element_ids"), "name": arguments.get("name")}),
+            "revit_ungroup": ("revit.ungroup", {"group_id": arguments.get("group_id")}),
+            "revit_get_group_members": ("revit.get_group_members", {"group_id": arguments.get("group_id")}),
+            # Batch 4: Links
+            "revit_get_rvt_links": ("revit.get_rvt_links", {}),
+            "revit_get_link_instances": ("revit.get_link_instances", {}),
+            # Batch 5: Advanced MEP & Engineering
+            "revit_create_cable_tray": ("revit.create_cable_tray", {
+                "level": arguments.get("level"),
+                "start_point": {"x": arguments.get("start_x"), "y": arguments.get("start_y"), "z": arguments.get("start_z", 10)},
+                "end_point": {"x": arguments.get("end_x"), "y": arguments.get("end_y"), "z": arguments.get("end_z", 10)},
+                "width": arguments.get("width", 1.0),
+                "height": arguments.get("height", 0.33),
+                "cable_tray_type": arguments.get("cable_tray_type")
+            }),
+            "revit_create_conduit": ("revit.create_conduit", {
+                "level": arguments.get("level"),
+                "start_point": {"x": arguments.get("start_x"), "y": arguments.get("start_y"), "z": arguments.get("start_z", 10)},
+                "end_point": {"x": arguments.get("end_x"), "y": arguments.get("end_y"), "z": arguments.get("end_z", 10)},
+                "diameter": arguments.get("diameter", 0.0625),
+                "conduit_type": arguments.get("conduit_type")
+            }),
+            "revit_get_mep_systems": ("revit.get_mep_systems", {
+                "system_type": arguments.get("system_type", "all")
+            }),
+            "revit_check_clashes": ("revit.check_clashes", {
+                "category1": arguments.get("category1"),
+                "category2": arguments.get("category2"),
+                "tolerance": arguments.get("tolerance", 0.01)
+            }),
+            # Batch 6: Materials & Visuals
+            "revit_create_material": ("revit.create_material", {
+                "name": arguments.get("name"),
+                "color": arguments.get("color"),
+                "transparency": arguments.get("transparency", 0),
+                "shininess": arguments.get("shininess", 50),
+                "smoothness": arguments.get("smoothness", 50)
+            }),
+            "revit_set_element_material": ("revit.set_element_material", {
+                "element_id": arguments.get("element_id"),
+                "material_name": arguments.get("material_name"),
+                "face_index": arguments.get("face_index")
+            }),
+            "revit_get_render_settings": ("revit.get_render_settings", {}),
+            # Batch 7: Family Management
+            "revit_convert_to_group": ("revit.convert_to_group", {
+                "element_ids": arguments.get("element_ids"),
+                "name": arguments.get("name")
+            }),
+            "revit_edit_family": ("revit.edit_family", {
+                "family_name": arguments.get("family_name"),
+                "family_symbol_id": arguments.get("family_symbol_id"),
+                "family_instance_id": arguments.get("family_instance_id")
+            }),
+            # Batch 8: High-Value Documentation & Analysis
+            "revit_create_dimension": ("revit.create_dimension", {
+                "start_point": arguments.get("start_point"),
+                "end_point": arguments.get("end_point"),
+                "element1_id": arguments.get("element1_id"),
+                "element2_id": arguments.get("element2_id")
+            }),
+            "revit_create_revision_cloud": ("revit.create_revision_cloud", {
+                "view_id": arguments.get("view_id"),
+                "points": arguments.get("points"),
+                "revision_id": arguments.get("revision_id")
+            }),
+            "revit_get_revision_sequences": ("revit.get_revision_sequences", {}),
+            "revit_tag_all_in_view": ("revit.tag_all_in_view", {"category": arguments.get("category")}),
+            "revit_create_text_type": ("revit.create_text_type", {
+                "name": arguments.get("name"),
+                "font": arguments.get("font"),
+                "size_inches": arguments.get("size_inches")
+            }),
+            "revit_get_view_templates": ("revit.get_view_templates", {}),
+            "revit_apply_view_template": ("revit.apply_view_template", {
+                "view_id": arguments.get("view_id"),
+                "template_id": arguments.get("template_id")
+            }),
+            "revit_calculate_material_quantities": ("revit.calculate_material_quantities", {"category": arguments.get("category")}),
+            "revit_get_room_boundary": ("revit.get_room_boundary", {"room_id": arguments.get("room_id")}),
+            "revit_get_project_location": ("revit.get_project_location", {}),
+            "revit_get_warnings": ("revit.get_warnings", {}),
+            # Batch 9: Universal Reflection Bridge
+            "revit_invoke_method": ("revit.invoke_method", {
+                "class_name": arguments.get("class_name"),
+                "method_name": arguments.get("method_name"),
+                "arguments": arguments.get("arguments"),
+                "target_id": arguments.get("target_id"),
+                "use_transaction": arguments.get("use_transaction", True)
+            }),
+            "revit_reflect_get": ("revit.reflect_get", {
+                "target_id": arguments.get("target_id"),
+                "property_name": arguments.get("property_name")
+            }),
+            "revit_reflect_set": ("revit.reflect_set", {
+                "target_id": arguments.get("target_id"),
+                "property_name": arguments.get("property_name"),
+                "value": arguments.get("value")
+            }),
+        }
 
         if name not in tool_mapping:
             return [TextContent(
@@ -889,9 +901,3 @@ def run_mcp_server():
 
 if __name__ == "__main__":
     run_mcp_server()
-
-
-
-
-
-
