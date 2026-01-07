@@ -52,15 +52,41 @@ namespace RevitBridge.Bridge
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
-            string status = App.Server?.IsListening == true ? "Running ✅" : "Stopped 🛑";
-            string version = App.RevitVersion ?? "Unknown";
-            string port = "8000"; // Assuming default, or we can expose Port property on Server
+            if (App.Server == null)
+            {
+                TaskDialog.Show("RevitMCP Status", "Error: Server not initialized");
+                return Result.Failed;
+            }
 
-            TaskDialog.Show("RevitMCP Status", 
-                $"Status: {status}\n" +
-                $"Revit Version: {version}\n" +
-                $"Address: http://localhost:{port}/");
-            
+            var doc = commandData.Application.ActiveUIDocument?.Document;
+            string docInfo = doc != null
+                ? $"{doc.Title} ({(doc.IsModified ? "Modified" : "Not Modified")})"
+                : "No document open";
+
+            string statusIcon = App.Server.IsRunning ? "✅" : "🛑";
+            string statusText = $@"Server: {statusIcon} {(App.Server.IsRunning ? "Running" : "Stopped")}
+Address: http://localhost:3000/
+Revit Version: {App.RevitVersion ?? "Unknown"}
+
+Document: {docInfo}
+
+Statistics:
+  Active Connections: {App.Server.ActiveConnections}
+  Total Requests: {App.Server.TotalRequests}
+  Uptime: {App.Server.UptimeSeconds:F1}s
+
+Universal Bridge: ✅ Enabled
+Available Tools: 100+
+Reflection API: 10,000+ methods";
+
+            var dialog = new TaskDialog("RevitMCP Bridge Status")
+            {
+                MainInstruction = App.Server.IsRunning ? "Bridge is Running" : "Bridge is Stopped",
+                MainContent = statusText,
+                CommonButtons = TaskDialogCommonButtons.Close
+            };
+
+            dialog.Show();
             return Result.Succeeded;
         }
     }

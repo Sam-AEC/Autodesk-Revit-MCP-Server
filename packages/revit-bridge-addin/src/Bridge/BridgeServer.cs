@@ -18,6 +18,8 @@ public class BridgeServer
     private CancellationTokenSource _cts = new();
     private readonly DateTime _startTime = DateTime.UtcNow;
     private Task? _listenerTask;
+    private int _totalRequests = 0;
+    private int _activeConnections = 0;
 
     public BridgeServer(CommandQueue queue, ExternalEvent externalEvent, string prefix = "http://127.0.0.1:3000/")
     {
@@ -28,6 +30,10 @@ public class BridgeServer
     }
 
     public bool IsListening { get; private set; }
+    public bool IsRunning => IsListening;
+    public int ActiveConnections => _activeConnections;
+    public int TotalRequests => _totalRequests;
+    public double UptimeSeconds => (DateTime.UtcNow - _startTime).TotalSeconds;
 
     public void Start()
     {
@@ -90,6 +96,9 @@ public class BridgeServer
 
     private async Task HandleRequest(HttpListenerContext context)
     {
+        Interlocked.Increment(ref _activeConnections);
+        Interlocked.Increment(ref _totalRequests);
+
         try
         {
             var path = context.Request.Url?.AbsolutePath ?? "/";
@@ -115,6 +124,10 @@ public class BridgeServer
         {
             Log.Error(ex, "Request handling error");
             Respond(context, 500, new { error = ex.Message });
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _activeConnections);
         }
     }
 
