@@ -155,14 +155,82 @@ curl -X POST http://localhost:3000/execute `
 
 ---
 
-## 🎬 Demo
+## 🤖 Claude Desktop Integration (Recommended)
 
-<!-- If `demo.gif` is present it will display here on GitHub -->
+**Control Revit with Natural Language!** The easiest way to use RevitMCP is through Claude Desktop.
+
+### Quick Setup
+
+**1. Install Claude Desktop**
+- Download from: https://claude.ai/download
+
+**2. Configure MCP Server**
+
+Run the automated setup script:
+```powershell
+.\setup-claude-desktop.ps1
+```
+
+Or manually create/edit: `%APPDATA%\Claude\claude_desktop_config.json`
+```json
+{
+  "mcpServers": {
+    "revit": {
+      "command": "python",
+      "args": ["-m", "revit_mcp_server.mcp_server"],
+      "env": {
+        "MCP_REVIT_WORKSPACE_DIR": "C:\\Users\\YourName\\Documents",
+        "MCP_REVIT_ALLOWED_DIRECTORIES": "C:\\Users\\YourName\\Documents",
+        "MCP_REVIT_BRIDGE_URL": "http://127.0.0.1:3000",
+        "MCP_REVIT_MODE": "bridge"
+      }
+    }
+  }
+}
+```
+
+**3. Restart Claude Desktop**
+- Completely close Claude Desktop (use Task Manager if needed)
+- Reopen Claude Desktop
+- Look for "revit" in Settings → Developer → Local MCP servers
+
+**4. Start Using Natural Language!**
+
+With Revit open, try these commands in Claude Desktop:
+
+```
+"Create a 30ft by 25ft house with 10ft tall walls on level L1"
+```
+
+```
+"Show me all the walls in the current project"
+```
+
+```
+"Build a two-story commercial building, 50x40 feet, with 15ft tall walls"
+```
+
+Claude understands your intent and executes the appropriate Revit commands!
+
+### What You Can Say
+
+- **Create**: "Create a rectangular building 60ft by 40ft"
+- **Query**: "How many walls are in the project?"
+- **Modify**: "Add interior walls to divide the space into 4 rooms"
+- **Complex**: "Build a house with a living room, kitchen, and 3 bedrooms"
+- **Export**: "Export a PDF of all floor plans"
+
+**Full Guide**: See [CLAUDE_DESKTOP_SETUP.md](CLAUDE_DESKTOP_SETUP.md) for detailed instructions.
+
+---
+
+## 🎬 Demo: Natural Language Control with Claude Desktop
+
 <p align="center">
-   <img src="assets/demo.gif" alt="Demo" width="900"/>
+   <img src="assets/demo.gif" alt="RevitMCP with Claude Desktop - Natural Language Control" width="900"/>
 </p>
 
-> **Note:** To add a demo, place your recorded demo file in the repository root and name it `demo.gif`. GitHub will render animated GIFs inline in the README.
+> **Control Revit with natural language through Claude Desktop!** Just describe what you want to build, and Claude will create it in Revit using the MCP protocol.
 
 ## 🏛️ Architecture
 

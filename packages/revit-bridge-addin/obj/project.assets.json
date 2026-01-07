@@ -30,22 +30,6 @@
           "build/Microsoft.NETFramework.ReferenceAssemblies.net48.targets": {}
         }
       },
-      "Nice3point.Revit.Api.RevitAPI/2024.3.30": {
-        "type": "package",
-        "compile": {
-          "ref/net48/RevitAPI.dll": {
-            "related": ".xml"
-          }
-        }
-      },
-      "Nice3point.Revit.Api.RevitAPIUI/2024.3.30": {
-        "type": "package",
-        "compile": {
-          "ref/net48/RevitAPIUI.dll": {
-            "related": ".xml"
-          }
-        }
-      },
       "Serilog/3.1.1": {
         "type": "package",
         "dependencies": {
@@ -666,38 +650,6 @@
         "microsoft.netframework.referenceassemblies.net48.nuspec"
       ]
     },
-    "Nice3point.Revit.Api.RevitAPI/2024.3.30": {
-      "sha512": "0flBaOc1JVkey1eJ9yN39rnQRvyiyBItZcbtyujyuojTJhJ9Pyapao9B3Rx8BJ9Yz8EeNmYpCr+9/whctqvuMg==",
-      "type": "package",
-      "path": "nice3point.revit.api.revitapi/2024.3.30",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "License.md",
-        "Readme.md",
-        "images/PackageIcon.png",
-        "nice3point.revit.api.revitapi.2024.3.30.nupkg.sha512",
-        "nice3point.revit.api.revitapi.nuspec",
-        "ref/net48/RevitAPI.dll",
-        "ref/net48/RevitAPI.xml"
-      ]
-    },
-    "Nice3point.Revit.Api.RevitAPIUI/2024.3.30": {
-      "sha512": "XrOjrR82M7ktGPjunaBUProQoA3IgQmwBLLKDA5SawmRf9+I1RUtYvo8lyZqmau1WFbmxtxqN0iJt2FWT/xXog==",
-      "type": "package",
-      "path": "nice3point.revit.api.revitapiui/2024.3.30",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "License.md",
-        "Readme.md",
-        "images/PackageIcon.png",
-        "nice3point.revit.api.revitapiui.2024.3.30.nupkg.sha512",
-        "nice3point.revit.api.revitapiui.nuspec",
-        "ref/net48/RevitAPIUI.dll",
-        "ref/net48/RevitAPIUI.xml"
-      ]
-    },
     "Serilog/3.1.1": {
       "sha512": "P6G4/4Kt9bT635bhuwdXlJ2SCqqn2nhh4gqFqQueCOr9bK/e7W9ll/IoX1Ter948cV2Z/5+5v8pAfJYUISY03A==",
       "type": "package",
@@ -1071,27 +1023,25 @@
   "projectFileDependencyGroups": {
     ".NETFramework,Version=v4.8": [
       "Microsoft.NETFramework.ReferenceAssemblies >= 1.0.3",
-      "Nice3point.Revit.Api.RevitAPI >= 2024.*",
-      "Nice3point.Revit.Api.RevitAPIUI >= 2024.*",
       "Serilog >= 3.1.1",
       "Serilog.Sinks.File >= 5.0.0",
       "System.Text.Json >= 6.0.10"
     ]
   },
   "packageFolders": {
-    "C:\\Users\\sammo\\.nuget\\packages\\": {}
+    "C:\\Users\\samo3\\.nuget\\packages\\": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\sammo\\OneDrive\\Documenten\\GitHub\\mcp\\packages\\revit-bridge-addin\\RevitBridge.csproj",
+      "projectUniqueName": "C:\\Users\\samo3\\OneDrive - Heijmans N.V\\Documenten\\GitHub\\Autodesk-Revit-MCP-Server\\packages\\revit-bridge-addin\\RevitBridge.csproj",
       "projectName": "RevitBridge",
-      "projectPath": "C:\\Users\\sammo\\OneDrive\\Documenten\\GitHub\\mcp\\packages\\revit-bridge-addin\\RevitBridge.csproj",
-      "packagesPath": "C:\\Users\\sammo\\.nuget\\packages\\",
-      "outputPath": "C:\\Users\\sammo\\OneDrive\\Documenten\\GitHub\\mcp\\packages\\revit-bridge-addin\\obj\\",
+      "projectPath": "C:\\Users\\samo3\\OneDrive - Heijmans N.V\\Documenten\\GitHub\\Autodesk-Revit-MCP-Server\\packages\\revit-bridge-addin\\RevitBridge.csproj",
+      "packagesPath": "C:\\Users\\samo3\\.nuget\\packages\\",
+      "outputPath": "C:\\Users\\samo3\\OneDrive - Heijmans N.V\\Documenten\\GitHub\\Autodesk-Revit-MCP-Server\\packages\\revit-bridge-addin\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "C:\\Users\\sammo\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        "C:\\Users\\samo3\\AppData\\Roaming\\NuGet\\NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net48"
@@ -1126,14 +1076,6 @@
             "target": "Package",
             "version": "[1.0.3, )",
             "autoReferenced": true
-          },
-          "Nice3point.Revit.Api.RevitAPI": {
-            "target": "Package",
-            "version": "[2024.*, )"
-          },
-          "Nice3point.Revit.Api.RevitAPIUI": {
-            "target": "Package",
-            "version": "[2024.*, )"
           },
           "Serilog": {
             "target": "Package",

@@ -1,20 +1,20 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Users\\sammo\\OneDrive\\Documenten\\GitHub\\mcp\\packages\\revit-bridge-addin\\RevitBridge.csproj": {}
+    "C:\\Users\\samo3\\OneDrive - Heijmans N.V\\Documenten\\GitHub\\Autodesk-Revit-MCP-Server\\packages\\revit-bridge-addin\\RevitBridge.csproj": {}
   },
   "projects": {
-    "C:\\Users\\sammo\\OneDrive\\Documenten\\GitHub\\mcp\\packages\\revit-bridge-addin\\RevitBridge.csproj": {
+    "C:\\Users\\samo3\\OneDrive - Heijmans N.V\\Documenten\\GitHub\\Autodesk-Revit-MCP-Server\\packages\\revit-bridge-addin\\RevitBridge.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Users\\sammo\\OneDrive\\Documenten\\GitHub\\mcp\\packages\\revit-bridge-addin\\RevitBridge.csproj",
+        "projectUniqueName": "C:\\Users\\samo3\\OneDrive - Heijmans N.V\\Documenten\\GitHub\\Autodesk-Revit-MCP-Server\\packages\\revit-bridge-addin\\RevitBridge.csproj",
         "projectName": "RevitBridge",
-        "projectPath": "C:\\Users\\sammo\\OneDrive\\Documenten\\GitHub\\mcp\\packages\\revit-bridge-addin\\RevitBridge.csproj",
-        "packagesPath": "C:\\Users\\sammo\\.nuget\\packages\\",
-        "outputPath": "C:\\Users\\sammo\\OneDrive\\Documenten\\GitHub\\mcp\\packages\\revit-bridge-addin\\obj\\",
+        "projectPath": "C:\\Users\\samo3\\OneDrive - Heijmans N.V\\Documenten\\GitHub\\Autodesk-Revit-MCP-Server\\packages\\revit-bridge-addin\\RevitBridge.csproj",
+        "packagesPath": "C:\\Users\\samo3\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\samo3\\OneDrive - Heijmans N.V\\Documenten\\GitHub\\Autodesk-Revit-MCP-Server\\packages\\revit-bridge-addin\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "C:\\Users\\sammo\\AppData\\Roaming\\NuGet\\NuGet.Config"
+          "C:\\Users\\samo3\\AppData\\Roaming\\NuGet\\NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net48"
@@ -49,14 +49,6 @@
               "target": "Package",
               "version": "[1.0.3, )",
               "autoReferenced": true
-            },
-            "Nice3point.Revit.Api.RevitAPI": {
-              "target": "Package",
-              "version": "[2024.*, )"
-            },
-            "Nice3point.Revit.Api.RevitAPIUI": {
-              "target": "Package",
-              "version": "[2024.*, )"
             },
             "Serilog": {
               "target": "Package",
