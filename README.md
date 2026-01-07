@@ -39,7 +39,7 @@ RevitMCP bridges the [Model Context Protocol](https://modelcontextprotocol.io) w
 - **Batch automation** for exports, audits, and data extraction
 - **Secure-by-default** localhost-only bridge with enterprise HTTPS/OAuth options
 
-> **🎉 Latest Update:** Now with **89+ tools** across Geometry, Parameters, Sheets, Annotation, Structure, MEP, Editing, Worksharing, Groups, and Links!
+> **🎉 Latest Update:** Now with **100+ tools** including high-value features for documentation, analysis, geometry, and MEP!
 > 
 > **🚀 Roadmap:** Expanding to 100+ tools with Advanced MEP, Materials & Visuals, and Family Management capabilities.
 
