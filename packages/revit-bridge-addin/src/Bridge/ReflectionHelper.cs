@@ -131,8 +131,40 @@ namespace RevitBridge.Bridge
                 }
             }
 
+            // Handle Constructor
+            if (methodName == "new" || methodName == "ctor")
+            {
+                var constructors = type.GetConstructors().Where(c => c.GetParameters().Length == args.Count).ToList();
+                if (constructors.Count == 0) throw new Exception($"Constructor with {args.Count} arguments not found on type '{type.Name}'.");
+                
+                var ctor = constructors.First();
+                var ctorParams = ctor.GetParameters();
+                object[] ctorArgs = new object[args.Count];
+                
+                for (int i = 0; i < args.Count; i++)
+                {
+                    var targetType = ctorParams[i].ParameterType;
+                    var val = args[i];
+                    
+                    if (targetType.IsEnum)
+                    {
+                        if (val is string s) val = Enum.Parse(targetType, s);
+                        else if (val is int n) val = Enum.ToObject(targetType, n);
+                    }
+                    
+                    if (val is IConvertible && !targetType.IsAssignableFrom(val.GetType()))
+                    {
+                       try { val = Convert.ChangeType(val, targetType); } catch {}
+                    }
+                    ctorArgs[i] = val;
+                }
+
+                object instance = ctor.Invoke(ctorArgs);
+                string regId = RegisterObject(instance);
+                return new { type = "reference", id = regId, class_name = instance.GetType().Name, str = instance.ToString() };
+            }
+
             // Find best matching method (Simplistic matching for MVP)
-            // A real production implementation needs robust overload resolution.
             var flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.FlattenHierarchy;
             var methods = type.GetMethods(flags).Where(m => m.Name == methodName && m.GetParameters().Length == args.Count).ToList();
 
