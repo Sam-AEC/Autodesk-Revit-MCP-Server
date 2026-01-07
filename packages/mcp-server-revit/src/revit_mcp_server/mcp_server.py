@@ -44,6 +44,35 @@ async def list_tools() -> list[Tool]:
             "family_symbol_id": arguments.get("family_symbol_id"),
             "family_instance_id": arguments.get("family_instance_id")
         }),
+
+        # Batch 8: High-Value Documentation & Analysis
+        "revit_create_dimension": ("revit.create_dimension", {
+            "start_point": arguments.get("start_point"),
+            "end_point": arguments.get("end_point"),
+            "element1_id": arguments.get("element1_id"),
+            "element2_id": arguments.get("element2_id")
+        }),
+        "revit_create_revision_cloud": ("revit.create_revision_cloud", {
+            "view_id": arguments.get("view_id"),
+            "points": arguments.get("points"),
+            "revision_id": arguments.get("revision_id")
+        }),
+        "revit_get_revision_sequences": ("revit.get_revision_sequences", {}),
+        "revit_tag_all_in_view": ("revit.tag_all_in_view", {"category": arguments.get("category")}),
+        "revit_create_text_type": ("revit.create_text_type", {
+            "name": arguments.get("name"),
+            "font": arguments.get("font"),
+            "size_inches": arguments.get("size_inches")
+        }),
+        "revit_get_view_templates": ("revit.get_view_templates", {}),
+        "revit_apply_view_template": ("revit.apply_view_template", {
+            "view_id": arguments.get("view_id"),
+            "template_id": arguments.get("template_id")
+        }),
+        "revit_calculate_material_quantities": ("revit.calculate_material_quantities", {"category": arguments.get("category")}),
+        "revit_get_room_boundary": ("revit.get_room_boundary", {"room_id": arguments.get("room_id")}),
+        "revit_get_project_location": ("revit.get_project_location", {}),
+        "revit_get_warnings": ("revit.get_warnings", {}),
     }
         ),
         Tool(
@@ -665,6 +694,18 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         # Batch 7: Family Management
         Tool(name="revit_convert_to_group", description="Convert elements into a group", inputSchema={"type": "object", "properties": {"element_ids": {"type": "array", "items": {"type": "integer"}}, "name": {"type": "string"}}, "required": ["element_ids"]}),
         Tool(name="revit_edit_family", description="Open a family for editing", inputSchema={"type": "object", "properties": {"family_name": {"type": "string"}, "family_symbol_id": {"type": "integer"}, "family_instance_id": {"type": "integer"}}, "required": []}),
+        # Batch 8: High-Value Documentation & Analysis
+        Tool(name="revit_create_dimension", description="Create linear dimension between elements", inputSchema={"type": "object", "properties": {"start_point": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}}}, "end_point": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}}}, "element1_id": {"type": "integer"}, "element2_id": {"type": "integer"}}, "required": ["start_point", "end_point", "element1_id", "element2_id"]}),
+        Tool(name="revit_create_revision_cloud", description="Create revision cloud defined by points", inputSchema={"type": "object", "properties": {"view_id": {"type": "integer"}, "points": {"type": "array", "items": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}}}}, "revision_id": {"type": "integer"}}, "required": ["view_id", "points"]}),
+        Tool(name="revit_get_revision_sequences", description="Get list of revision sequences", inputSchema={"type": "object", "properties": {}}),
+        Tool(name="revit_tag_all_in_view", description="Tag all elements of a category in view", inputSchema={"type": "object", "properties": {"category": {"type": "string"}}, "required": ["category"]}),
+        Tool(name="revit_create_text_type", description="Create or duplicate a text type", inputSchema={"type": "object", "properties": {"name": {"type": "string"}, "font": {"type": "string", "default": "Arial"}, "size_inches": {"type": "number", "default": 0.09375}}, "required": ["name"]}),
+        Tool(name="revit_get_view_templates", description="Get list of view templates", inputSchema={"type": "object", "properties": {}}),
+        Tool(name="revit_apply_view_template", description="Apply view template to a view", inputSchema={"type": "object", "properties": {"view_id": {"type": "integer"}, "template_id": {"type": "integer"}}, "required": ["view_id", "template_id"]}),
+        Tool(name="revit_calculate_material_quantities", description="Calculate material volumes for a category", inputSchema={"type": "object", "properties": {"category": {"type": "string"}}, "required": ["category"]}),
+        Tool(name="revit_get_room_boundary", description="Get room geometric boundary loops", inputSchema={"type": "object", "properties": {"room_id": {"type": "integer"}}, "required": ["room_id"]}),
+        Tool(name="revit_get_project_location", description="Get project base and survey points", inputSchema={"type": "object", "properties": {}}),
+        Tool(name="revit_get_warnings", description="Get current project warnings", inputSchema={"type": "object", "properties": {}}),
     ],
             "level": arguments.get("level", "L1")
         }),
@@ -825,6 +866,7 @@ def run_mcp_server():
 
 if __name__ == "__main__":
     run_mcp_server()
+
 
 
 
