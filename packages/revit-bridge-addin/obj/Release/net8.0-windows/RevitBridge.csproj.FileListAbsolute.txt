@@ -1,0 +1,13 @@
+C:\Users\sammo\OneDrive\Documenten\GitHub\mcp\packages\revit-bridge-addin\bin\Release\2025\net8.0-windows\RevitBridge.deps.json
+C:\Users\sammo\OneDrive\Documenten\GitHub\mcp\packages\revit-bridge-addin\bin\Release\2025\net8.0-windows\RevitBridge.dll
+C:\Users\sammo\OneDrive\Documenten\GitHub\mcp\packages\revit-bridge-addin\bin\Release\2025\net8.0-windows\RevitBridge.pdb
+C:\Users\sammo\OneDrive\Documenten\GitHub\mcp\packages\revit-bridge-addin\obj\Release\net8.0-windows\RevitBridge.csproj.AssemblyReference.cache
+C:\Users\sammo\OneDrive\Documenten\GitHub\mcp\packages\revit-bridge-addin\obj\Release\net8.0-windows\RevitBridge.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\sammo\OneDrive\Documenten\GitHub\mcp\packages\revit-bridge-addin\obj\Release\net8.0-windows\RevitBridge.AssemblyInfoInputs.cache
+C:\Users\sammo\OneDrive\Documenten\GitHub\mcp\packages\revit-bridge-addin\obj\Release\net8.0-windows\RevitBridge.AssemblyInfo.cs
+C:\Users\sammo\OneDrive\Documenten\GitHub\mcp\packages\revit-bridge-addin\obj\Release\net8.0-windows\RevitBridge.csproj.CoreCompileInputs.cache
+C:\Users\sammo\OneDrive\Documenten\GitHub\mcp\packages\revit-bridge-addin\obj\Release\net8.0-windows\RevitBridge.sourcelink.json
+C:\Users\sammo\OneDrive\Documenten\GitHub\mcp\packages\revit-bridge-addin\obj\Release\net8.0-windows\RevitBridge.dll
+C:\Users\sammo\OneDrive\Documenten\GitHub\mcp\packages\revit-bridge-addin\obj\Release\net8.0-windows\refint\RevitBridge.dll
+C:\Users\sammo\OneDrive\Documenten\GitHub\mcp\packages\revit-bridge-addin\obj\Release\net8.0-windows\RevitBridge.pdb
+C:\Users\sammo\OneDrive\Documenten\GitHub\mcp\packages\revit-bridge-addin\obj\Release\net8.0-windows\ref\RevitBridge.dll

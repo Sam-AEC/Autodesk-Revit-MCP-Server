@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net48</TargetFramework>
+
+    <TargetFramework Condition="'$(RevitVersion)' != '2025'">net48</TargetFramework>
+    <TargetFramework Condition="'$(RevitVersion)' == '2025'">net8.0-windows</TargetFramework>
     <AssemblyName>RevitBridge</AssemblyName>
     <RootNamespace>RevitBridge</RootNamespace>
     <OutputType>Library</OutputType>
@@ -10,17 +12,30 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
-  <ItemGroup>
+  <PropertyGroup>
+    <RevitInstallPath Condition="'$(RevitVersion)'=='2024'">C:\Program Files\Autodesk\Revit 2024</RevitInstallPath>
+    <RevitInstallPath Condition="'$(RevitVersion)'=='2025'">C:\Program Files\Autodesk\Revit 2025</RevitInstallPath>
+    <!-- Check if local Revit API exists, otherwise default to NuGet -->
+    <UseLocalRevit Condition="Exists('$(RevitInstallPath)\RevitAPI.dll')">true</UseLocalRevit>
+    <UseLocalRevit Condition="'$(UseLocalRevit)'==''">false</UseLocalRevit>
+  </PropertyGroup>
+
+  <!-- Local Revit References -->
+  <ItemGroup Condition="'$(UseLocalRevit)'=='true'">
     <Reference Include="RevitAPI">
-      <HintPath Condition="'$(RevitVersion)'=='2024'">C:\Program Files\Autodesk\Revit 2024\RevitAPI.dll</HintPath>
-      <HintPath Condition="'$(RevitVersion)'=='2025'">C:\Program Files\Autodesk\Revit 2025\RevitAPI.dll</HintPath>
+      <HintPath>$(RevitInstallPath)\RevitAPI.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="RevitAPIUI">
-      <HintPath Condition="'$(RevitVersion)'=='2024'">C:\Program Files\Autodesk\Revit 2024\RevitAPIUI.dll</HintPath>
-      <HintPath Condition="'$(RevitVersion)'=='2025'">C:\Program Files\Autodesk\Revit 2025\RevitAPIUI.dll</HintPath>
+      <HintPath>$(RevitInstallPath)\RevitAPIUI.dll</HintPath>
       <Private>False</Private>
     </Reference>
+  </ItemGroup>
+
+  <!-- Fallback to NuGet packages (CI/Mock mode) -->
+  <ItemGroup Condition="'$(UseLocalRevit)'=='false'">
+    <PackageReference Include="Nice3point.Revit.Api.RevitAPI" Version="$(RevitVersion).*" />
+    <PackageReference Include="Nice3point.Revit.Api.RevitAPIUI" Version="$(RevitVersion).*" />
   </ItemGroup>
 
   <ItemGroup>

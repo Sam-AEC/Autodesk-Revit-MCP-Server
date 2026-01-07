@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "dgSpecHash": "HQG6ScUI+1M=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\sammo\\OneDrive\\Documenten\\GitHub\\mcp\\packages\\revit-bridge-addin\\RevitBridge.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\sammo\\.nuget\\packages\\nice3point.revit.api.revitapi\\2025.4.20\\nice3point.revit.api.revitapi.2025.4.20.nupkg.sha512",
+    "C:\\Users\\sammo\\.nuget\\packages\\nice3point.revit.api.revitapiui\\2025.4.20\\nice3point.revit.api.revitapiui.2025.4.20.nupkg.sha512",
+    "C:\\Users\\sammo\\.nuget\\packages\\serilog\\3.1.1\\serilog.3.1.1.nupkg.sha512",
+    "C:\\Users\\sammo\\.nuget\\packages\\serilog.sinks.file\\5.0.0\\serilog.sinks.file.5.0.0.nupkg.sha512",
+    "C:\\Users\\sammo\\.nuget\\packages\\system.runtime.compilerservices.unsafe\\6.0.0\\system.runtime.compilerservices.unsafe.6.0.0.nupkg.sha512",
+    "C:\\Users\\sammo\\.nuget\\packages\\system.text.encodings.web\\6.0.0\\system.text.encodings.web.6.0.0.nupkg.sha512",
+    "C:\\Users\\sammo\\.nuget\\packages\\system.text.json\\6.0.10\\system.text.json.6.0.10.nupkg.sha512",
+    "C:\\Users\\sammo\\.nuget\\packages\\microsoft.netcore.app.ref\\8.0.22\\microsoft.netcore.app.ref.8.0.22.nupkg.sha512",
+    "C:\\Users\\sammo\\.nuget\\packages\\microsoft.windowsdesktop.app.ref\\8.0.22\\microsoft.windowsdesktop.app.ref.8.0.22.nupkg.sha512",
+    "C:\\Users\\sammo\\.nuget\\packages\\microsoft.aspnetcore.app.ref\\8.0.22\\microsoft.aspnetcore.app.ref.8.0.22.nupkg.sha512"
+  ],
+  "logs": []
+}
