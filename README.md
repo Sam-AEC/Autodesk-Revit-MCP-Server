@@ -123,50 +123,149 @@ Expected response:
 - `revit.create_new_document` - Create blank project
 - `revit.open_document` - Open RVT/RFA file
 - `revit.save_document` - Save active document
+- `revit.close_document` - Close document
 - `revit.get_document_info` - Get project metadata
 
-### Geometry
-- `revit.create_wall` - Create wall
-- `revit.create_floor` - Create floor
-- `revit.create_roof` - Create roof
-- `revit.create_ceiling` - Create ceiling
-- `revit.create_door` - Place door
-- `revit.create_window` - Place window
-- `revit.create_column` - Create column
-- `revit.create_beam` - Create beam
-- `revit.create_room` - Create room
-
-### Levels & Views
-- `revit.create_level` - Create level
+### Levels & Grids
+- `revit.create_level` - Create level at elevation
 - `revit.list_levels` - List all levels
-- `revit.create_floor_plan` - Create floor plan view
+- `revit.create_grid` - Create grid line
+
+### Model Elements
+- `revit.create_wall` - Create wall from curve
+- `revit.create_floor` - Create floor from profile
+- `revit.create_roof` - Create roof from profile
+- `revit.create_column` - Create structural column
+- `revit.create_beam` - Create structural beam
+- `revit.create_foundation` - Create foundation element
+- `revit.create_room` - Create room boundary
+
+### MEP Systems
+- `revit.create_duct` - Create HVAC duct
+- `revit.create_pipe` - Create plumbing pipe
+- `revit.create_cable_tray` - Create cable tray
+- `revit.create_conduit` - Create electrical conduit
+- `revit.get_mep_systems` - List MEP systems
+
+### Families & Components
+- `revit.place_family_instance` - Place family instance
+- `revit.place_door` - Place door in wall
+- `revit.place_window` - Place window in wall
+- `revit.list_families` - List loaded families
+- `revit.edit_family` - Edit family document
+
+### Element Operations
+- `revit.delete_element` - Delete element
+- `revit.copy_element` - Copy element with translation
+- `revit.move_element` - Move element by vector
+- `revit.rotate_element` - Rotate element around axis
+- `revit.mirror_element` - Mirror element across plane
+- `revit.pin_element` - Pin element in place
+- `revit.unpin_element` - Unpin element
+
+### Parameters
+- `revit.get_element_parameters` - Read element parameters
+- `revit.set_parameter_value` - Write parameter value
+- `revit.get_parameter_value` - Read single parameter
+- `revit.batch_set_parameters` - Batch update parameters
+- `revit.get_type_parameters` - Get type parameters
+- `revit.set_type_parameter` - Set type parameter
+
+### Views
+- `revit.create_3d_view` - Create isometric 3D view
 - `revit.create_section_view` - Create section view
-- `revit.create_3d_view` - Create 3D view
+- `revit.create_floor_plan_view` - Create floor plan
+- `revit.duplicate_view` - Duplicate view
+- `revit.apply_view_template` - Apply view template
+- `revit.get_view_templates` - List view templates
 - `revit.list_views` - List all views
 
 ### Sheets & Documentation
-- `revit.create_sheet` - Create sheet
+- `revit.create_sheet` - Create sheet with titleblock
+- `revit.place_viewport_on_sheet` - Place viewport on sheet
 - `revit.list_sheets` - List all sheets
-- `revit.place_view_on_sheet` - Place view on sheet
+- `revit.delete_sheet` - Delete sheet
+- `revit.duplicate_sheet` - Duplicate sheet
+- `revit.get_sheet_info` - Get sheet information
+- `revit.list_titleblocks` - List titleblock types
+- `revit.populate_titleblock` - Fill titleblock parameters
+- `revit.renumber_sheets` - Renumber sheets
+- `revit.batch_create_sheets_from_csv` - Create sheets from CSV
 
-### Elements
-- `revit.get_elements` - Query elements
-- `revit.get_element_properties` - Get parameters
-- `revit.set_element_properties` - Update parameters
-- `revit.delete_elements` - Delete elements
+### Annotation
+- `revit.create_tag` - Create element tag
+- `revit.create_dimension` - Create dimension
+- `revit.create_text_note` - Create text annotation
+- `revit.create_text_type` - Create text type
+- `revit.tag_all_in_view` - Tag all elements in view
+- `revit.create_revision_cloud` - Create revision cloud
 
-### Families
-- `revit.load_family` - Load family from RFA
-- `revit.list_families` - List loaded families
-- `revit.place_family_instance` - Place instance
+### Selection & Query
+- `revit.get_selection` - Get current selection
+- `revit.set_selection` - Set element selection
+- `revit.list_elements_by_category` - Query by category
+- `revit.get_element_type` - Get element type
+- `revit.get_element_bounding_box` - Get element bounds
+- `revit.get_categories` - List all categories
 
-### Export
-- `revit.export_pdf` - Export to PDF
-- `revit.export_dwg` - Export to DWG
-- `revit.export_ifc` - Export to IFC
-- `revit.export_nwc` - Export to Navisworks
+### Groups & Links
+- `revit.create_group` - Create model group
+- `revit.ungroup` - Ungroup elements
+- `revit.convert_to_group` - Convert to group
+- `revit.get_group_members` - Get group members
+- `revit.get_link_instances` - List link instances
+- `revit.get_rvt_links` - List Revit links
 
-**Full API Reference:** [docs/tools.md](docs/tools.md)
+### Schedules & Data
+- `revit.create_schedule` - Create schedule view
+- `revit.get_schedule_data` - Extract schedule data
+- `revit.export_schedules` - Export schedules to CSV
+- `revit.calculate_material_quantities` - Calculate quantities
+
+### Export Operations
+- `revit.export_pdf_by_sheet_set` - Export to PDF
+- `revit.export_dwg_by_view` - Export to DWG
+- `revit.export_ifc_with_settings` - Export to IFC
+- `revit.export_navisworks` - Export to Navisworks
+- `revit.export_image` - Export view as image
+- `revit.render_3d_view` - Render 3D view
+
+### Project Information
+- `revit.get_phases` - List project phases
+- `revit.get_phase_filters` - List phase filters
+- `revit.get_design_options` - List design options
+- `revit.get_worksets` - List worksets
+- `revit.get_warnings` - Get model warnings
+- `revit.get_project_location` - Get project location
+
+### Worksharing
+- `revit.sync_to_central` - Synchronize with central
+- `revit.relinquish_all` - Relinquish all elements
+
+### Materials & Rendering
+- `revit.create_material` - Create material
+- `revit.set_element_material` - Assign material
+- `revit.get_render_settings` - Get render settings
+
+### Analysis & Validation
+- `revit.check_clashes` - Run clash detection
+- `revit.get_room_boundary` - Get room boundary
+
+### Advanced Features
+- `revit.invoke_method` - Universal Revit API method invocation
+- `revit.reflect_get` - Get property via reflection
+- `revit.reflect_set` - Set property via reflection
+
+### Project Parameters
+- `revit.list_shared_parameters` - List shared parameters
+- `revit.create_shared_parameter` - Create shared parameter
+- `revit.list_project_parameters` - List project parameters
+- `revit.create_project_parameter` - Create project parameter
+
+### Revisions
+- `revit.get_revision_sequences` - Get revision sequences
+
+**Total: 104 tools** • **Full API Reference:** [docs/tools.md](docs/tools.md)
 
 ---
 
