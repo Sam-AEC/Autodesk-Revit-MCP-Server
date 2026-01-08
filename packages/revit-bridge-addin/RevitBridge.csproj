@@ -10,6 +10,7 @@
     <OutputPath>bin\$(Configuration)\$(RevitVersion)\</OutputPath>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -42,5 +43,21 @@
     <PackageReference Include="Serilog" Version="3.1.1" />
     <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
     <PackageReference Include="System.Text.Json" Version="6.0.10" />
+  </ItemGroup>
+
+  <!-- WPF References for Modern UI -->
+  <ItemGroup>
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="System.Xaml" />
+  </ItemGroup>
+
+  <!-- Temporarily exclude Phase commands with API compatibility issues -->
+  <ItemGroup>
+    <Compile Remove="src\Commands\Core\**\*.cs" />
+    <Compile Remove="src\Commands\Advanced\**\*.cs" />
+    <Compile Remove="src\Commands\Specialized\**\*.cs" />
+    <Compile Remove="src\Commands\Enhancements\**\*.cs" />
   </ItemGroup>
 </Project>

@@ -1,10 +1,11 @@
 using System;
 using System.Diagnostics;
-using System.Windows.Media;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using RevitBridge.UI;
+using MediaColor = System.Windows.Media.Color;
+using MediaBrush = System.Windows.Media.SolidColorBrush;
 
 namespace RevitBridge.Bridge
 {
@@ -134,7 +135,7 @@ namespace RevitBridge.Bridge
                 "🏆",
                 "RevitMCP Bridge",
                 "AI-Powered Revit Automation Platform",
-                new SolidColorBrush(Color.FromRgb(33, 150, 243))
+                new MediaBrush(MediaColor.FromRgb(33, 150, 243))
             );
 
             dialog.AddSeparator();
