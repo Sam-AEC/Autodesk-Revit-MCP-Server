@@ -181,3 +181,36 @@ conf.yaml
 .cursorrules
 .claude
 .mcp-use/
+
+# C# / .NET Build Artifacts
+**/bin/
+**/obj/
+*.dll
+*.pdb
+*.exe
+*.cache
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+_ReSharper*/
+*.DotSettings.user
+project.lock.json
+project.fragment.lock.json
+artifacts/
+*.nuget.props
+*.nuget.targets
+.vs/
+
+# Revit specific
+*.addin.user
+RevitBridge.dll
+RevitBridge.pdb
+Icons/
+
+# Temporary files
+nul
+*.tmp
+*.temp
+*_temp.ps1
