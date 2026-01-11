@@ -27,6 +27,10 @@ Production-ready MCP server enabling AI agents to control Autodesk Revit through
 - Thread-safe ExternalEvent architecture
 - OAuth2 and audit logging support
 
+### Demo
+
+![Revit MCP Demo](assets/demo.gif)
+
 ---
 
 ## Quick Start
