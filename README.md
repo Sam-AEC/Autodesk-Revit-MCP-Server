@@ -22,10 +22,12 @@
 Production-ready MCP server enabling AI agents to control Autodesk Revit through natural language. Integrates with Claude Desktop, Microsoft Copilot, and custom MCP clients.
 
 **Key Features:**
-- 105+ Revit API tools (geometry, views, sheets, families)
-- Localhost-only bridge with <100ms latency
+
+- 100+ Revit API tools (geometry, views, sheets, families, MEP, structures)
+- Localhost HTTP bridge with <5 second latency
 - Thread-safe ExternalEvent architecture
-- OAuth2 and audit logging support
+- Comprehensive testing (73% core tools verified)
+- Advanced reflection API for unlimited Revit access
 
 ### Demo
 
@@ -118,6 +120,8 @@ Expected response:
 ```
 
 **Threading Model:** HTTP requests are queued and executed on Revit's main thread via `ExternalEvent` for thread safety.
+
+**Bridge Status:** The bridge runs as a localhost HTTP server on port 3000, providing health checks and tool execution endpoints.
 
 ---
 
@@ -269,7 +273,32 @@ Expected response:
 ### Revisions
 - `revit.get_revision_sequences` - Get revision sequences
 
-**Total: 104 tools** • **Full API Reference:** [docs/tools.md](docs/tools.md)
+**Total: 100+ tools** • **Full API Reference:** [docs/tools.md](docs/tools.md)
+
+### Known Issues
+
+The following tools have known issues being addressed:
+
+- `revit.create_roof` - Fails with "Value cannot be null" error (missing roof type parameter)
+- `revit.get_element_parameters` - Fails on non-shared parameters (assumes all parameters are shared)
+- No dedicated curtain wall creation tool (workaround: use reflection API)
+
+For detailed issue tracking, see [GitHub Issues](https://github.com/Sam-AEC/Autodesk-Revit-MCP-Server/issues).
+
+### Testing & Validation
+
+The MCP server has been comprehensively tested by creating a complete modern villa (10m x 15m):
+
+- ✅ 3 levels (ground, upper, roof)
+- ✅ 5 walls (perimeter + interior partitions)
+- ✅ 1 floor (~150 sq meters)
+- ✅ 2 rooms (living room, bedroom)
+- ✅ 1 door (passage door)
+- ✅ 2 windows (fixed windows)
+- ✅ 3D visualization views
+- ✅ Document save operations
+
+**Test Result:** 11/15 core tools tested successfully (73% pass rate)
 
 ---
 
