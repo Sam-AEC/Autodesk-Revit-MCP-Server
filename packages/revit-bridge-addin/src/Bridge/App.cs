@@ -68,31 +68,26 @@ namespace RevitBridge.Bridge
 
             string assemblyPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
 
-            // Generate icons directory
+            // Use pre-existing icon files
             string iconPath = Path.Combine(
                 Path.GetDirectoryName(assemblyPath) ?? "",
                 "Icons"
             );
-            Directory.CreateDirectory(iconPath);
-
-            // Generate and save icons
-            var connectIcon = IconGenerator.CreateConnectIcon(32);
-            var disconnectIcon = IconGenerator.CreateDisconnectIcon(32);
-            var statusIcon = IconGenerator.CreateStatusIcon(32);
-            var brandIcon = IconGenerator.CreateBrandIcon(32);
-            var settingsIcon = IconGenerator.CreateSettingsIcon(32);
 
             string connectIconPath = Path.Combine(iconPath, "connect.png");
             string disconnectIconPath = Path.Combine(iconPath, "disconnect.png");
             string statusIconPath = Path.Combine(iconPath, "status.png");
             string brandIconPath = Path.Combine(iconPath, "brand.png");
             string settingsIconPath = Path.Combine(iconPath, "settings.png");
+            string helpIconPath = Path.Combine(iconPath, "help.png");
 
-            IconGenerator.SaveIcon(connectIcon, connectIconPath);
-            IconGenerator.SaveIcon(disconnectIcon, disconnectIconPath);
-            IconGenerator.SaveIcon(statusIcon, statusIconPath);
-            IconGenerator.SaveIcon(brandIcon, brandIconPath);
-            IconGenerator.SaveIcon(settingsIcon, settingsIconPath);
+            // Log if icons are missing
+            if (!File.Exists(connectIconPath))
+                Log.Warning("Icon not found: {IconPath}", connectIconPath);
+            if (!File.Exists(disconnectIconPath))
+                Log.Warning("Icon not found: {IconPath}", disconnectIconPath);
+            if (!File.Exists(statusIconPath))
+                Log.Warning("Icon not found: {IconPath}", statusIconPath);
 
             // === CONNECTION PANEL ===
 
@@ -163,6 +158,11 @@ namespace RevitBridge.Bridge
             );
             helpBtnData.ToolTip = "View Documentation";
             helpBtnData.LongDescription = "Open the RevitMCP Bridge documentation and user guide.";
+            if (File.Exists(helpIconPath))
+            {
+                helpBtnData.Image = new System.Windows.Media.Imaging.BitmapImage(new Uri(helpIconPath));
+                helpBtnData.LargeImage = new System.Windows.Media.Imaging.BitmapImage(new Uri(helpIconPath));
+            }
 
             toolsPanel.AddItem(settingsBtnData);
             toolsPanel.AddItem(helpBtnData);
