@@ -214,3 +214,11 @@ nul
 *.tmp
 *.temp
 *_temp.ps1
+# Temporary utility scripts
+check_revit.ps1
+fix_permissions.ps1
+force_update_dll.ps1
+replace_dll.ps1
+update_dll.ps1
+INSTALL_NEW_DLL.txt
+temp.json
