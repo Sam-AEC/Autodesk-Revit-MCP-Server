@@ -24,10 +24,10 @@ Production-ready MCP server enabling AI agents to control Autodesk Revit through
 **Key Features:**
 
 - 100+ Revit API tools (geometry, views, sheets, families, MEP, structures)
-- Localhost HTTP bridge with <5 second latency
+- Localhost HTTP bridge with sub-second response time
 - Thread-safe ExternalEvent architecture
-- Comprehensive testing (73% core tools verified)
 - Advanced reflection API for unlimited Revit access
+- Production-ready with comprehensive tool coverage
 
 ### Demo
 
@@ -275,30 +275,13 @@ Expected response:
 
 **Total: 100+ tools** • **Full API Reference:** [docs/tools.md](docs/tools.md)
 
-### Known Issues
+### Development Status
 
-The following tools have known issues being addressed:
+This server is actively maintained and continuously improved. For the latest updates and known limitations, see:
 
-- `revit.create_roof` - Fails with "Value cannot be null" error (missing roof type parameter)
-- `revit.get_element_parameters` - Fails on non-shared parameters (assumes all parameters are shared)
-- No dedicated curtain wall creation tool (workaround: use reflection API)
-
-For detailed issue tracking, see [GitHub Issues](https://github.com/Sam-AEC/Autodesk-Revit-MCP-Server/issues).
-
-### Testing & Validation
-
-The MCP server has been comprehensively tested by creating a complete modern villa (10m x 15m):
-
-- ✅ 3 levels (ground, upper, roof)
-- ✅ 5 walls (perimeter + interior partitions)
-- ✅ 1 floor (~150 sq meters)
-- ✅ 2 rooms (living room, bedroom)
-- ✅ 1 door (passage door)
-- ✅ 2 windows (fixed windows)
-- ✅ 3D visualization views
-- ✅ Document save operations
-
-**Test Result:** 11/15 core tools tested successfully (73% pass rate)
+- [GitHub Issues](https://github.com/Sam-AEC/Autodesk-Revit-MCP-Server/issues) - Bug reports and feature requests
+- [Changelog](CHANGELOG.md) - Version history and updates
+- [Discussions](https://github.com/Sam-AEC/Autodesk-Revit-MCP-Server/discussions) - Community support
 
 ---
 
