@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>RevitMCP Bridge</Name>
+    <Assembly>C:\ProgramData\RevitMCP\bin\RevitBridge.dll</Assembly>
+    <AddInId>6721F048-9A81-4DE6-8543-B485A6329B92</AddInId>
+    <FullClassName>RevitBridge.Bridge.App</FullClassName>
+    <VendorId>RevitMCP</VendorId>
+    <VendorDescription>MCP server bridge for Autodesk Revit</VendorDescription>
+  </AddIn>
+</RevitAddIns>
