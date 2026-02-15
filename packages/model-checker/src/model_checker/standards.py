@@ -328,3 +328,254 @@ class ParameterRule:
             "number": (int, float),
         }
         return type_map.get(type_name.lower())
+
+
+@dataclass
+class LevelValidationIssue:
+    """Issue found during level validation."""
+
+    level_id: str | int
+    level_name: str
+    issue_type: str
+    description: str
+    elevation: float | None = None
+
+
+class LevelGridValidator:
+    """Validator for levels and grids."""
+
+    def __init__(self) -> None:
+        """Initialize the level/grid validator."""
+        self.issues: list[LevelValidationIssue] = []
+
+    def validate_level_naming(
+        self, levels: list[dict[str, Any]], pattern: str = r"^L\d{2}$"
+    ) -> list[LevelValidationIssue]:
+        """Validate level naming conventions.
+
+        Args:
+            levels: List of level dictionaries with 'id', 'name', 'elevation'
+            pattern: Regex pattern for level names (default: L01, L02, etc.)
+
+        Returns:
+            List of validation issues
+        """
+        issues = []
+        compiled_pattern = re.compile(pattern)
+
+        for level in levels:
+            if not compiled_pattern.match(level["name"]):
+                issue = LevelValidationIssue(
+                    level_id=level["id"],
+                    level_name=level["name"],
+                    issue_type="naming",
+                    description=f"Level name '{level['name']}' does not match pattern {pattern}",
+                    elevation=level.get("elevation"),
+                )
+                issues.append(issue)
+                self.issues.append(issue)
+
+        return issues
+
+    def validate_level_spacing(
+        self,
+        levels: list[dict[str, Any]],
+        min_spacing: float = 3000.0,
+        max_spacing: float = 5000.0,
+    ) -> list[LevelValidationIssue]:
+        """Validate spacing between levels.
+
+        Args:
+            levels: List of level dictionaries with 'id', 'name', 'elevation'
+            min_spacing: Minimum allowed spacing in mm
+            max_spacing: Maximum allowed spacing in mm
+
+        Returns:
+            List of validation issues
+        """
+        issues = []
+
+        # Sort levels by elevation
+        sorted_levels = sorted(levels, key=lambda x: x["elevation"])
+
+        for i in range(len(sorted_levels) - 1):
+            level1 = sorted_levels[i]
+            level2 = sorted_levels[i + 1]
+
+            spacing = level2["elevation"] - level1["elevation"]
+
+            if spacing < min_spacing:
+                issue = LevelValidationIssue(
+                    level_id=level2["id"],
+                    level_name=level2["name"],
+                    issue_type="spacing_too_small",
+                    description=f"Level spacing {spacing:.0f}mm is below minimum {min_spacing:.0f}mm",
+                    elevation=level2["elevation"],
+                )
+                issues.append(issue)
+                self.issues.append(issue)
+
+            if spacing > max_spacing:
+                issue = LevelValidationIssue(
+                    level_id=level2["id"],
+                    level_name=level2["name"],
+                    issue_type="spacing_too_large",
+                    description=f"Level spacing {spacing:.0f}mm exceeds maximum {max_spacing:.0f}mm",
+                    elevation=level2["elevation"],
+                )
+                issues.append(issue)
+                self.issues.append(issue)
+
+        return issues
+
+    def validate_grid_naming(
+        self, grids: list[dict[str, Any]]
+    ) -> list[LevelValidationIssue]:
+        """Validate grid naming conventions.
+
+        Grids should be named with letters (A, B, C) or numbers (1, 2, 3).
+
+        Args:
+            grids: List of grid dictionaries with 'id', 'name'
+
+        Returns:
+            List of validation issues
+        """
+        issues = []
+
+        # Valid patterns: single letter A-Z or number 1-99
+        letter_pattern = re.compile(r"^[A-Z]$")
+        number_pattern = re.compile(r"^\d{1,2}$")
+
+        for grid in grids:
+            name = grid["name"]
+            if not letter_pattern.match(name) and not number_pattern.match(name):
+                issue = LevelValidationIssue(
+                    level_id=grid["id"],
+                    level_name=name,
+                    issue_type="grid_naming",
+                    description=f"Grid name '{name}' should be single letter or 1-2 digit number",
+                )
+                issues.append(issue)
+                self.issues.append(issue)
+
+        return issues
+
+    def validate_grid_spacing(
+        self,
+        grids: list[dict[str, Any]],
+        min_spacing: float = 3000.0,
+        max_spacing: float = 12000.0,
+    ) -> list[LevelValidationIssue]:
+        """Validate spacing between parallel grids.
+
+        Args:
+            grids: List of grid dictionaries with 'id', 'name', 'position'
+            min_spacing: Minimum allowed spacing in mm
+            max_spacing: Maximum allowed spacing in mm
+
+        Returns:
+            List of validation issues
+        """
+        issues = []
+
+        # Group grids by orientation (horizontal vs vertical)
+        horizontal = [g for g in grids if g.get("orientation") == "horizontal"]
+        vertical = [g for g in grids if g.get("orientation") == "vertical"]
+
+        # Check horizontal grid spacing
+        issues.extend(
+            self._check_grid_group_spacing(horizontal, min_spacing, max_spacing, "horizontal")
+        )
+
+        # Check vertical grid spacing
+        issues.extend(
+            self._check_grid_group_spacing(vertical, min_spacing, max_spacing, "vertical")
+        )
+
+        return issues
+
+    def _check_grid_group_spacing(
+        self,
+        grids: list[dict[str, Any]],
+        min_spacing: float,
+        max_spacing: float,
+        orientation: str,
+    ) -> list[LevelValidationIssue]:
+        """Check spacing for a group of parallel grids.
+
+        Args:
+            grids: List of parallel grids
+            min_spacing: Minimum spacing
+            max_spacing: Maximum spacing
+            orientation: Grid orientation
+
+        Returns:
+            List of issues
+        """
+        issues = []
+
+        if len(grids) < 2:
+            return issues
+
+        # Sort by position
+        sorted_grids = sorted(grids, key=lambda x: x["position"])
+
+        for i in range(len(sorted_grids) - 1):
+            grid1 = sorted_grids[i]
+            grid2 = sorted_grids[i + 1]
+
+            spacing = abs(grid2["position"] - grid1["position"])
+
+            if spacing < min_spacing:
+                issue = LevelValidationIssue(
+                    level_id=grid2["id"],
+                    level_name=grid2["name"],
+                    issue_type="grid_spacing_too_small",
+                    description=f"{orientation.capitalize()} grid spacing {spacing:.0f}mm is below minimum {min_spacing:.0f}mm",
+                )
+                issues.append(issue)
+                self.issues.append(issue)
+
+            if spacing > max_spacing:
+                issue = LevelValidationIssue(
+                    level_id=grid2["id"],
+                    level_name=grid2["name"],
+                    issue_type="grid_spacing_too_large",
+                    description=f"{orientation.capitalize()} grid spacing {spacing:.0f}mm exceeds maximum {max_spacing:.0f}mm",
+                )
+                issues.append(issue)
+                self.issues.append(issue)
+
+        return issues
+
+    def get_issues(self) -> list[LevelValidationIssue]:
+        """Get all validation issues.
+
+        Returns:
+            List of all issues
+        """
+        return self.issues
+
+    def get_issues_by_type(self, issue_type: str) -> list[LevelValidationIssue]:
+        """Get issues of a specific type.
+
+        Args:
+            issue_type: Type of issue to filter by
+
+        Returns:
+            List of issues of that type
+        """
+        return [issue for issue in self.issues if issue.issue_type == issue_type]
+
+    def clear_issues(self) -> None:
+        """Clear all recorded issues."""
+        self.issues = []
+
+    def get_issue_count(self) -> int:
+        """Get total number of issues.
+
+        Returns:
+            Count of issues
+        """
+        return len(self.issues)
