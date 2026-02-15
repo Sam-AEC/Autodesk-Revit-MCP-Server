@@ -128,6 +128,101 @@ class ClashResult:
         }
 
 
+class PreciseGeometry:
+    """Represents precise geometry for detailed clash detection."""
+
+    def __init__(self, geometry_data: dict[str, Any]) -> None:
+        """Initialize precise geometry.
+
+        Args:
+            geometry_data: Dictionary containing geometry information
+        """
+        self.geometry_data = geometry_data
+        self.vertices: list[tuple[float, float, float]] = []
+        self.faces: list[list[int]] = []
+        self._parse_geometry()
+
+    def _parse_geometry(self) -> None:
+        """Parse geometry data into vertices and faces."""
+        if "vertices" in self.geometry_data:
+            self.vertices = [
+                (v["x"], v["y"], v["z"]) for v in self.geometry_data["vertices"]
+            ]
+        if "faces" in self.geometry_data:
+            self.faces = self.geometry_data["faces"]
+
+    def get_bounding_box(self) -> BoundingBox:
+        """Get bounding box from precise geometry.
+
+        Returns:
+            BoundingBox containing all vertices
+        """
+        if not self.vertices:
+            return BoundingBox(0, 0, 0, 0, 0, 0)
+
+        xs = [v[0] for v in self.vertices]
+        ys = [v[1] for v in self.vertices]
+        zs = [v[2] for v in self.vertices]
+
+        return BoundingBox(
+            min_x=min(xs),
+            min_y=min(ys),
+            min_z=min(zs),
+            max_x=max(xs),
+            max_y=max(ys),
+            max_z=max(zs),
+        )
+
+    def intersects_with(self, other: PreciseGeometry) -> bool:
+        """Check if this geometry intersects with another.
+
+        Uses simplified geometric intersection test.
+        First checks bounding boxes, then performs vertex-in-bbox tests.
+
+        Args:
+            other: Another precise geometry
+
+        Returns:
+            True if geometries intersect
+        """
+        # Quick rejection using bounding boxes
+        bbox1 = self.get_bounding_box()
+        bbox2 = other.get_bounding_box()
+
+        if not bbox1.intersects(bbox2):
+            return False
+
+        # Check if any vertex from one geometry is inside the other's bbox
+        for vertex in self.vertices:
+            if self._point_in_bbox(vertex, bbox2):
+                return True
+
+        for vertex in other.vertices:
+            if self._point_in_bbox(vertex, bbox1):
+                return True
+
+        return False
+
+    def _point_in_bbox(
+        self, point: tuple[float, float, float], bbox: BoundingBox
+    ) -> bool:
+        """Check if a point is inside a bounding box.
+
+        Args:
+            point: 3D point coordinates
+            bbox: Bounding box to check
+
+        Returns:
+            True if point is inside bbox
+        """
+        x, y, z = point
+        return (
+            bbox.min_x < x < bbox.max_x
+            and bbox.min_y < y < bbox.max_y
+            and bbox.min_z < z < bbox.max_z
+        )
+
+
 class ClashDetector:
     """Detector for geometric clashes between elements."""
 
@@ -275,3 +370,93 @@ class ClashDetector:
     def clear_clashes(self) -> None:
         """Clear all stored clashes."""
         self.clashes = []
+
+    def check_precise_clash(
+        self,
+        element_id_1: str | int,
+        geometry_1: PreciseGeometry,
+        element_id_2: str | int,
+        geometry_2: PreciseGeometry,
+    ) -> ClashResult | None:
+        """Check for precise geometric clash between two elements.
+
+        Uses detailed geometry analysis beyond bounding box intersection.
+
+        Args:
+            element_id_1: ID of first element
+            geometry_1: Precise geometry of first element
+            element_id_2: ID of second element
+            geometry_2: Precise geometry of second element
+
+        Returns:
+            ClashResult if clash detected, None otherwise
+        """
+        if geometry_1.intersects_with(geometry_2):
+            # Estimate intersection volume from bounding box overlap
+            bbox_1 = geometry_1.get_bounding_box()
+            bbox_2 = geometry_2.get_bounding_box()
+            intersection_volume = bbox_1.get_intersection_volume(bbox_2)
+
+            center_1 = bbox_1.get_center()
+            center_2 = bbox_2.get_center()
+
+            location = {
+                "x": (center_1[0] + center_2[0]) / 2,
+                "y": (center_1[1] + center_2[1]) / 2,
+                "z": (center_1[2] + center_2[2]) / 2,
+            }
+
+            severity = self._calculate_severity(intersection_volume)
+
+            clash = ClashResult(
+                element_id_1=element_id_1,
+                element_id_2=element_id_2,
+                clash_type="precise_geometry",
+                intersection_volume=intersection_volume,
+                location=location,
+                severity=severity,
+            )
+
+            self.clashes.append(clash)
+            return clash
+
+        return None
+
+    def check_precise_multiple_elements(
+        self,
+        elements: list[dict[str, Any]],
+    ) -> list[ClashResult]:
+        """Check for precise clashes between multiple elements.
+
+        Args:
+            elements: List of element dicts with 'id' and 'geometry' keys
+
+        Returns:
+            List of detected clashes
+        """
+        clashes = []
+        n = len(elements)
+
+        for i in range(n):
+            elem_1 = elements[i]
+            geom_1 = elem_1["geometry"]
+            if isinstance(geom_1, dict):
+                geom_1 = PreciseGeometry(geom_1)
+
+            for j in range(i + 1, n):
+                elem_2 = elements[j]
+                geom_2 = elem_2["geometry"]
+                if isinstance(geom_2, dict):
+                    geom_2 = PreciseGeometry(geom_2)
+
+                clash = self.check_precise_clash(
+                    elem_1["id"],
+                    geom_1,
+                    elem_2["id"],
+                    geom_2,
+                )
+
+                if clash:
+                    clashes.append(clash)
+
+        return clashes
