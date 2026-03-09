@@ -1,12 +1,16 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using Autodesk.Revit.DB.Structure;
 using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
+using IronPython.Hosting;
+using Microsoft.Scripting.Hosting;
 
 namespace RevitBridge.Bridge;
 
@@ -170,6 +174,14 @@ public static class BridgeCommandFactory
             "revit.reflect_get" => ExecuteReflectGet(app, payload),
             "revit.reflect_set" => ExecuteReflectSet(app, payload),
 
+            // Batch 10: LLM Power Tools
+            "revit.execute_python" => ExecuteExecutePython(app, payload),
+            "revit.change_element_type" => ExecuteChangeElementType(app, payload),
+            "revit.get_elements_by_type" => ExecuteGetElementsByType(app, payload),
+            "revit.batch_set_parameters_by_filter" => ExecuteBatchSetParametersByFilter(app, payload),
+            "revit.replace_family_type" => ExecuteReplaceFamilyType(app, payload),
+            "revit.get_element_geometry" => ExecuteGetElementGeometry(app, payload),
+
             _ => new { status = "error", message = $"Unknown tool: {tool}" }
         };
     }
@@ -331,7 +343,15 @@ public static class BridgeCommandFactory
             // Batch 9: Universal Reflection
             "revit.invoke_method",
             "revit.reflect_get",
-            "revit.reflect_set"
+            "revit.reflect_set",
+
+            // Batch 10: LLM Power Tools
+            "revit.execute_python",
+            "revit.change_element_type",
+            "revit.get_elements_by_type",
+            "revit.batch_set_parameters_by_filter",
+            "revit.replace_family_type",
+            "revit.get_element_geometry"
         };
     }
 
@@ -3423,7 +3443,9 @@ public static class BridgeCommandFactory
             "floors" => BuiltInCategory.OST_Floors,
             "roofs" => BuiltInCategory.OST_Roofs,
             "columns" => BuiltInCategory.OST_Columns,
+            "structural_columns" => BuiltInCategory.OST_StructuralColumns,
             "beams" => BuiltInCategory.OST_StructuralFraming,
+            "structural_framing" => BuiltInCategory.OST_StructuralFraming,
             "ducts" => BuiltInCategory.OST_DuctCurves,
             "pipes" => BuiltInCategory.OST_PipeCurves,
             "cable_trays" => BuiltInCategory.OST_CableTray,
@@ -3434,7 +3456,15 @@ public static class BridgeCommandFactory
             "mechanical_equipment" => BuiltInCategory.OST_MechanicalEquipment,
             "electrical_equipment" => BuiltInCategory.OST_ElectricalEquipment,
             "plumbing_fixtures" => BuiltInCategory.OST_PlumbingFixtures,
-            _ => throw new ArgumentException($"Unknown category: {categoryName}")
+            "rooms" => BuiltInCategory.OST_Rooms,
+            "ceilings" => BuiltInCategory.OST_Ceilings,
+            "stairs" => BuiltInCategory.OST_Stairs,
+            "railings" => BuiltInCategory.OST_Railings,
+            "curtain_walls" => BuiltInCategory.OST_Walls,
+            "generic_models" => BuiltInCategory.OST_GenericModel,
+            "specialty_equipment" => BuiltInCategory.OST_SpecialityEquipment,
+            "mass" => BuiltInCategory.OST_Mass,
+            _ => throw new ArgumentException($"Unknown category: '{categoryName}'. Supported: walls, floors, roofs, doors, windows, columns, structural_columns, beams, rooms, ceilings, stairs, railings, furniture, mechanical_equipment, electrical_equipment, plumbing_fixtures, ducts, pipes, cable_trays, conduits, generic_models")
         };
     }
 
@@ -4058,5 +4088,413 @@ public static class BridgeCommandFactory
         }
 
         return new { status = "success", target_id = targetId, property = propertyName };
+    }
+
+    // ==================== BATCH 10: LLM POWER TOOLS ====================
+
+    private static object ExecuteExecutePython(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var script = payload.GetProperty("script").GetString() ?? "";
+        // timeout_ms is accepted but IronPython executes synchronously; implement timeout via Thread if needed
+        var outputMs = new MemoryStream();
+        var errorMs = new MemoryStream();
+        string output = "";
+        string error = "";
+        bool success = false;
+
+        try
+        {
+            var engine = Python.CreateEngine();
+
+            // Capture stdout and stderr into memory streams
+            engine.Runtime.IO.SetOutput(outputMs, Encoding.UTF8);
+            engine.Runtime.IO.SetErrorOutput(errorMs, Encoding.UTF8);
+
+            // Pre-load Revit assemblies so the script can use "from Autodesk.Revit.DB import *"
+            engine.Runtime.LoadAssembly(typeof(Document).Assembly);       // RevitAPI.dll
+            engine.Runtime.LoadAssembly(typeof(UIApplication).Assembly);  // RevitAPIUI.dll
+
+            var scope = engine.CreateScope();
+            scope.SetVariable("doc", doc);
+            scope.SetVariable("uidoc", app.ActiveUIDocument);
+            scope.SetVariable("uiapp", app);
+            scope.SetVariable("app", app.Application);
+            scope.SetVariable("__output__", "");
+
+            engine.Execute(script, scope);
+
+            // Read captured stdout
+            outputMs.Position = 0;
+            output = new StreamReader(outputMs, Encoding.UTF8).ReadToEnd();
+
+            // Also honour __output__ variable if the script set it explicitly
+            if (scope.TryGetVariable("__output__", out object outVar) && outVar is string outStr && !string.IsNullOrEmpty(outStr))
+                output = string.IsNullOrEmpty(output) ? outStr : outStr + "\n" + output;
+
+            success = true;
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                errorMs.Position = 0;
+                var errText = new StreamReader(errorMs, Encoding.UTF8).ReadToEnd();
+                error = string.IsNullOrEmpty(errText) ? ex.Message : errText + "\n" + ex.Message;
+            }
+            catch
+            {
+                error = ex.Message;
+            }
+            success = false;
+        }
+
+        return new { success, output, error };
+    }
+
+    private static object ExecuteChangeElementType(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var sourceTypeId = new ElementId(payload.GetProperty("source_type_id").GetInt64());
+        var targetTypeId = new ElementId(payload.GetProperty("target_type_id").GetInt64());
+
+        // Validate that target type exists
+        if (doc.GetElement(targetTypeId) == null)
+            return new { success = false, error = $"Target type ID {targetTypeId.Value} not found", error_code = "TYPE_NOT_FOUND", changed = 0, failed = 0, failed_ids = new List<long>() };
+
+        var collector = new FilteredElementCollector(doc).WhereElementIsNotElementType();
+
+        if (payload.TryGetProperty("category", out var catProp) && catProp.ValueKind != JsonValueKind.Null)
+        {
+            var bic = GetBuiltInCategoryByName(catProp.GetString()!);
+            collector = collector.OfCategory(bic);
+        }
+
+        var elements = collector.Where(e => e.GetTypeId() == sourceTypeId).ToList();
+
+        int changed = 0, failed = 0;
+        var failedIds = new List<long>();
+
+        using (var tx = new Transaction(doc, "MCP: Change Element Type"))
+        {
+            tx.Start();
+            foreach (var el in elements)
+            {
+                try
+                {
+                    el.ChangeTypeId(targetTypeId);
+                    changed++;
+                }
+                catch
+                {
+                    failedIds.Add(el.Id.Value);
+                    failed++;
+                }
+            }
+            tx.Commit();
+        }
+
+        return new { success = true, changed, failed, failed_ids = failedIds };
+    }
+
+    private static object ExecuteGetElementsByType(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        int offset = payload.TryGetProperty("offset", out var oProp) ? oProp.GetInt32() : 0;
+        int limit  = payload.TryGetProperty("limit",  out var lProp) ? lProp.GetInt32() : 200;
+        limit = Math.Min(limit, 500); // Hard cap to prevent response bloat
+
+        var collector = new FilteredElementCollector(doc).WhereElementIsNotElementType();
+
+        // Optional category filter (applied at collector level for best performance)
+        if (payload.TryGetProperty("category", out var catProp) && catProp.ValueKind != JsonValueKind.Null)
+        {
+            var bic = GetBuiltInCategoryByName(catProp.GetString()!);
+            collector = collector.OfCategory(bic);
+        }
+
+        IEnumerable<Element> query = collector;
+
+        // Optional type_id filter
+        if (payload.TryGetProperty("type_id", out var typeProp) && typeProp.ValueKind != JsonValueKind.Null)
+        {
+            var typeId = new ElementId(typeProp.GetInt64());
+            query = query.Where(e => e.GetTypeId() == typeId);
+        }
+
+        // Optional level filter
+        if (payload.TryGetProperty("level", out var lvlProp) && lvlProp.ValueKind != JsonValueKind.Null)
+        {
+            var levelName = lvlProp.GetString();
+            var level = new FilteredElementCollector(doc)
+                .OfClass(typeof(Level)).Cast<Level>()
+                .FirstOrDefault(lv => lv.Name.Equals(levelName, StringComparison.OrdinalIgnoreCase));
+            if (level != null)
+                query = query.Where(e => e.LevelId == level.Id);
+        }
+
+        // Which fields to return (null = default set)
+        HashSet<string>? fields = null;
+        if (payload.TryGetProperty("fields", out var fieldsProp) && fieldsProp.ValueKind == JsonValueKind.Array)
+            fields = fieldsProp.EnumerateArray().Select(f => f.GetString()!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var allElements = query.ToList();
+        int total = allElements.Count;
+        var page = allElements.Skip(offset).Take(limit);
+
+        var elements = page.Select(el =>
+        {
+            var d = new Dictionary<string, object?> { ["id"] = el.Id.Value };
+
+            bool want(string f) => fields == null || fields.Contains(f);
+
+            if (want("name"))     d["name"]     = el.Name ?? "";
+            if (want("category")) d["category"] = el.Category?.Name ?? "";
+            if (want("type_id"))  d["type_id"]  = el.GetTypeId()?.Value ?? -1;
+            if (want("level"))
+            {
+                d["level"] = (el.LevelId != null && el.LevelId != ElementId.InvalidElementId)
+                    ? doc.GetElement(el.LevelId)?.Name ?? ""
+                    : "";
+            }
+            if (want("length"))
+            {
+                var p = el.get_Parameter(BuiltInParameter.CURVE_ELEM_LENGTH)
+                     ?? el.get_Parameter(BuiltInParameter.INSTANCE_LENGTH_PARAM);
+                d["length"] = p?.AsDouble();
+            }
+            if (want("area"))
+            {
+                var p = el.get_Parameter(BuiltInParameter.HOST_AREA_COMPUTED);
+                d["area"] = p?.AsDouble();
+            }
+            if (want("volume"))
+            {
+                var p = el.get_Parameter(BuiltInParameter.HOST_VOLUME_COMPUTED);
+                d["volume"] = p?.AsDouble();
+            }
+            return d;
+        }).ToList();
+
+        return new
+        {
+            total,
+            returned = elements.Count,
+            offset,
+            limit,
+            truncated = total > offset + limit,
+            elements
+        };
+    }
+
+    private static object ExecuteBatchSetParametersByFilter(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var parameterName = payload.GetProperty("parameter_name").GetString()!;
+        var value = payload.GetProperty("value");
+
+        if (!payload.TryGetProperty("filter", out var filter) || filter.ValueKind != JsonValueKind.Object)
+            throw new ArgumentException("Missing or invalid 'filter' object");
+
+        var collector = new FilteredElementCollector(doc).WhereElementIsNotElementType();
+
+        if (filter.TryGetProperty("category", out var catProp) && catProp.ValueKind != JsonValueKind.Null)
+        {
+            var bic = GetBuiltInCategoryByName(catProp.GetString()!);
+            collector = collector.OfCategory(bic);
+        }
+
+        IEnumerable<Element> query = collector;
+
+        if (filter.TryGetProperty("type_id", out var typeProp) && typeProp.ValueKind != JsonValueKind.Null)
+        {
+            var typeId = new ElementId(typeProp.GetInt64());
+            query = query.Where(e => e.GetTypeId() == typeId);
+        }
+
+        if (filter.TryGetProperty("level", out var lvlProp) && lvlProp.ValueKind != JsonValueKind.Null)
+        {
+            var levelName = lvlProp.GetString();
+            var level = new FilteredElementCollector(doc)
+                .OfClass(typeof(Level)).Cast<Level>()
+                .FirstOrDefault(lv => lv.Name.Equals(levelName, StringComparison.OrdinalIgnoreCase));
+            if (level != null)
+                query = query.Where(e => e.LevelId == level.Id);
+        }
+
+        if (filter.TryGetProperty("parameter_filter", out var pf) && pf.ValueKind != JsonValueKind.Null)
+        {
+            var filterName  = pf.GetProperty("name").GetString()!;
+            var filterValue = pf.GetProperty("value").ToString();
+            query = query.Where(e =>
+            {
+                var p = e.LookupParameter(filterName);
+                return p != null && GetParameterValueAsString(p) == filterValue;
+            });
+        }
+
+        var elements = query.ToList();
+        int updated = 0, failed = 0;
+
+        using (var tx = new Transaction(doc, "MCP: Batch Set Parameters by Filter"))
+        {
+            tx.Start();
+            foreach (var el in elements)
+            {
+                try
+                {
+                    var param = el.LookupParameter(parameterName);
+                    if (param == null || param.IsReadOnly) { failed++; continue; }
+                    SetParameterValue(param, value);
+                    updated++;
+                }
+                catch
+                {
+                    failed++;
+                }
+            }
+            tx.Commit();
+        }
+
+        return new { success = true, updated, failed, total = elements.Count };
+    }
+
+    private static object ExecuteReplaceFamilyType(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var oldFamily = payload.GetProperty("old_family").GetString()!;
+        var oldType   = payload.GetProperty("old_type").GetString()!;
+        var newFamily = payload.GetProperty("new_family").GetString()!;
+        var newType   = payload.GetProperty("new_type").GetString()!;
+
+        var allSymbols = new FilteredElementCollector(doc)
+            .OfClass(typeof(FamilySymbol))
+            .Cast<FamilySymbol>()
+            .ToList();
+
+        var oldSymbol = allSymbols.FirstOrDefault(fs =>
+            fs.FamilyName.Equals(oldFamily, StringComparison.OrdinalIgnoreCase) &&
+            fs.Name.Equals(oldType, StringComparison.OrdinalIgnoreCase));
+
+        if (oldSymbol == null)
+            return new { success = false, error = $"Source family type '{oldFamily} / {oldType}' not found in document", error_code = "TYPE_NOT_FOUND", changed = 0, failed = 0, failed_ids = new List<long>() };
+
+        var newSymbol = allSymbols.FirstOrDefault(fs =>
+            fs.FamilyName.Equals(newFamily, StringComparison.OrdinalIgnoreCase) &&
+            fs.Name.Equals(newType, StringComparison.OrdinalIgnoreCase));
+
+        if (newSymbol == null)
+            return new { success = false, error = $"Target family type '{newFamily} / {newType}' not found in document", error_code = "TYPE_NOT_FOUND", changed = 0, failed = 0, failed_ids = new List<long>() };
+
+        var instances = new FilteredElementCollector(doc)
+            .WhereElementIsNotElementType()
+            .Where(e => e.GetTypeId() == oldSymbol.Id)
+            .ToList();
+
+        int changed = 0, failed = 0;
+        var failedIds = new List<long>();
+
+        using (var tx = new Transaction(doc, "MCP: Replace Family Type"))
+        {
+            tx.Start();
+            if (!newSymbol.IsActive)
+                newSymbol.Activate();
+            foreach (var inst in instances)
+            {
+                try
+                {
+                    inst.ChangeTypeId(newSymbol.Id);
+                    changed++;
+                }
+                catch
+                {
+                    failedIds.Add(inst.Id.Value);
+                    failed++;
+                }
+            }
+            tx.Commit();
+        }
+
+        return new { success = true, changed, failed, failed_ids = failedIds };
+    }
+
+    private static object ExecuteGetElementGeometry(UIApplication app, JsonElement payload)
+    {
+        var doc = app.ActiveUIDocument?.Document;
+        if (doc == null) throw new InvalidOperationException("No active document");
+
+        var elementId = payload.GetProperty("element_id").GetInt64();
+        var element = doc.GetElement(new ElementId(elementId));
+        if (element == null)
+            return new { success = false, error = $"Element {elementId} not found", error_code = "ELEMENT_NOT_FOUND" };
+
+        // Bounding box
+        object? bbObj = null;
+        var bb = element.get_BoundingBox(null);
+        if (bb != null)
+            bbObj = new
+            {
+                min = new { x = Math.Round(bb.Min.X, 6), y = Math.Round(bb.Min.Y, 6), z = Math.Round(bb.Min.Z, 6) },
+                max = new { x = Math.Round(bb.Max.X, 6), y = Math.Round(bb.Max.Y, 6), z = Math.Round(bb.Max.Z, 6) }
+            };
+
+        // Location
+        string locationType = "none";
+        object? point = null, start = null, end = null;
+        double? curveLength = null;
+
+        var location = element.Location;
+        if (location is LocationPoint lp)
+        {
+            locationType = "point";
+            point = new { x = Math.Round(lp.Point.X, 6), y = Math.Round(lp.Point.Y, 6), z = Math.Round(lp.Point.Z, 6) };
+        }
+        else if (location is LocationCurve lc)
+        {
+            locationType = "curve";
+            var p0 = lc.Curve.GetEndPoint(0);
+            var p1 = lc.Curve.GetEndPoint(1);
+            start = new { x = Math.Round(p0.X, 6), y = Math.Round(p0.Y, 6), z = Math.Round(p0.Z, 6) };
+            end   = new { x = Math.Round(p1.X, 6), y = Math.Round(p1.Y, 6), z = Math.Round(p1.Z, 6) };
+            curveLength = Math.Round(lc.Curve.Length, 6);
+        }
+
+        // Level
+        string? levelName = null;
+        if (element.LevelId != null && element.LevelId != ElementId.InvalidElementId)
+            levelName = doc.GetElement(element.LevelId)?.Name;
+
+        // Common quantity parameters
+        var areaParam   = element.get_Parameter(BuiltInParameter.HOST_AREA_COMPUTED);
+        var volParam    = element.get_Parameter(BuiltInParameter.HOST_VOLUME_COMPUTED);
+        var lenParam    = element.get_Parameter(BuiltInParameter.CURVE_ELEM_LENGTH)
+                       ?? element.get_Parameter(BuiltInParameter.INSTANCE_LENGTH_PARAM);
+
+        return new
+        {
+            success = true,
+            element_id = elementId,
+            element_type = element.GetType().Name,
+            element_name = element.Name,
+            location_type = locationType,
+            point,
+            start,
+            end,
+            length = curveLength ?? lenParam?.AsDouble(),
+            bounding_box = bbObj,
+            level = levelName,
+            area   = areaParam?.AsDouble(),
+            volume = volParam?.AsDouble()
+        };
     }
 }

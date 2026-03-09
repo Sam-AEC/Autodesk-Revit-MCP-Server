@@ -518,6 +518,129 @@ async def list_tools() -> list[Tool]:
         Tool(name="revit_invoke_method", description="Invoke any Revit API method dynamically using Reflection", inputSchema={"type": "object", "properties": {"class_name": {"type": "string"}, "method_name": {"type": "string"}, "arguments": {"type": "array", "items": {}}, "target_id": {"type": "string"}, "use_transaction": {"type": "boolean", "default": True}}, "required": ["class_name", "method_name", "arguments"]}),
         Tool(name="revit_reflect_get", description="Get any Revit property value dynamically", inputSchema={"type": "object", "properties": {"target_id": {"type": "string"}, "property_name": {"type": "string"}}, "required": ["target_id", "property_name"]}),
         Tool(name="revit_reflect_set", description="Set any Revit property value dynamically", inputSchema={"type": "object", "properties": {"target_id": {"type": "string"}, "property_name": {"type": "string"}, "value": {}}, "required": ["target_id", "property_name", "value"]}),
+        # Batch 10: LLM Power Tools
+        Tool(
+            name="revit_execute_python",
+            description=(
+                "Execute arbitrary Python/IronPython code inside Revit with full Revit API access. "
+                "Variables pre-injected: doc (Document), uidoc (UIDocument), uiapp (UIApplication), app (Application). "
+                "Write output to stdout (print) or set __output__ = 'result string'. "
+                "Use 'from Autodesk.Revit.DB import *' for API access."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "script": {"type": "string", "description": "Python script to execute"},
+                    "timeout_ms": {"type": "integer", "description": "Execution timeout in milliseconds", "default": 10000}
+                },
+                "required": ["script"]
+            }
+        ),
+        Tool(
+            name="revit_change_element_type",
+            description=(
+                "Swap all instances of one element type to another type. "
+                "Works for Walls, Doors, Windows, Floors, Roofs, Columns, Furniture, etc. "
+                "Use revit_get_element_type or revit_list_elements first to find type IDs."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source_type_id": {"type": "integer", "description": "Element type ID to replace (all instances)"},
+                    "target_type_id": {"type": "integer", "description": "Element type ID to change to"},
+                    "category": {"type": "string", "description": "Optional category filter (e.g. 'Walls', 'Doors') to limit scope"}
+                },
+                "required": ["source_type_id", "target_type_id"]
+            }
+        ),
+        Tool(
+            name="revit_get_elements_by_type",
+            description=(
+                "Get element IDs and key parameters, filtered by type, category, and/or level. "
+                "Paginated — default 200 per call, max 500. Use offset for pagination. "
+                "Specify 'fields' to limit returned data. Never crashes on large models."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "type_id":  {"type": "integer", "description": "Filter by element type ID (optional)"},
+                    "category": {"type": "string",  "description": "Filter by category name, e.g. 'Walls', 'Doors' (optional)"},
+                    "level":    {"type": "string",  "description": "Filter by level name, e.g. 'BG', 'L1' (optional)"},
+                    "fields":   {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Fields to return: id always included. Options: name, category, type_id, level, length, area, volume"
+                    },
+                    "offset": {"type": "integer", "description": "Pagination offset (default 0)", "default": 0},
+                    "limit":  {"type": "integer", "description": "Max results to return (default 200, max 500)", "default": 200}
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="revit_batch_set_parameters_by_filter",
+            description=(
+                "Set a parameter value on all elements matching a filter (category, type, level, or parameter value). "
+                "More powerful than revit_batch_set_parameters because you don't need to know element IDs first."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "filter": {
+                        "type": "object",
+                        "description": "Filter criteria to select elements",
+                        "properties": {
+                            "category": {"type": "string", "description": "Category name, e.g. 'Walls'"},
+                            "type_id":  {"type": "integer", "description": "Element type ID filter"},
+                            "level":    {"type": "string",  "description": "Level name filter"},
+                            "parameter_filter": {
+                                "type": "object",
+                                "description": "Only include elements where this parameter equals this value",
+                                "properties": {
+                                    "name":  {"type": "string"},
+                                    "value": {}
+                                },
+                                "required": ["name", "value"]
+                            }
+                        }
+                    },
+                    "parameter_name": {"type": "string", "description": "Name of the parameter to set"},
+                    "value": {"description": "Value to set (string, number, or boolean)"}
+                },
+                "required": ["filter", "parameter_name", "value"]
+            }
+        ),
+        Tool(
+            name="revit_replace_family_type",
+            description=(
+                "Replace all instances of one family/type combination with another, identified by name. "
+                "Use this for doors, windows, furniture etc. when you know the family and type names."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "old_family": {"type": "string", "description": "Current family name (exact match, case-insensitive)"},
+                    "old_type":   {"type": "string", "description": "Current type name"},
+                    "new_family": {"type": "string", "description": "Replacement family name"},
+                    "new_type":   {"type": "string", "description": "Replacement type name"}
+                },
+                "required": ["old_family", "old_type", "new_family", "new_type"]
+            }
+        ),
+        Tool(
+            name="revit_get_element_geometry",
+            description=(
+                "Get geometric data for an element: location point or curve endpoints, bounding box, "
+                "level, area, volume, and length. Coordinates are in Revit internal units (feet)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "element_id": {"type": "integer", "description": "Element ID"}
+                },
+                "required": ["element_id"]
+            }
+        ),
     ]
 
 
@@ -847,6 +970,38 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 "target_id": arguments.get("target_id"),
                 "property_name": arguments.get("property_name"),
                 "value": arguments.get("value")
+            }),
+            # Batch 10: LLM Power Tools
+            "revit_execute_python": ("revit.execute_python", {
+                "script": arguments.get("script"),
+                "timeout_ms": arguments.get("timeout_ms", 10000)
+            }),
+            "revit_change_element_type": ("revit.change_element_type", {
+                "source_type_id": arguments.get("source_type_id"),
+                "target_type_id": arguments.get("target_type_id"),
+                "category": arguments.get("category")
+            }),
+            "revit_get_elements_by_type": ("revit.get_elements_by_type", {
+                "type_id":  arguments.get("type_id"),
+                "category": arguments.get("category"),
+                "level":    arguments.get("level"),
+                "fields":   arguments.get("fields"),
+                "offset":   arguments.get("offset", 0),
+                "limit":    arguments.get("limit", 200)
+            }),
+            "revit_batch_set_parameters_by_filter": ("revit.batch_set_parameters_by_filter", {
+                "filter":         arguments.get("filter"),
+                "parameter_name": arguments.get("parameter_name"),
+                "value":          arguments.get("value")
+            }),
+            "revit_replace_family_type": ("revit.replace_family_type", {
+                "old_family": arguments.get("old_family"),
+                "old_type":   arguments.get("old_type"),
+                "new_family": arguments.get("new_family"),
+                "new_type":   arguments.get("new_type")
+            }),
+            "revit_get_element_geometry": ("revit.get_element_geometry", {
+                "element_id": arguments.get("element_id")
             }),
         }
 

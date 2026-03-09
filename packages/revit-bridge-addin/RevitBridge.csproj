@@ -43,6 +43,9 @@
     <PackageReference Include="Serilog" Version="3.1.1" />
     <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
     <PackageReference Include="System.Text.Json" Version="6.0.10" />
+    <!-- IronPython: enables execute_python tool (in-process Python scripting with full Revit API access) -->
+    <PackageReference Include="IronPython" Version="2.7.12" Condition="'$(TargetFramework)'=='net48'" />
+    <PackageReference Include="IronPython" Version="3.4.1" Condition="'$(TargetFramework)'=='net8.0-windows'" />
   </ItemGroup>
 
   <!-- WPF References for Modern UI -->
