@@ -59,7 +59,7 @@ MCP Revit Bridge is a two-tier system connecting MCP clients to Autodesk Revit t
                                  │ Revit API
                                  │
 ┌────────────────────────────────▼─────────────────────────────────┐
-│  Autodesk Revit (2020-2024)                                      │
+│  Autodesk Revit (2024-2026)                                      │
 │  - Document operations                                           │
 │  - Element queries and modifications                             │
 │  - Export operations (PDF, DWG, IFC, CSV)                        │
@@ -190,7 +190,7 @@ export MCP_REVIT_MODE=mock
 
 **Requirements**:
 - Windows 10/11
-- Revit 2020-2024 running
+- Revit 2024-2026 running
 - Bridge add-in installed and loaded
 
 **Configuration**:

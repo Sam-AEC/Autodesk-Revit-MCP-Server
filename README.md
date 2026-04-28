@@ -9,7 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-0078D4?style=flat-square)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![.NET](https://img.shields.io/badge/.NET-4.8-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com)
-[![Revit](https://img.shields.io/badge/Revit-2024%20%7C%202025-0696D7?style=flat-square)](https://autodesk.com/products/revit)
+[![Revit](https://img.shields.io/badge/Revit-2024--2026-0696D7?style=flat-square)](https://autodesk.com/products/revit)
 
 [Quick Start](#quick-start) · [Documentation](docs/) · [API Reference](docs/tools.md)
 
@@ -40,7 +40,7 @@ Production-ready MCP server enabling AI agents to control Autodesk Revit through
 ### Prerequisites
 
 - Windows 10/11
-- Autodesk Revit 2024 or 2025
+- Autodesk Revit 2024-2026
 - Python 3.11+
 - .NET Framework 4.8
 
@@ -121,7 +121,7 @@ Expected response:
 └───────────────┬─────────────────┘
                 │ Revit API
 ┌───────────────▼─────────────────┐
-│ Autodesk Revit 2024/2025        │
+│ Autodesk Revit 2024-2026        │
 └─────────────────────────────────┘
 ```
 

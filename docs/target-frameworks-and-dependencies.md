@@ -21,8 +21,8 @@ The add-in project file is [packages/revit-bridge-addin/RevitBridge.csproj](../p
 
 It conditionally targets:
 
-- `net48` for Revit 2024 and earlier project settings
-- `net8.0-windows` when `RevitVersion == 2025`
+- `net48` for Revit 2024
+- `net8.0-windows` for Revit 2025 and 2026
 
 That dual-target behavior is one of the most important build facts in the repo.
 

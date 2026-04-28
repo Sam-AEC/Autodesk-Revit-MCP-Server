@@ -11,7 +11,7 @@ This guide covers installation for both mock mode (no Revit required) and bridge
 
 ### Bridge Mode (Additional)
 - Windows 10/11
-- Autodesk Revit 2020-2024
+- Autodesk Revit 2024-2026
 - .NET Framework 4.8
 - Visual Studio 2019/2022 or MSBuild tools
 - Revit SDK (installed with Revit or available from Autodesk Developer Network)

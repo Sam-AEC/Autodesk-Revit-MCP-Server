@@ -21,7 +21,7 @@ if (-not (Test-Path $distDir)) {
 }
 
 # Define versions to build
-$versionsToBuild = @("2024", "2025")
+$versionsToBuild = @("2024", "2025", "2026")
 if ($RevitVersion -ne "All") {
     if ($versionsToBuild -notcontains $RevitVersion) {
         Write-Error "Unsupported Revit version: $RevitVersion. Supported: $($versionsToBuild -join ', ')"
@@ -46,7 +46,7 @@ foreach ($year in $versionsToBuild) {
     New-Item -ItemType Directory -Path $binDir -Force | Out-Null
 
     $sourcePath = "$PSScriptRoot\..\packages\revit-bridge-addin\bin\Release\$year"
-    # Adjust source path for net8.0-windows if 2025
+    # Adjust source path for the selected target framework
     if ($year -ge "2025" -and (Test-Path "$sourcePath\net8.0-windows")) {
         $sourcePath = "$sourcePath\net8.0-windows"
     }
