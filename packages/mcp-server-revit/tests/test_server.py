@@ -17,6 +17,7 @@ def create_config(tmp_path: Path, **overrides) -> Config:
     return Config(
         workspace_dir=tmp_path,
         allowed_directories=[tmp_path],
+        audit_log=tmp_path / "audit.log",
         bridge_url=overrides.get("bridge_url"),
         mode=overrides.get("mode", BridgeMode.mock),
     )

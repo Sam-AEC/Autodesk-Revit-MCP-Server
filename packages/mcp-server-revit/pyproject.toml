@@ -17,6 +17,9 @@ dependencies = [
     "mcp>=0.9.0",
 ]
 
+[project.scripts]
+revit-mcp-server = "revit_mcp_server.mcp_server:run_mcp_server"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",

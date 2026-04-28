@@ -2,7 +2,7 @@
 
 <img src="https://cdn.simpleicons.org/autodeskrevit/0696D7" alt="Revit" height="80"/>
 
-# Revit MCP Server
+# Autodesk Revit MCP Server
 
 **Model Context Protocol server for Autodesk Revit**
 
@@ -76,6 +76,12 @@ Edit `%APPDATA%\Claude\claude_desktop_config.json`:
   }
 }
 ```
+
+### Configure VS Code / GitHub Copilot
+
+This repository includes a workspace MCP config at `.vscode/mcp.json`. After installing the Python package and starting Revit with the bridge add-in loaded, open this repository in VS Code and run `MCP: List Servers` or use the MCP Servers view.
+
+For marketplace and registry publication details, see [MCP Marketplaces and Client Distribution](docs/marketplaces.md).
 
 ### Verify Installation
 
@@ -329,6 +335,7 @@ Autodesk-Revit-MCP-Server/
 - [API Reference](docs/tools.md)
 - [Architecture](docs/architecture.md)
 - [Security Model](docs/security.md)
+- [MCP Marketplaces and Client Distribution](docs/marketplaces.md)
 - [Claude Desktop Setup](CLAUDE_DESKTOP_SETUP.md)
 - [Contributing](CONTRIBUTING.md)
 

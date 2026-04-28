@@ -22,7 +22,15 @@ class MCPServer:
         self,
         config_obj: Config | None = None,
         bridge_factory: Callable[[str], BridgeTransport] | None = None,
+        **kwargs,
     ) -> None:
+        if "config" in kwargs:
+            if config_obj is not None:
+                raise TypeError("Pass either config_obj or config, not both")
+            config_obj = kwargs.pop("config")
+        if kwargs:
+            unexpected = ", ".join(kwargs)
+            raise TypeError(f"Unexpected keyword argument(s): {unexpected}")
         self.config = config_obj if config_obj is not None else config
         self.workspace = WorkspaceMonitor(self.config.allowed_directories)
         self.audit = AuditRecorder(self.config.audit_log)

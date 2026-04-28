@@ -1,9 +1,10 @@
-# Revit MCP Server (Python Package)
+# Autodesk Revit MCP Server (Python Package)
 
 Python package for the Autodesk Revit MCP server used by AI clients over stdio.
 
 - Repository: https://github.com/Sam-AEC/Autodesk-Revit-MCP-Server
 - MCP entrypoint: `python -m revit_mcp_server.mcp_server`
+- Console script: `revit-mcp-server`
 - Requires Python 3.11+
 
 Environment variables (prefix `MCP_REVIT_`) include:
