@@ -120,7 +120,7 @@ python -m pip install -e packages/mcp-server-revit
 
 ### 2. Install the Revit add-in
 
-Set the version to match your Revit installation:
+Set the version to match your Revit installation:  [you may need to check if allow third-party files.]
 
 ```powershell
 $RevitVersion = Read-Host "Revit year (2024, 2025, 2026, or 2027)"
@@ -176,6 +176,8 @@ that the server may access:
 ```
 
 VS Code users can start from [`.vscode/mcp.json`](.vscode/mcp.json).
+
+Hermes Desktop users can start from [Hermes/mcp.json] (https://github.com/jyh100/aec-model-bridge/blob/main/Hermes.json)
 
 Clients that support MCP Bundles can install the `.mcpb` file from the
 [latest release](https://github.com/Sam-AEC/aec-model-bridge/releases/latest).
