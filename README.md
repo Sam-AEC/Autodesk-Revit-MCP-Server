@@ -177,6 +177,8 @@ that the server may access:
 
 VS Code users can start from [`.vscode/mcp.json`](.vscode/mcp.json).
 
+Hermes Desktop users can start from [Hermes/mcp.json] (https://github.com/jyh100/aec-model-bridge/blob/main/Hermes.json)
+
 Clients that support MCP Bundles can install the `.mcpb` file from the
 [latest release](https://github.com/Sam-AEC/aec-model-bridge/releases/latest).
 The Revit add-in is still required because the MCP server communicates with the
