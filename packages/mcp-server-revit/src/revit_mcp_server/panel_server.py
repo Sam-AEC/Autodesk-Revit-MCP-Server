@@ -38,6 +38,7 @@ from .security.approval import HUMAN_ONLY_TOOLS
 from .security.proof import panel_plans_redacted
 from .security.audit import redact_data, redact_for_approval, redact_known_secrets, register_secret_value
 from .security.dispatch import run_gated_tool
+from .security.approval_override import disable_auto, enable_auto
 from .security.panel_token import TOKEN_HEADER, PanelTokenError, load_or_create_token, read_token
 from .security.workspace import WorkspaceMonitor
 
@@ -183,7 +184,7 @@ APPROVAL_MODE_NOTES = {
 }
 
 
-def collect_diagnostics(workspace_dir: Path, approval_mode: Any = None) -> Dict[str, Any]:
+def collect_diagnostics(workspace_dir: Path, approval_mode: Any = None, auto_window: Any = None) -> Dict[str, Any]:
     """Install-to-first-check status: one entry per thing that can block a first run.
 
     Each check carries a ``next_step`` so the panel can show a specific recovery
@@ -244,6 +245,7 @@ def collect_diagnostics(workspace_dir: Path, approval_mode: Any = None) -> Dict[
         "ok": all(c["ok"] for c in checks),
         "approval_mode": mode_value,
         "approval_mode_note": APPROVAL_MODE_NOTES[mode_value],
+        "auto_expires_at": auto_window["expires_at"] if mode_value == "auto" and isinstance(auto_window, dict) else None,
         "checks": checks,
     }
 
@@ -365,9 +367,11 @@ class PanelRequestHandler(BaseHTTPRequestHandler):
         if not self._check_token():
             return
         if self.path == "/diagnostics":
+            gate = getattr(self.approval_provider, "gate", None)
             self._send_json(200, collect_diagnostics(
                     self.workspace.allowed_directories[0],
-                    getattr(self.approval_provider, "approval_mode", None),
+                    getattr(gate, "approval_mode", None) if gate is not None else getattr(self.approval_provider, "approval_mode", None),
+                    gate.auto_window() if gate is not None and hasattr(gate, "auto_window") else None,
                 ),
             )
             return
@@ -378,6 +382,46 @@ class PanelRequestHandler(BaseHTTPRequestHandler):
             self._handle_agent_providers()
             return
         self._send_json(404, {"ok": False, "error": f"Unknown path '{self.path}'"})
+
+    def _handle_set_approval_mode(self) -> None:
+        """Panel switch for a limited 'auto' window. Body: {"mode": "auto", "minutes": N} or
+        {"mode": "ask_first"}. Anything else is refused, and look_only is never relaxed."""
+        raw = self._read_body()
+        if raw is None:
+            return
+        try:
+            body = json.loads(raw or b"{}")
+        except json.JSONDecodeError:
+            body = None
+        if not isinstance(body, dict):
+            self._send_json(400, {"ok": False, "error": "Request body must be a JSON object"})
+            return
+
+        gate = self.approval_provider.gate
+        mode = body.get("mode")
+        if mode == "auto":
+            if gate.baseline_approval_mode == "look_only":
+                self._send_json(409, {"ok": False, "error": "Approvals are locked to look-only for this hub; "
+                                      "the panel cannot switch them to auto."})
+                return
+            if body.get("confirm") is not True:
+                self._send_json(400, {"ok": False, "error": "Switching to auto needs an explicit confirmation."})
+                return
+            try:
+                enable_auto(gate.workspace_dir, body.get("minutes"), token=self.token or "")
+            except OSError as e:
+                self._send_json(500, {"ok": False, "error": f"Could not save the approval mode: {e.strerror or e}"})
+                return
+            logger.warning("Approval mode switched to AUTO from the panel (expires %s)",
+                           (gate.auto_window() or {}).get("expires_at"))
+        elif mode in ("ask_first", "required"):
+            disable_auto(gate.workspace_dir)
+            logger.info("Approval mode set back to ask_first from the panel")
+        else:
+            self._send_json(400, {"ok": False, "error": "mode must be 'auto' or 'ask_first'"})
+            return
+
+        self._send_json(200, collect_diagnostics(gate.workspace_dir, gate.approval_mode, gate.auto_window()))
 
     def _handle_agent_providers(self) -> None:
         """Reports which chat providers are actually usable right now, so the
@@ -412,6 +456,9 @@ class PanelRequestHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/agent/chat":
             self._handle_agent_chat()
+            return
+        if self.path == "/approval-mode":
+            self._handle_set_approval_mode()
             return
 
         if self.path != "/execute":

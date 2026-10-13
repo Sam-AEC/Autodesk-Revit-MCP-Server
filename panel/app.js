@@ -43,7 +43,10 @@ const reportList = document.getElementById("report-list");
 const runLog = document.getElementById("run-log");
 const severityFilter = document.getElementById("severity-filter");
 const settingsForm = document.getElementById("settings-form");
-const hubUrl = document.getElementById("hub-url");
+const approvalModeSelect = document.getElementById("approval-mode");
+const autoMinutesLabel = document.getElementById("auto-minutes-label");
+const autoMinutesSelect = document.getElementById("auto-minutes");
+const autoOffButton = document.getElementById("auto-off");
 const setupCard = document.getElementById("setup-check");
 const setupStatus = document.getElementById("setup-status");
 const setupList = document.getElementById("setup-list");
@@ -157,8 +160,10 @@ const CHECK_LABELS = {
 
 let setupExpanded = false;
 
+// approval_mode is a choice the person made (the mode chip shows it), not a fault: it must not
+// count as a step to fix or replace a real error such as "hub unreachable" with its advice.
 function failingChecks() {
-  return (state.diagnostics?.checks || []).filter((check) => !check.ok);
+  return (state.diagnostics?.checks || []).filter((check) => !check.ok && check.id !== "approval_mode");
 }
 
 // The specific recovery step for a failing check (by id), or the first failing
@@ -309,18 +314,21 @@ function renderSystemState() {
 }
 
 // Mode chip + chat banner. The hub reports approval_mode in /diagnostics; the panel
-// only displays it (changing it is not done from the panel yet).
+// shows it, and Settings can switch it to a limited Auto window or back.
 const MODE_CHIP = {
   look_only: ["Look only", "Look only: the assistant reads the model and cannot change it. Change in settings."],
   ask_first: ["Ask me first", "Ask me first: changes need your approval in this panel. Change in settings."],
-  auto: ["Auto: not recommended", "Auto: approvals are skipped. Not recommended. Change in settings."]
+  auto: ["Auto: not recommended", "Auto: approvals are skipped for a limited time. Switch back in settings."]
 };
 
 function renderMode() {
   const mode = state.diagnostics && state.diagnostics.approval_mode;
   const known = Object.prototype.hasOwnProperty.call(MODE_CHIP, mode) ? mode : null;
   modeChip.dataset.mode = known || "unknown";
-  modeChip.textContent = known ? MODE_CHIP[known][0] : "Mode unknown";
+  const left = known === "auto" ? autoMinutesLeft() : null;
+  modeChip.textContent = known
+    ? (left !== null ? `Auto: ${left} min left` : MODE_CHIP[known][0])
+    : "Mode unknown";
   modeChip.title = known ? MODE_CHIP[known][1] : "The hub has not reported its approval mode yet.";
   if (chat) {
     chat.setApprovalMode(known);
@@ -677,14 +685,63 @@ document.body.addEventListener("change", (event) => {
 
 severityFilter.addEventListener("change", renderFindings);
 
+approvalModeSelect.addEventListener("change", () => {
+  autoMinutesLabel.hidden = approvalModeSelect.value !== "auto";
+});
+
 settingsForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  postToHost("settings.save", {
-    hubUrl: hubUrl.value,
-    approvalMode: document.getElementById("approval-mode").value
-  });
-  addLog("Settings saved", hubUrl.value);
+  const wantAuto = approvalModeSelect.value === "auto";
+  const minutes = Number(autoMinutesSelect.value) || 30;
+  if (wantAuto && !window.confirm(
+    `Turn approvals OFF for ${minutes} minutes?
+
+While Auto is on, the assistant can change the model without ` +
+    `showing you a plan first. It switches back to "Ask me first" by itself.`
+  )) {
+    return;
+  }
+  postToHost("settings.save", { approvalMode: wantAuto ? "auto" : "ask_first", minutes });
+  addLog("Approval mode requested", wantAuto ? `Auto for ${minutes} minutes` : "Ask me first");
 });
+
+autoOffButton.addEventListener("click", () => {
+  approvalModeSelect.value = "ask_first";
+  autoMinutesLabel.hidden = true;
+  postToHost("settings.save", { approvalMode: "ask_first" });
+  addLog("Approval mode requested", "Ask me first");
+});
+
+// Auto is a time-limited window: keep the chip's countdown honest and, when it runs out,
+// ask the hub what is in force now instead of assuming.
+let autoTicker = null;
+function autoMinutesLeft() {
+  const at = state.diagnostics && state.diagnostics.auto_expires_at;
+  return at ? Math.max(0, Math.ceil((at * 1000 - Date.now()) / 60000)) : null;
+}
+function syncAutoControls() {
+  const mode = state.diagnostics && state.diagnostics.approval_mode;
+  const isAuto = mode === "auto";
+  autoOffButton.hidden = !isAuto;
+  if (mode === "auto" || mode === "ask_first") {
+    approvalModeSelect.value = mode;
+    autoMinutesLabel.hidden = mode !== "auto";
+  }
+  if (isAuto && !autoTicker) {
+    autoTicker = setInterval(() => {
+      if (autoMinutesLeft() === 0) {
+        clearInterval(autoTicker);
+        autoTicker = null;
+        requestDiagnostics();
+      } else {
+        renderMode();
+      }
+    }, 15000);
+  } else if (!isAuto && autoTicker) {
+    clearInterval(autoTicker);
+    autoTicker = null;
+  }
+}
 
 // Maps for the raw hub tool results the host forwards after a real MCP tool
 // call (see packages/revit-bridge-addin/src/UI/BridgePanel.xaml.cs's
@@ -1047,6 +1104,7 @@ if (window.chrome && window.chrome.webview) {
     if (event.data?.type === "diagnostics.updated") {
       state.diagnostics = event.data.diagnostics;
       renderMode();
+      syncAutoControls();
       renderSetup();
       renderSystemState();
       addLog("Setup check", failingChecks().length ? `${failingChecks().length} step(s) need attention` : "Ready");

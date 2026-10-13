@@ -177,3 +177,23 @@ def test_codex_resume_keeps_session_id_if_not_echoed(monkeypatch):
 
     assert result["session_id"] == "codex-session-1"
     assert "resume" in captured["args"]
+
+
+def test_cli_never_runs_in_the_hubs_own_working_directory(monkeypatch, tmp_path):
+    """Regression: from the bundled Python folder the CLI's MCP server failed to start (python311.dll
+    conflict), so the chat model had zero Revit tools and improvised."""
+    import os
+
+    monkeypatch.setattr(agent_bridge.config, "workspace_dir", tmp_path / "ws")
+    seen = []
+
+    def fake_run(args, **kwargs):
+        seen.append(kwargs.get("cwd"))
+        return subprocess.CompletedProcess(args, 0, stdout=json.dumps({"result": "ok", "session_id": "s"}), stderr="")
+
+    monkeypatch.setattr(agent_bridge.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(agent_bridge.subprocess, "run", fake_run)
+    monkeypatch.chdir(tmp_path)
+    agent_bridge.run_agent_turn("claude", "hello", None)
+    assert seen and seen[0] == str(tmp_path / "ws") and seen[0] != os.getcwd()
+    assert (tmp_path / "ws").is_dir()

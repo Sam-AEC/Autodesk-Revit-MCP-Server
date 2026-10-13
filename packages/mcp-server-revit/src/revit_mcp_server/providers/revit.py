@@ -1,3 +1,4 @@
+import re
 import contextlib
 import contextvars
 import logging
@@ -21,6 +22,9 @@ logger = logging.getLogger(__name__)
 # requests aimed at different Revit instances cannot see each other's choice.
 _BRIDGE_OVERRIDE: contextvars.ContextVar = contextvars.ContextVar("revit_bridge_override", default=None)
 
+
+
+_RAW_COMMAND_RE = re.compile(r"revit\.[a-z][a-z0-9_]{1,63}")
 
 class UnavailableBridge:
     def __init__(self, message: str) -> None:
@@ -94,7 +98,7 @@ class RevitProvider(AECProvider):
                 # effects, so fail closed and gate it.
                 "revit_reflect_get",
             }),
-            destructive={"revit_execute_python"},
+            destructive={"revit_execute_python", "revit_raw_command"},
         )
 
     def get_identity(self) -> str:
@@ -196,9 +200,27 @@ class RevitProvider(AECProvider):
                 return {"status": "unhealthy", "error": str(e)}
         return {"status": "healthy", "mode": "mock"}
 
+    def _list_commands(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        if self.mode != BridgeMode.bridge:
+            raise ValueError("revit_list_commands asks the live Revit add-in; it is not available in mock mode.")
+        listed = self._active_bridge().list_commands()
+        needle = str(arguments.get("contains") or "").lower()
+        want = arguments.get("mutating")
+        commands = [
+            {"command": c.get("name"), "mutating": bool(c.get("is_mutating"))}
+            for c in listed
+            if (not needle or needle in str(c.get("name", "")).lower())
+            and (want is None or bool(c.get("is_mutating")) == bool(want))
+        ]
+        commands.sort(key=lambda c: c["command"] or "")
+        return {"count": len(commands), "commands": commands}
+
     async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         # Check path parameters for workspace compliance
         self._assert_paths_in_workspace(arguments)
+
+        if name == "revit_list_commands":
+            return self._list_commands(arguments)
 
         if "." in name:
             # Legacy dot notation (e.g. "revit.health")
@@ -210,6 +232,12 @@ class RevitProvider(AECProvider):
             if normalized_name not in self._tool_mapping:
                 raise ValueError(f"Unknown Revit tool '{name}'")
             bridge_tool, payload_builder = self._tool_mapping[normalized_name]
+            if normalized_name == "revit_raw_command":
+                bridge_tool = str(arguments.get("command") or "")
+                if not _RAW_COMMAND_RE.fullmatch(bridge_tool):
+                    raise ValueError("revit_raw_command needs a command like 'revit.create_wall'.")
+                if self.mode != BridgeMode.bridge:
+                    raise ValueError("revit_raw_command talks to a live Revit add-in; it is not available in mock mode.")
             payload = payload_builder(arguments)
             if "request_id" in arguments and "request_id" not in payload:
                 payload["request_id"] = arguments["request_id"]
@@ -763,6 +791,8 @@ class RevitProvider(AECProvider):
                 },
             ),
             "revit_execute_python": ("revit.execute_python", lambda args: {"script": args.get("script")}),
+            # Direct mode: the real command name and payload come from the call itself (checked in execute_tool).
+            "revit_raw_command": ("", lambda args: dict(args.get("payload") or {})),
             "revit_change_element_type": (
                 "revit.change_element_type",
                 lambda args: {
@@ -1825,7 +1855,14 @@ class RevitProvider(AECProvider):
         ),
         ProviderTool(
             name="revit_invoke_method",
-            description="Invoke any Revit API method dynamically using Reflection",
+            description=(
+                "Advanced: call a public Revit API method by reflection. class_name is a type such as Wall "
+                "or Autodesk.Revit.DB.Wall. target_id is an element id (string) or an obj_N handle for an "
+                "instance method, and is omitted for a static method. arguments is a JSON array of numbers, "
+                "strings, booleans, {x, y, z} (converted to XYZ) or {\"type\": \"reference\", \"id\": \"<element id or obj_N>\"}. "
+                "use_transaction defaults to true (the call runs in its own transaction); set it to false for "
+                "a read-only call. For several related calls, revit_execute_python is the better tool."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1840,7 +1877,11 @@ class RevitProvider(AECProvider):
         ),
         ProviderTool(
             name="revit_reflect_get",
-            description="Get any Revit property value dynamically. Requires plan approval because a getter on an arbitrary object can have side effects.",
+            description=(
+                "Advanced: read a public property of a Revit object by reflection. target_id is an element id "
+                "(string) or an obj_N handle returned by an earlier call. Treated as a model change for approval "
+                "purposes, because a property getter on an arbitrary object can have side effects."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {"target_id": {"type": "string"}, "property_name": {"type": "string"}},
@@ -1849,7 +1890,10 @@ class RevitProvider(AECProvider):
         ),
         ProviderTool(
             name="revit_reflect_set",
-            description="Set any Revit property value dynamically",
+            description=(
+                "Advanced: set a public property of a Revit object by reflection. target_id is an element id "
+                "(string) or an obj_N handle. This changes the model; lengths are in Revit internal units (feet)."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {"target_id": {"type": "string"}, "property_name": {"type": "string"}, "value": {}},
@@ -1857,11 +1901,55 @@ class RevitProvider(AECProvider):
             },
         ),
         ProviderTool(
-            name="revit_execute_python",
-            description="Execute arbitrary Python/IronPython code inside Revit with broad access to the public Revit API.",
+            name="revit_list_commands",
+            description=(
+                "List the commands the open Revit add-in supports (for example revit.create_wall) and whether each "
+                "one changes the model. Use this before revit_raw_command or revit_execute_python. Read-only; "
+                "requires a live Revit connection."
+            ),
             inputSchema={
                 "type": "object",
-                "properties": {"script": {"type": "string", "description": "Python script to execute"}},
+                "properties": {
+                    "contains": {"type": "string", "description": "Only commands whose name contains this text, for example wall."},
+                    "mutating": {"type": "boolean", "description": "true: only commands that change the model; false: only read-only ones."},
+                },
+                "required": [],
+            },
+        ),
+        ProviderTool(
+            name="revit_raw_command",
+            description=(
+                "Advanced: send any Revit add-in command (for example revit.create_wall) with its native payload "
+                "directly to the open Revit session, bypassing the curated tool wrappers. Use revit_list_commands to "
+                "see what exists. Approval rules match revit_execute_python: refused in look-only mode, requires an "
+                "approved plan in ask-first mode, and runs immediately while the panel's timed Auto window is on. "
+                "Intended for prototyping; prefer a dedicated tool when one exists."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "Add-in command name, for example revit.create_wall."},
+                    "payload": {"type": "object", "description": "Native payload for that command (units are Revit internal feet)."},
+                },
+                "required": ["command"],
+            },
+        ),
+        ProviderTool(
+            name="revit_execute_python",
+            description=(
+                "Advanced: run IronPython 2.7 inside the open Revit session with full Revit API access. "
+                "Predefined variables: doc (active Document), uidoc, uiapp and app. Results are returned as "
+                "{success, output, error}; write output with print() or by setting __output__. "
+                "Reading the model needs no setup. To change it, open your own transaction: "
+                "t = Transaction(doc, 'name'); t.Start(); ...; t.Commit(). "
+                "Lengths are in Revit internal units (feet; divide millimetres by 304.8). "
+                "The script runs on Revit's user-interface thread and cannot be cancelled, so keep it short "
+                "(well under 20 seconds) and work from element ids rather than whole-model geometry. "
+                "Use revit_list_commands first: a dedicated command is safer when one exists."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {"script": {"type": "string", "description": "IronPython 2.7 source. Example: print(doc.Title)"}},
                 "required": ["script"],
             },
         ),

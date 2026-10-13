@@ -25,11 +25,21 @@ public class CommandQueue
 {
     private readonly ConcurrentQueue<CommandRequest> _queue = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<CommandResponse>> _pending = new();
+    // Ids that are queued or running right now. A client that times out and retries with the same
+    // request id must wait for that work, not queue a second copy of it: a heavy command queued three
+    // times ran three times in a row and froze Revit.
+    private readonly ConcurrentDictionary<string, byte> _inflight = new();
+
+    public int Count => _queue.Count;
 
     public void Enqueue(CommandRequest request)
     {
-        var tcs = new TaskCompletionSource<CommandResponse>();
-        _pending[request.RequestId] = tcs;
+        _pending.GetOrAdd(request.RequestId, _ => new TaskCompletionSource<CommandResponse>());
+        if (!_inflight.TryAdd(request.RequestId, 0))
+        {
+            return;
+        }
+
         _queue.Enqueue(request);
     }
 
@@ -38,8 +48,15 @@ public class CommandQueue
         return _queue.TryDequeue(out request);
     }
 
+    /// <summary>
+    /// False when nobody is waiting for this request any more (the HTTP call timed out and no retry
+    /// came). Such a request is dropped before it starts instead of running for nothing.
+    /// </summary>
+    public bool IsWanted(string requestId) => _pending.ContainsKey(requestId);
+
     public void Complete(string requestId, CommandResponse response)
     {
+        _inflight.TryRemove(requestId, out _);
         if (_pending.TryRemove(requestId, out var tcs))
         {
             tcs.SetResult(response);

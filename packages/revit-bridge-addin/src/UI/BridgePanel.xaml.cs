@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.Wpf;
 using RevitBridge.Bridge;
 using Serilog;
 
@@ -14,7 +15,10 @@ namespace RevitBridge.UI
 {
     public partial class BridgePanel : UserControl
     {
-        private bool _initialized;
+        private WebView2? _browser;
+        private bool _initializing;
+        private bool _browserReady;
+        private bool _isLoaded;
         private bool _pageReady;
         private readonly Queue<string> _pendingMessages = new Queue<string>();
         private string? _chatSessionId;
@@ -23,17 +27,82 @@ namespace RevitBridge.UI
         {
             InitializeComponent();
             FallbackLogo.Source = BrandMark.CreateImageSource();
-            Loaded += async (_, _) => await InitializeWebViewAsync();
+            Loaded += async (_, _) =>
+            {
+                _isLoaded = true;
+                await InitializeWebViewAsync();
+            };
+            // Revit re-parents / hides dockable panes, and WPF's WebView2 disposes itself
+            // when it is unloaded. A disposed control can't be reused, so the next Loaded
+            // builds a fresh one instead of trusting the old instance.
+            Unloaded += (_, _) =>
+            {
+                _isLoaded = false;
+                _browserReady = false;
+                _pageReady = false;
+            };
         }
 
-        private async Task InitializeWebViewAsync()
+        // CoreWebView2 throws once the control is disposed; treat that as "not available".
+        private CoreWebView2? Core
         {
-            if (_initialized)
+            get
+            {
+                try
+                {
+                    return _browser?.CoreWebView2;
+                }
+                catch (Exception)
+                {
+                    return null;
+                }
+            }
+        }
+
+        private WebView2 AttachNewBrowser()
+        {
+            if (_browser != null)
+            {
+                try
+                {
+                    BrowserHost.Children.Remove(_browser);
+                    _browser.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    Log.Debug(ex, "Previous WebView2 control was already disposed");
+                }
+            }
+
+            _browser = new WebView2();
+            BrowserHost.Children.Add(_browser);
+            return _browser;
+        }
+
+        private void ShowFallback(string message, bool canRetry)
+        {
+            BrowserHost.Visibility = Visibility.Collapsed;
+            Fallback.Visibility = Visibility.Visible;
+            FallbackMessage.Text = message;
+            RetryButton.Visibility = canRetry ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private async void OnRetryClick(object sender, RoutedEventArgs e)
+        {
+            Fallback.Visibility = Visibility.Collapsed;
+            BrowserHost.Visibility = Visibility.Visible;
+            await InitializeWebViewAsync();
+        }
+
+        private async Task InitializeWebViewAsync(int attempt = 1)
+        {
+            if (_initializing || _browserReady)
             {
                 return;
             }
 
-            _initialized = true;
+            _initializing = true;
+            var browser = AttachNewBrowser();
 
             try
             {
@@ -51,22 +120,53 @@ namespace RevitBridge.UI
                     browserExecutableFolder: null,
                     userDataFolder: userDataFolder);
 
-                await Browser.EnsureCoreWebView2Async(environment);
-                Browser.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
-                Browser.CoreWebView2.NavigationCompleted += (_, _) =>
+                await browser.EnsureCoreWebView2Async(environment);
+                var core = browser.CoreWebView2;
+                core.WebMessageReceived += OnWebMessageReceived;
+                core.NavigationCompleted += (_, _) =>
                 {
                     _pageReady = true;
                     PostHostStatus();
                     FlushPendingMessages();
                 };
-                LoadPanelApp();
+                _browserReady = true;
+                LoadPanelApp(browser);
+            }
+            catch (WebView2RuntimeNotFoundException ex)
+            {
+                Log.Warning(ex, "WebView2 runtime is not installed");
+                ShowFallback(
+                    "The Microsoft Edge WebView2 Runtime is not installed. Install the Evergreen runtime and restart Revit.",
+                    canRetry: true);
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "WebView2 panel runtime is unavailable");
-                Browser.Visibility = Visibility.Collapsed;
-                Fallback.Visibility = Visibility.Visible;
-                FallbackMessage.Text = "WebView2 runtime is unavailable. Install Microsoft Edge WebView2 Runtime and restart Revit.";
+                // The runtime is installed (a missing one throws WebView2RuntimeNotFoundException
+                // above). Anything else is a lifecycle or environment failure, e.g. the control
+                // being disposed while Revit re-docks the pane (0x8007139F). Log it in full.
+                Log.Warning(ex, "WebView2 panel failed to start (attempt {Attempt})", attempt);
+
+                if (!_isLoaded || !ReferenceEquals(browser, _browser))
+                {
+                    // Pane was unloaded mid-init; the next Loaded rebuilds the control.
+                    return;
+                }
+
+                if (attempt < 3)
+                {
+                    _initializing = false;
+                    await Task.Delay(500 * attempt);
+                    await InitializeWebViewAsync(attempt + 1);
+                    return;
+                }
+
+                ShowFallback(
+                    "The panel could not start: " + ex.Message + " Details are in %APPDATA%\\AECModelBridge\\Logs.",
+                    canRetry: true);
+            }
+            finally
+            {
+                _initializing = false;
             }
         }
 
@@ -185,6 +285,29 @@ namespace RevitBridge.UI
                     }
 
                     PostToPanel(new { type = "diagnostics.updated", diagnostics = diagnostics.Result });
+                    break;
+                }
+
+                case "settings.save":
+                {
+                    // Only the approval mode is a real setting: it goes to the hub, which keeps it
+                    // (signed, with an expiry) for every gate that shares the workspace. The panel
+                    // has already asked the person to confirm before sending "auto".
+                    var requested = root.TryGetProperty("approvalMode", out var modeEl) && modeEl.ValueKind == JsonValueKind.String
+                        ? modeEl.GetString()
+                        : null;
+                    var mode = requested == "auto" ? "auto" : "ask_first";
+                    var minutes = root.TryGetProperty("minutes", out var minEl) && minEl.ValueKind == JsonValueKind.Number && minEl.TryGetInt32(out var m)
+                        ? m
+                        : 30;
+                    var saved = await HubClient.SetApprovalModeAsync(mode, minutes);
+                    if (!saved.Ok)
+                    {
+                        PostToPanel(new { type = "tool.error", action = type, message = saved.Error });
+                        break;
+                    }
+
+                    PostToPanel(new { type = "diagnostics.updated", diagnostics = saved.Result });
                     break;
                 }
 
@@ -336,30 +459,32 @@ namespace RevitBridge.UI
                 isDarkTheme = IconGenerator.IsDarkTheme()
             });
 
-            Browser.CoreWebView2?.PostWebMessageAsJson(payload);
+            Core?.PostWebMessageAsJson(payload);
         }
 
         public void PostToPanel(object payload)
         {
             var json = JsonSerializer.Serialize(payload);
-            if (!_pageReady || Browser.CoreWebView2 == null)
+            var core = Core;
+            if (!_pageReady || core == null)
             {
                 _pendingMessages.Enqueue(json);
                 return;
             }
 
-            Browser.CoreWebView2.PostWebMessageAsJson(json);
+            core.PostWebMessageAsJson(json);
         }
 
         private void FlushPendingMessages()
         {
-            while (_pendingMessages.Count > 0 && Browser.CoreWebView2 != null)
+            var core = Core;
+            while (_pendingMessages.Count > 0 && core != null)
             {
-                Browser.CoreWebView2.PostWebMessageAsJson(_pendingMessages.Dequeue());
+                core.PostWebMessageAsJson(_pendingMessages.Dequeue());
             }
         }
 
-        private void LoadPanelApp()
+        private void LoadPanelApp(WebView2 browser)
         {
             // AppContext.BaseDirectory resolves to the host process's directory (Revit.exe,
             // under Program Files) for an add-in assembly Revit loads into its own process -
@@ -370,11 +495,11 @@ namespace RevitBridge.UI
             var panelPath = Path.Combine(assemblyDir, "panel", "index.html");
             if (File.Exists(panelPath))
             {
-                Browser.Source = new Uri(panelPath);
+                browser.Source = new Uri(panelPath);
                 return;
             }
 
-            Browser.NavigateToString(BuildShellHtml());
+            browser.NavigateToString(BuildShellHtml());
         }
 
         private static string BuildShellHtml()

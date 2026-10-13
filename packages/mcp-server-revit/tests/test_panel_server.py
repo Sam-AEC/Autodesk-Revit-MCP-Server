@@ -357,10 +357,17 @@ def test_diagnostics_reports_missing_revit_bridge(running_server, monkeypatch):
         ("auto", "Auto: approvals are skipped. Not recommended.", False),
     ],
 )
-def test_diagnostics_reports_approval_mode(running_server, monkeypatch, mode, note, ok):
-    monkeypatch.setattr(panel_server.config, "approval_mode", mode)
-    monkeypatch.setattr(panel_server.PanelRequestHandler, "approval_provider", None)
-    status, body = _get(running_server, "/diagnostics")
+def test_diagnostics_reports_approval_mode(tmp_path, mode, note, ok):
+    # Diagnostics report the mode the hub's own approval gate is in, not a separate config read.
+    server = build_server(port=0, workspace=WorkspaceMonitor([tmp_path]))
+    server.RequestHandlerClass.approval_provider.gate.approval_mode = mode
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, body = _get(server.server_address[1], "/diagnostics")
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
     assert status == 200
     assert body["approval_mode"] == mode
     assert body["approval_mode_note"] == note

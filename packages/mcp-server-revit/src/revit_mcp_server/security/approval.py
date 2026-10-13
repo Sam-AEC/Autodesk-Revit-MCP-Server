@@ -14,6 +14,7 @@ from typing import Dict, Any, Iterator, List, Optional
 from ..config import APPROVAL_MODES, config, normalize_approval_mode  # noqa: F401 (re-exported)
 from ..errors import BridgeError
 from . import proof as proof_mod
+from .approval_override import active_override
 
 logger = logging.getLogger(__name__)
 
@@ -168,17 +169,34 @@ def running_actions(plan: Dict[str, Any], now: Optional[datetime] = None) -> Lis
 class ApprovalGate:
     def __init__(self, workspace_dir: Path, approval_mode: str = config.approval_mode) -> None:
         self.workspace_dir = workspace_dir
+        self.override_token: Optional[str] = None  # tests; normally read from the panel token file
         self.approval_mode = approval_mode
         self.plans_dir = workspace_dir / "plans"
         self.plans_dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def approval_mode(self) -> str:
+        """The mode in force right now: the mode this process started with, unless the panel has
+        switched approvals to 'auto' for a limited time (see approval_override.py). The window
+        never relaxes look_only and ends by itself."""
+        if self._approval_mode == "ask_first" and active_override(self.workspace_dir, token=self.override_token):
+            return "auto"
         return self._approval_mode
 
     @approval_mode.setter
     def approval_mode(self, value: Any) -> None:
         self._approval_mode = normalize_approval_mode(value)
+
+    @property
+    def baseline_approval_mode(self) -> str:
+        """The mode this process started with, ignoring any temporary 'auto' window."""
+        return self._approval_mode
+
+    def auto_window(self) -> Optional[Dict[str, int]]:
+        """{"set_at", "expires_at"} while a temporary 'auto' window is in force, else None."""
+        if self._approval_mode == "ask_first":
+            return active_override(self.workspace_dir, token=self.override_token)
+        return None
 
     def refuse_if_look_only(self) -> None:
         """Raise when the mode is look_only. Called for every mutating tool, on every path."""

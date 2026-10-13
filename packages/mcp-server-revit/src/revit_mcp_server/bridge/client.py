@@ -91,6 +91,13 @@ class BridgeClient:
 
         raise BridgeError(f"Bridge request failed: {last_error}") from last_error
 
+    def list_commands(self) -> list[dict[str, Any]]:
+        """The add-in's command list: [{name, is_mutating, confirmation_required}]."""
+        try:
+            return list(self._get("/capabilities").get("tools", []))
+        except httpx.RequestError as e:
+            raise BridgeError(f"Bridge unreachable at {self.base_url}: {e}") from e
+
     def send_tool(self, tool_name: str, payload: dict) -> dict:
         """Legacy method for backward compatibility."""
         return self.call_tool(tool_name, payload)

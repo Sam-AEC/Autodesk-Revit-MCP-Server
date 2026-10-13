@@ -118,3 +118,25 @@ def test_addin_workspace_resolver_mirrors_python_default():
         text = (root / name).read_text(encoding="utf-8")
         assert "WorkspaceDirectory." in text
         assert 'GetEnvironmentVariable("MCP_REVIT_WORKSPACE_DIR")' not in text
+
+
+def test_missing_workspace_folder_is_created_instead_of_failing_import(tmp_path, monkeypatch):
+    """Regression: the hub died on import (and logged nothing) when the default workspace did not exist yet."""
+    from revit_mcp_server.config import Config
+
+    ws = tmp_path / "Documents" / "AEC Model Bridge"
+    monkeypatch.setenv("MCP_REVIT_WORKSPACE_DIR", str(ws))
+    monkeypatch.setenv("MCP_REVIT_ALLOWED_DIRECTORIES", str(ws))
+    cfg = Config()
+    assert ws.is_dir() and cfg.allowed_directories == [ws]
+
+
+def test_other_missing_allowed_directories_still_fail(tmp_path, monkeypatch):
+    from pydantic import ValidationError
+    from revit_mcp_server.config import Config
+
+    ws = tmp_path / "ws"
+    monkeypatch.setenv("MCP_REVIT_WORKSPACE_DIR", str(ws))
+    monkeypatch.setenv("MCP_REVIT_ALLOWED_DIRECTORIES", f"{ws};{tmp_path / 'elsewhere'}")
+    with pytest.raises(ValidationError):
+        Config()

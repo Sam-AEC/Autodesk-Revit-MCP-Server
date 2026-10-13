@@ -8,7 +8,7 @@
              SnapsToDevicePixels="True"
              FontFamily="Segoe UI">
     <Grid Background="#F2F5F8">
-        <wv2:WebView2 x:Name="Browser" />
+        <Grid x:Name="BrowserHost" />
 
         <Border x:Name="Fallback"
                 Visibility="Collapsed"
@@ -27,6 +27,13 @@
                            LineHeight="20"
                            TextWrapping="Wrap"
                            Foreground="#5B6676" />
+                <Button x:Name="RetryButton"
+                        Content="Retry"
+                        Visibility="Collapsed"
+                        HorizontalAlignment="Left"
+                        Padding="14,5"
+                        Margin="0,14,0,0"
+                        Click="OnRetryClick" />
             </StackPanel>
         </Border>
     </Grid>

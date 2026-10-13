@@ -191,6 +191,12 @@ def _hub_tools(provider):
     return {t.name: t for t in provider.get_capabilities()}
 
 
+# Tools the hub answers itself instead of forwarding one fixed add-in command: revit_raw_command forwards
+# whatever command the caller names (validated at call time, see tests/test_raw_command.py) and
+# revit_list_commands reads the add-in's own command list.
+LOCALLY_HANDLED = frozenset({"revit_raw_command", "revit_list_commands"})
+
+
 # --------------------------------------------------------------------------- #
 # Sanity: the parser really sees the add-ins
 # --------------------------------------------------------------------------- #
@@ -229,14 +235,14 @@ def test_no_command_declared_twice(surfaces, provider):
 def test_every_forwarded_command_exists_in_addin(surfaces, provider):
     commands, prov = surfaces[provider]
     catalog = {c["name"] for c in commands}
-    dangling = {tool: cmd for tool, (cmd, _) in prov._tool_mapping.items() if cmd not in catalog}
+    dangling = {tool: cmd for tool, (cmd, _) in prov._tool_mapping.items() if cmd not in catalog and tool not in LOCALLY_HANDLED}
     assert not dangling, f"{provider} hub forwards to add-in commands that do not exist: {dangling}"
 
 
 @pytest.mark.parametrize("provider", ["revit", "navisworks"])
 def test_every_hub_tool_has_a_mapping(surfaces, provider):
     _, prov = surfaces[provider]
-    unmapped = sorted(set(_hub_tools(prov)) - set(prov._tool_mapping))
+    unmapped = sorted(set(_hub_tools(prov)) - set(prov._tool_mapping) - LOCALLY_HANDLED)
     stale = sorted(set(prov._tool_mapping) - set(_hub_tools(prov)))
     assert not unmapped, f"{provider} tools with no add-in mapping: {unmapped}"
     assert not stale, f"{provider} mappings with no declared tool: {stale}"

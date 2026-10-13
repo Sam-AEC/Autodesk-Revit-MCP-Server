@@ -28,7 +28,7 @@ public sealed class PanelHubLauncher
 {
     private const int HealthCheckTimeoutMs = 800;
     private const int PostLaunchPollIntervalMs = 500;
-    private const int PostLaunchMaxAttempts = 10;
+    private const int PostLaunchMaxAttempts = 40; // cold start of the bundled Python hub takes ~6 s
 
     private static readonly HttpClient HealthClient = new HttpClient { Timeout = TimeSpan.FromMilliseconds(HealthCheckTimeoutMs) };
 
@@ -82,10 +82,12 @@ public sealed class PanelHubLauncher
                 Arguments = "-m revit_mcp_server.panel_server",
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                // Do NOT redirect stdout/stderr: redirected but unread pipes deadlock
-                // once the subprocess writes more than ~4KB (the pipe buffer). The hub
-                // logs at startup so this threshold is reachable. Output is discarded
-                // anyway — the health-poll loop is the correct readiness signal (H4 fix).
+                // Output is redirected so a crash on startup (a traceback before the hub's own
+                // log file exists) is not lost, but it is ALWAYS drained: PumpOutput keeps
+                // reading after its size cap, because unread pipes deadlock the subprocess once
+                // it writes more than ~4KB. The health poll below is still the readiness signal.
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
             };
 
             // Config() (config.py) requires MCP_REVIT_WORKSPACE_DIR and
@@ -99,7 +101,29 @@ public sealed class PanelHubLauncher
             SetEnvironmentDefault(startInfo, "MCP_REVIT_WORKSPACE_DIR", defaultWorkspace);
             SetEnvironmentDefault(startInfo, "MCP_REVIT_ALLOWED_DIRECTORIES", defaultWorkspace);
 
+            // The hub refuses to start if its workspace folder does not exist, and the default
+            // (~/Documents/AEC Model Bridge) does not exist on a fresh install or when Documents
+            // is redirected (OneDrive). Create it here rather than let the hub die unseen.
+            var workspace = startInfo.EnvironmentVariables["MCP_REVIT_WORKSPACE_DIR"];
+            if (!string.IsNullOrWhiteSpace(workspace))
+            {
+                try
+                {
+                    System.IO.Directory.CreateDirectory(workspace);
+                    // The hub, and every CLI and MCP server it starts, run from the workspace: a plain
+                    // writable folder. Not Revit's install folder (its own DLLs), and NOT the bundled
+                    // Python folder: from there a second Python on PATH loads that folder's
+                    // python311.dll and the MCP server fails to start, leaving the panel chat with no tools.
+                    startInfo.WorkingDirectory = workspace;
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Could not create the AEC Model Bridge workspace folder {Workspace}", workspace);
+                }
+            }
+
             _launchedProcess = Process.Start(startInfo);
+            PumpOutput(_launchedProcess);
             Log.Information("Launched panel hub via '{Interpreter} -m revit_mcp_server.panel_server' (pid {Pid})",
                 interpreter, _launchedProcess?.Id);
         }
@@ -148,6 +172,71 @@ public sealed class PanelHubLauncher
         {
             Log.Warning(ex, "Could not check the panel hub token file");
         }
+    }
+
+    private const long LaunchLogCapBytes = 64 * 1024;
+
+    /// <summary>
+    /// Copies the hub's stdout/stderr to %APPDATA%\AECModelBridge\Logs\panel-hub-launch.log (first 64 KB,
+    /// truncated per launch) and then keeps draining and discarding, so the pipes never fill.
+    /// </summary>
+    private static void PumpOutput(Process? process)
+    {
+        if (process == null)
+        {
+            return;
+        }
+
+        System.IO.StreamWriter? writer = null;
+        long written = 0;
+        var gate = new object();
+        try
+        {
+            var logPath = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "AECModelBridge", "Logs", "panel-hub-launch.log");
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(logPath)!);
+            writer = new System.IO.StreamWriter(
+                new System.IO.FileStream(logPath, System.IO.FileMode.Create, System.IO.FileAccess.Write, System.IO.FileShare.ReadWrite))
+            {
+                AutoFlush = true,
+            };
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Could not open the panel hub launch log; hub output will be discarded");
+        }
+
+        DataReceivedEventHandler handler = (_, e) =>
+        {
+            if (e.Data == null)
+            {
+                return;
+            }
+
+            lock (gate)
+            {
+                if (writer == null || written >= LaunchLogCapBytes)
+                {
+                    return;
+                }
+
+                try
+                {
+                    writer.WriteLine(e.Data);
+                    written += e.Data.Length + 2;
+                }
+                catch (System.IO.IOException)
+                {
+                    writer = null;
+                }
+            }
+        };
+
+        process.OutputDataReceived += handler;
+        process.ErrorDataReceived += handler;
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
     }
 
     private static void SetEnvironmentDefault(ProcessStartInfo startInfo, string name, string defaultValue)

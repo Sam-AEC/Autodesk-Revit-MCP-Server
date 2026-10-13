@@ -8,6 +8,9 @@ public class RevitCommandExecutor : IExternalEventHandler
 {
     private readonly CommandQueue _queue;
 
+    /// <summary>Set by App after the event is created, so the executor can ask Revit for another turn.</summary>
+    public ExternalEvent? Event { get; set; }
+
     public RevitCommandExecutor(CommandQueue queue)
     {
         _queue = queue;
@@ -15,40 +18,62 @@ public class RevitCommandExecutor : IExternalEventHandler
 
     public void Execute(UIApplication app)
     {
-        while (_queue.TryDequeue(out var request))
+        // One request per turn. Looping over the whole queue inside a single Execute kept Revit's
+        // UI thread busy until every queued request finished; now Revit processes its own messages
+        // between requests, and we ask for another turn if more are waiting.
+        try
         {
-            if (request == null) continue;
-
-            try
+            while (_queue.TryDequeue(out var request))
             {
-                Log.Information("Executing {Tool} request {RequestId}", request.Tool, request.RequestId);
+                if (request == null) continue;
 
-                var result = BridgeCommandFactory.Execute(app, request.Tool, request.Payload);
-
-                var response = new CommandResponse
+                if (!_queue.IsWanted(request.RequestId))
                 {
-                    Status = "ok",
-                    Tool = request.Tool,
-                    Result = result
-                };
+                    Log.Information("Skipping {Tool} request {RequestId}: the caller gave up waiting for it", request.Tool, request.RequestId);
+                    _queue.Complete(request.RequestId, new CommandResponse { Status = "error", Tool = request.Tool, Message = "Abandoned before it started" });
+                    continue;
+                }
 
-                _queue.Complete(request.RequestId, response);
-                Log.Information("Completed {Tool} request {RequestId}", request.Tool, request.RequestId);
+                RunOne(app, request);
+                break;
             }
-            catch (Exception ex)
+        }
+        finally
+        {
+            if (_queue.Count > 0)
             {
-                Log.Error(ex, "Error executing {Tool} request {RequestId}", request.Tool, request.RequestId);
-
-                var errorResponse = new CommandResponse
-                {
-                    Status = "error",
-                    Tool = request.Tool,
-                    Message = ex.Message,
-                    StackTrace = ex.StackTrace
-                };
-
-                _queue.Complete(request.RequestId, errorResponse);
+                try { Event?.Raise(); } catch (Exception ex) { Log.Warning(ex, "Could not re-raise the command executor"); }
             }
+        }
+    }
+
+    private void RunOne(UIApplication app, CommandRequest request)
+    {
+        try
+        {
+            Log.Information("Executing {Tool} request {RequestId}", request.Tool, request.RequestId);
+
+            var result = BridgeCommandFactory.Execute(app, request.Tool, request.Payload);
+
+            _queue.Complete(request.RequestId, new CommandResponse
+            {
+                Status = "ok",
+                Tool = request.Tool,
+                Result = result
+            });
+            Log.Information("Completed {Tool} request {RequestId}", request.Tool, request.RequestId);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Error executing {Tool} request {RequestId}", request.Tool, request.RequestId);
+
+            _queue.Complete(request.RequestId, new CommandResponse
+            {
+                Status = "error",
+                Tool = request.Tool,
+                Message = ex.Message,
+                StackTrace = ex.StackTrace
+            });
         }
     }
 

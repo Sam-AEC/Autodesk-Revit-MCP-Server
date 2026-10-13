@@ -354,7 +354,7 @@ def test_visible_focus_ring_survives_forced_colors():
 
 def test_form_controls_have_accessible_names():
     for ident in (
-        "hub-url",
+        "auto-minutes",
         "approval-mode",
         "severity-filter",
     ):

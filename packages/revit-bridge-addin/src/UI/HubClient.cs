@@ -284,6 +284,46 @@ namespace RevitBridge.UI
             }
         }
 
+        /// <summary>
+        /// Switches the hub (and every gate sharing its workspace) to a limited "auto" window, or back
+        /// to ask-first. The hub answers with its fresh diagnostics payload on success. The caller must
+        /// have asked the person to confirm before passing "auto".
+        /// </summary>
+        public static async Task<HubResult> SetApprovalModeAsync(string mode, int minutes)
+        {
+            var isAuto = mode == "auto";
+            var requestBody = JsonSerializer.Serialize(new { mode, minutes, confirm = isAuto });
+
+            try
+            {
+                var response = await SendAsync(Client, HttpMethod.Post, "/approval-mode", requestBody).ConfigureAwait(false);
+                try
+                {
+                    using (var doc = JsonDocument.Parse(response.Body))
+                    {
+                        var root = doc.RootElement;
+                        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("checks", out _))
+                        {
+                            return HubResult.Success(root.Clone());
+                        }
+
+                        var error = root.ValueKind == JsonValueKind.Object && root.TryGetProperty("error", out var errEl)
+                            ? errEl.GetString()
+                            : null;
+                        return HubResult.Failure(error ?? $"Hub returned HTTP {response.Status}");
+                    }
+                }
+                catch (JsonException)
+                {
+                    return HubResult.Failure($"Hub returned an unparseable response (HTTP {response.Status})");
+                }
+            }
+            catch (Exception ex)
+            {
+                return HubResult.Failure(Describe(ex));
+            }
+        }
+
         public static async Task<ProvidersResult> GetProvidersAsync()
         {
             try

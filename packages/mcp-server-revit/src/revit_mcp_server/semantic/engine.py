@@ -198,13 +198,13 @@ def _store_snapshot_file(workspace: Any, snapshot_id: str, source_path: Any) -> 
         shutil.copyfile(source_path, target)
 
 
-async def snapshot_take(workspace: Any, bridge_client_or_provider: Any = None) -> Snapshot:
+async def snapshot_take(workspace: Any, bridge_client_or_provider: Any = None, options: Any = None) -> Snapshot:
     from revit_mcp_server.config import BridgeMode, config
 
     live = config.mode != BridgeMode.mock
     if bridge_client_or_provider and hasattr(bridge_client_or_provider, "execute_tool"):
         try:
-            res = await bridge_client_or_provider.execute_tool("revit_extract_snapshot", {})
+            res = await bridge_client_or_provider.execute_tool("revit_extract_snapshot", dict(options or {}))
             if isinstance(res, dict) and "snapshot" in res:
                 return Snapshot(**res["snapshot"])
             if isinstance(res, dict) and res.get("snapshot_id") and res.get("path"):

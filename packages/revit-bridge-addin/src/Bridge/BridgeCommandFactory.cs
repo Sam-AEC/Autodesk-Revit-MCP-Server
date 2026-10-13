@@ -4513,6 +4513,70 @@ public static class BridgeCommandFactory
         };
     }
 
+    // Defaults keep a snapshot well inside the bridge's 30 s request limit. A big model is captured in
+    // scoped pieces (categories, max_elements), never as one unbounded pass on Revit's UI thread.
+    private const int SnapshotDefaultMaxElements = 5000;
+    private const int SnapshotDefaultBudgetMs = 20000;
+
+    private static int ReadSnapshotInt(JsonElement payload, string name, int fallback, int min, int max)
+    {
+        if (payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty(name, out var el)
+            && el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out var v))
+        {
+            return Math.Max(min, Math.Min(max, v));
+        }
+
+        return fallback;
+    }
+
+    private static List<BuiltInCategory> ReadSnapshotCategories(JsonElement payload, List<string> unknown)
+    {
+        var result = new List<BuiltInCategory>();
+        if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty("categories", out var arr)
+            || arr.ValueKind != JsonValueKind.Array)
+        {
+            return result;
+        }
+
+        foreach (var item in arr.EnumerateArray())
+        {
+            var name = item.ValueKind == JsonValueKind.String ? item.GetString() : null;
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            var key = name!.Trim();
+            if (!key.StartsWith("OST_", StringComparison.OrdinalIgnoreCase)) key = "OST_" + key;
+            if (Enum.TryParse(key, true, out BuiltInCategory bic)) result.Add(bic);
+            else unknown.Add(name);
+        }
+
+        return result;
+    }
+
+    // Area / volume / perimeter values are computed from geometry on first read. Reading them for every
+    // element of a large model is what made Revit stop responding (journal: "reducing faceting tolerance
+    // for volume/area computation"). Rooms/spaces keep theirs: those are cheap and the QA rules need them.
+    private static readonly HashSet<BuiltInParameter> SnapshotHeavyBuiltIns = new HashSet<BuiltInParameter>
+    {
+        BuiltInParameter.HOST_AREA_COMPUTED,
+        BuiltInParameter.HOST_VOLUME_COMPUTED,
+        BuiltInParameter.HOST_PERIMETER_COMPUTED,
+    };
+
+    private static bool IsHeavySnapshotParameter(Element elem, Parameter param)
+    {
+        if (param.StorageType != StorageType.Double || elem is Autodesk.Revit.DB.SpatialElement) return false;
+        try
+        {
+            var id = param.Id.Value;
+            if (id < 0 && id > int.MinValue && SnapshotHeavyBuiltIns.Contains((BuiltInParameter)(int)id)) return true;
+            var dataType = param.Definition.GetDataType();
+            return dataType == SpecTypeId.Area || dataType == SpecTypeId.Volume;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     [BridgeCommand("revit.extract_snapshot", IsMutating = false)]
     private static object ExecuteExtractSnapshot(UIApplication app, JsonElement payload)
     {
@@ -4520,9 +4584,14 @@ public static class BridgeCommandFactory
         if (doc == null)
             throw new InvalidOperationException("No active document");
 
-        bool dirtyOnly = payload.ValueKind == JsonValueKind.Object && 
-                         payload.TryGetProperty("dirty_only", out var dirtyProp) && 
-                         dirtyProp.GetBoolean();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        bool dirtyOnly = payload.ValueKind == JsonValueKind.Object &&
+                         payload.TryGetProperty("dirty_only", out var dirtyProp) &&
+                         dirtyProp.ValueKind == JsonValueKind.True;
+        var maxElements = ReadSnapshotInt(payload, "max_elements", SnapshotDefaultMaxElements, 1, 200000);
+        var budgetMs = ReadSnapshotInt(payload, "time_budget_ms", SnapshotDefaultBudgetMs, 1000, 25000);
+        var unknownCategories = new List<string>();
+        var categories = ReadSnapshotCategories(payload, unknownCategories);
         string snapshotId = Guid.NewGuid().ToString("N");
 
         var workspaceDir = WorkspaceDirectory.Resolve();
@@ -4530,7 +4599,8 @@ public static class BridgeCommandFactory
         Directory.CreateDirectory(snapshotDir);
         var snapshotPath = Path.Combine(snapshotDir, $"{snapshotId}.json");
 
-        var elementsToExtract = new List<Element>();
+        // Ids first: no element objects are built until they are actually written.
+        var idsToExtract = new List<ElementId>();
         var dirtyIds = DocumentDirtyTracker.GetDirtyUniqueIds();
 
         if (dirtyOnly)
@@ -4541,44 +4611,46 @@ public static class BridgeCommandFactory
                 try
                 {
                     var elem = doc.GetElement(uid);
-                    if (elem != null) elementsToExtract.Add(elem);
+                    if (elem != null) idsToExtract.Add(elem.Id);
                 }
                 catch { }
             }
         }
+        else if (categories.Count > 0)
+        {
+            idsToExtract.AddRange(new FilteredElementCollector(doc)
+                .WhereElementIsNotElementType()
+                .WherePasses(new ElementMulticategoryFilter(categories))
+                .ToElementIds());
+        }
         else
         {
-            var classes = new[]
+            var classes = new List<Type>
             {
                 typeof(FamilyInstance), typeof(Wall), typeof(Floor), typeof(RoofBase),
                 typeof(Level), typeof(Grid), typeof(ViewSheet), typeof(ViewDrafting)
             };
-
-            foreach (var type in classes)
-            {
-                try
-                {
-                    var collector = new FilteredElementCollector(doc)
-                        .OfClass(type)
-                        .WhereElementIsNotElementType();
-                    elementsToExtract.AddRange(collector);
-                }
-                catch { }
-            }
-
-            try
-            {
-                var roomCollector = new FilteredElementCollector(doc)
-                    .OfCategory(BuiltInCategory.OST_Rooms)
-                    .WhereElementIsNotElementType();
-                elementsToExtract.AddRange(roomCollector);
-            }
-            catch { }
+            var classFilter = new ElementMulticlassFilter(classes);
+            var roomFilter = new ElementCategoryFilter(BuiltInCategory.OST_Rooms);
+            idsToExtract.AddRange(new FilteredElementCollector(doc)
+                .WhereElementIsNotElementType()
+                .WherePasses(new LogicalOrFilter(classFilter, roomFilter))
+                .ToElementIds());
         }
 
+        var totalCandidates = idsToExtract.Count;
+        var truncated = false;
+        var skippedHeavy = 0;
         var elementRecords = new List<object>();
-        foreach (var elem in elementsToExtract)
+        foreach (var id in idsToExtract)
         {
+            if (elementRecords.Count >= maxElements || clock.ElapsedMilliseconds > budgetMs)
+            {
+                truncated = true;
+                break;
+            }
+
+            var elem = doc.GetElement(id);
             if (elem == null || string.IsNullOrEmpty(elem.UniqueId)) continue;
 
             Element? typeElem = null;
@@ -4587,30 +4659,30 @@ public static class BridgeCommandFactory
             var paramsDict = new Dictionary<string, object>();
             foreach (Parameter param in elem.Parameters)
             {
-                if (param.HasValue)
-                {
-                    object val = param.StorageType switch
-                    {
-                        StorageType.Integer => param.AsInteger(),
-                        StorageType.Double => param.AsDouble(),
-                        StorageType.String => param.AsString() ?? string.Empty,
-                        StorageType.ElementId => param.AsElementId().Value.ToString(),
-                        _ => string.Empty
-                    };
+                if (!param.HasValue) continue;
+                if (IsHeavySnapshotParameter(elem, param)) { skippedHeavy++; continue; }
 
-                    paramsDict[param.Definition.Name] = new
-                    {
-                        v = val,
-                        storage = param.StorageType.ToString(),
-                        instance = true,
-                        @readonly = param.IsReadOnly
-                    };
-                }
+                object val = param.StorageType switch
+                {
+                    StorageType.Integer => param.AsInteger(),
+                    StorageType.Double => param.AsDouble(),
+                    StorageType.String => param.AsString() ?? string.Empty,
+                    StorageType.ElementId => param.AsElementId().Value.ToString(),
+                    _ => string.Empty
+                };
+
+                paramsDict[param.Definition.Name] = new
+                {
+                    v = val,
+                    storage = param.StorageType.ToString(),
+                    instance = true,
+                    @readonly = param.IsReadOnly
+                };
             }
 
             string catName = elem.Category?.BuiltInCategory.ToString() ?? elem.Category?.Name ?? "None";
 
-            var record = new
+            elementRecords.Add(new
             {
                 uid = elem.UniqueId,
                 amb_uid = elem.UniqueId,
@@ -4621,15 +4693,30 @@ public static class BridgeCommandFactory
                 family = typeElem?.get_Parameter(BuiltInParameter.ALL_MODEL_FAMILY_NAME)?.AsString() ?? typeElem?.Name ?? string.Empty,
                 type_name = typeElem?.Name ?? string.Empty,
                 level_uid = (elem as FamilyInstance)?.LevelId.Value.ToString() ?? (elem as Wall)?.LevelId.Value.ToString() ?? string.Empty,
+                // The QA rules (door_no_host, window_no_host) test host_uid. Without it every hosted door
+                // was reported as unhosted (1,006 false errors on a real model).
+                host_uid = (elem as FamilyInstance)?.Host?.UniqueId,
                 @params = paramsDict
-            };
-
-            elementRecords.Add(record);
+            });
         }
 
-        var deletedIdsList = dirtyOnly 
-            ? dirtyIds.Where(id => id.StartsWith("deleted:")).Select(id => id.Substring(8)).ToList() 
+        var deletedIdsList = dirtyOnly
+            ? dirtyIds.Where(id => id.StartsWith("deleted:")).Select(id => id.Substring(8)).ToList()
             : new List<string>();
+
+        // Coverage travels with the snapshot (in "counts") so a partial capture can never be mistaken
+        // for the whole model by the QA and parameter tools that read the file later.
+        var counts = new Dictionary<string, object>
+        {
+            ["candidates"] = totalCandidates,
+            ["captured"] = elementRecords.Count,
+            ["truncated"] = truncated,
+            ["max_elements"] = maxElements,
+            ["time_budget_ms"] = budgetMs,
+            ["elapsed_ms"] = clock.ElapsedMilliseconds,
+            ["skipped_area_volume_values"] = skippedHeavy,
+            ["categories"] = categories.Select(c => c.ToString()).ToList(),
+        };
 
         var snapshot = new
         {
@@ -4645,6 +4732,7 @@ public static class BridgeCommandFactory
                 units = "SI"
             },
             elements = elementRecords,
+            counts,
             deleted = deletedIdsList
         };
 
@@ -4656,7 +4744,16 @@ public static class BridgeCommandFactory
             snapshot_id = snapshotId,
             path = snapshotPath,
             element_count = elementRecords.Count,
-            deleted_count = deletedIdsList.Count
+            deleted_count = deletedIdsList.Count,
+            candidates = totalCandidates,
+            truncated,
+            elapsed_ms = clock.ElapsedMilliseconds,
+            unknown_categories = unknownCategories,
+            note = truncated
+                ? $"Partial snapshot: {elementRecords.Count} of {totalCandidates} elements captured within the " +
+                  $"{maxElements}-element / {budgetMs} ms limits. Pass 'categories' (for example [\"Doors\",\"Rooms\"]) " +
+                  "or raise max_elements to capture what the check needs."
+                : null
         };
     }
 

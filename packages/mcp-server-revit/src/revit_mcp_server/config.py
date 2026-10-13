@@ -104,9 +104,21 @@ class Config(BaseSettings):
         return normalize_approval_mode(value)
 
     @field_validator("allowed_directories", mode="before")
-    def split_directories(cls, value):
+    def split_directories(cls, value, info):
         if isinstance(value, str):
-            return [Path(p.strip()) for p in value.split(";") if p.strip()]
+            value = [Path(p.strip()) for p in value.split(";") if p.strip()]
+        # The workspace itself is created on first use. Without this, a fresh install whose
+        # workspace folder does not exist yet (for example ~/Documents when Documents is
+        # redirected) made Config() fail on import and the hub died before it logged anything.
+        # Any other allowed directory must already exist: the sandbox is never widened by guessing.
+        workspace = info.data.get("workspace_dir")
+        if workspace is not None and isinstance(value, list):
+            for entry in value:
+                if Path(entry) == Path(workspace):
+                    try:
+                        Path(entry).mkdir(parents=True, exist_ok=True)
+                    except OSError:
+                        pass  # DirectoryPath then reports the real problem
         return value
 
     @model_validator(mode="after")

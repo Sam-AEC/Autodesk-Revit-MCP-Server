@@ -31,6 +31,7 @@ namespace RevitBridge.Bridge
                 _queue = new CommandQueue();
                 var handler = new RevitCommandExecutor(_queue);
                 _externalEvent = ExternalEvent.Create(handler);
+                handler.Event = _externalEvent;
 
                 _server = new BridgeServer(_queue, _externalEvent);
                 Server = _server; // Expose statically

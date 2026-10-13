@@ -27,6 +27,7 @@ import tempfile
 import uuid
 from typing import Any, Dict, Optional
 
+from .config import config
 from .security.approval import HUMAN_ONLY_TOOLS
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,22 @@ def _mcp_server_command() -> list[str]:
     PanelHubLauncher.cs's own bare "python"/"py" convention (see its docstring
     on D-010) rather than inventing a different resolution strategy here."""
     return ["python", "-m", "revit_mcp_server.mcp_server"]
+
+
+def _neutral_cwd() -> str:
+    """Folder the CLI (and the MCP server it starts) runs in.
+
+    Never the hub's own working directory: when that was the bundled Python folder the CLI's
+    `python -m revit_mcp_server.mcp_server` picked up that folder's python311.dll and extension
+    modules ("Module use of python311.dll conflicts"), the MCP server failed to start, and the
+    model answered without any Revit tools. The workspace is a plain, writable folder that holds
+    no interpreter files; the temp folder is the fallback."""
+    try:
+        candidate = config.workspace_dir
+        candidate.mkdir(parents=True, exist_ok=True)
+        return str(candidate)
+    except OSError:
+        return tempfile.gettempdir()
 
 
 def run_agent_turn(provider: str, message: str, session_id: Optional[str]) -> Dict[str, Any]:
@@ -120,7 +137,7 @@ def _run_claude_turn(message: str, session_id: Optional[str]) -> Dict[str, Any]:
     env = {**os.environ, "MCP_TIMEOUT": "30000"}
 
     try:
-        proc = subprocess.run(args, capture_output=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=_TURN_TIMEOUT_SECONDS, env=env)
+        proc = subprocess.run(args, capture_output=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=_TURN_TIMEOUT_SECONDS, env=env, cwd=_neutral_cwd())
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"claude did not respond within {_TURN_TIMEOUT_SECONDS}s"}
     except OSError as e:
@@ -161,7 +178,7 @@ def _run_codex_turn(message: str, session_id: Optional[str]) -> Dict[str, Any]:
         base += ["--sandbox", "read-only", "--skip-git-repo-check", "--json", "-o", out_path, "--", message]
 
         try:
-            proc = subprocess.run(base, capture_output=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=_TURN_TIMEOUT_SECONDS)
+            proc = subprocess.run(base, capture_output=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=_TURN_TIMEOUT_SECONDS, cwd=_neutral_cwd())
         except subprocess.TimeoutExpired:
             return {"ok": False, "error": f"codex did not respond within {_TURN_TIMEOUT_SECONDS}s"}
         except OSError as e:
