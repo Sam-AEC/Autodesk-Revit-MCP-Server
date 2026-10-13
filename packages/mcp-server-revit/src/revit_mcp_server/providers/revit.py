@@ -15,6 +15,7 @@ from ..errors import BridgeError, WorkspaceViolation
 from ..legacy.tools import TOOL_HANDLERS
 from ..security.workspace import WorkspaceMonitor
 from .base import AECProvider, ProviderTool, enrich_mutation_metadata
+from .element_inspection import INSPECTION_SCHEMA, inspect_elements, validate_inspection
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +217,12 @@ class RevitProvider(AECProvider):
         return {"count": len(commands), "commands": commands}
 
     async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        if name == "revit_inspect_elements":
+            validate_inspection(arguments)
+            if self.mode != BridgeMode.bridge:
+                raise ValueError("revit_inspect_elements requires a live Revit connection; it is not available in mock mode.")
+            return await inspect_elements(self.execute_tool, arguments)
+
         # Check path parameters for workspace compliance
         self._assert_paths_in_workspace(arguments)
 
@@ -1940,7 +1947,9 @@ class RevitProvider(AECProvider):
                 "Advanced: run IronPython 2.7 inside the open Revit session with full Revit API access. "
                 "Predefined variables: doc (active Document), uidoc, uiapp and app. Results are returned as "
                 "{success, output, error}; write output with print() or by setting __output__. "
-                "Reading the model needs no setup. To change it, open your own transaction: "
+                "Every script, including read-only scripts, follows the approval rules: refused in look-only mode, "
+                "requires an approved plan in ask-first mode, and runs while the panel's timed Auto window is on. "
+                "To change the model, open your own transaction: "
                 "t = Transaction(doc, 'name'); t.Start(); ...; t.Commit(). "
                 "Lengths are in Revit internal units (feet; divide millimetres by 304.8). "
                 "The script runs on Revit's user-interface thread and cannot be cancelled, so keep it short "
@@ -2039,6 +2048,18 @@ class RevitProvider(AECProvider):
                 },
                 "required": ["old_family", "old_type", "new_family", "new_type"],
             },
+        ),
+        ProviderTool(
+            name="revit_inspect_elements",
+            description=(
+                "Read-only bounded inspection of explicit element IDs using existing dedicated document, geometry "
+                "and selected parameter reads. Up to 50 IDs, 20 exact parameter names, and 200 total element sections. "
+                "Reads run sequentially and return per-section outcomes and completeness. Geometry uses internal "
+                "feet (area ft^2, volume ft^3); parameter values retain the host's formatting. Document identity is "
+                "checked before and after; this is not an atomic snapshot. Requires a live Revit connection. "
+                "One MCP retrieval replaces repeated agent retrieval; internal Revit reads are unchanged."
+            ),
+            inputSchema=INSPECTION_SCHEMA,
         ),
         ProviderTool(
             name="revit_get_element_geometry",

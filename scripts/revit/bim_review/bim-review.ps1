@@ -27,7 +27,7 @@ $failed = ($report.output -split "`n" | Where-Object { $_ -match '^FAIL' }).Coun
 if (-not $NoImages) {
     New-Item -ItemType Directory -Force $OutDir | Out-Null
     foreach ($view in 'AMB_3D Villa', 'AMB_Plan_00 Ground', 'AMB_Plan_01 First Floor', 'AMB_Section A-A stair') {
-        $png = ($OutDir -replace '\', '\') + '\review'
+        $png = Join-Path $OutDir 'review'
         $py = @"
 def vname(v): return v.get_Parameter(BuiltInParameter.VIEW_NAME).AsString()
 vs = [v for v in FilteredElementCollector(doc).OfClass(View) if not v.IsTemplate and vname(v) == "$view"]

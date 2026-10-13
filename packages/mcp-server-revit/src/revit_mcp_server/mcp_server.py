@@ -11,7 +11,7 @@ from typing import Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import CallToolResult, Tool, TextContent
 
 from .errors import BridgeError
 from .registry_factory import build_registry
@@ -79,21 +79,17 @@ async def list_tools() -> list[Tool]:
     ]
 
 @app.call_tool()
-async def call_tool(name: str, arguments: Any) -> list[TextContent]:
+async def call_tool(name: str, arguments: Any) -> list[TextContent] | CallToolResult:
     """Execute a registered AEC tool."""
     if name in HUMAN_ONLY_TOOLS:
-        return [TextContent(
-            type="text",
-            text=(f"Error: '{name}' is not available to AI clients. A person approves, rejects and rolls back "
-                  "plans in the Revit panel or with the aec-model-bridge-approve command. Ask them to do it.")
-        )]
+        return _tool_error("human_only", (
+            f"Error: '{name}' is not available to AI clients. A person approves, rejects and rolls back "
+            "plans in the Revit panel or with the aec-model-bridge-approve command. Ask them to do it."
+        ))
 
     provider = registry.lookup_tool_provider(name)
     if not provider:
-        return [TextContent(
-            type="text",
-            text=f"Error: Unknown tool '{name}'"
-        )]
+        return _tool_error("unknown_tool", f"Error: Unknown tool '{name}'")
 
     # Approval gate: a mutating call consumes its approved action here, before it
     # runs, so it can run at most once even if it fails or is called concurrently.
@@ -101,10 +97,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
     try:
         claim = gate_before(registry, gate, name, arguments)
     except Exception as e:
-        return [TextContent(
-            type="text",
-            text=f"Approval Gate Blocked: {str(e)}"
-        )]
+        return _tool_error("approval_blocked", f"Approval Gate Blocked: {str(e)}")
 
     try:
         # Check if deferred execution is requested.
@@ -124,6 +117,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             async def run_tool_job(context=None):
                 try:
                     result = await provider.execute_tool(name, arguments)
+                    if _result_failed(result):
+                        raise BridgeError(f"Tool returned failure: {json.dumps(redact_data(result))}")
                 except BaseException as e:
                     gate_after(gate, claim, ok=False, error=str(e) or type(e).__name__)
                     raise
@@ -144,31 +139,45 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         except BaseException as e:
             gate_after(gate, claim, ok=False, error=str(e) or type(e).__name__)
             raise
-        gate_after(gate, claim, ok=True)
+        failed = _result_failed(result)
+        gate_after(gate, claim, ok=not failed, error="Tool returned an explicit failure" if failed else None)
 
         redacted_result = redact_data(result)
 
         # Format the response
-        response_text = f"✓ {name} executed successfully\n\n"
+        response_text = f"{name} returned a failure\n\n" if failed else f"✓ {name} executed successfully\n\n"
         response_text += f"Result:\n{json.dumps(redacted_result, indent=2)}"
 
+        if failed:
+            return CallToolResult(
+                isError=True, content=[TextContent(type="text", text=response_text)],
+                structuredContent=redacted_result,
+            )
         return [TextContent(type="text", text=response_text)]
 
     except BridgeError as e:
-        error_msg = f"Revit Bridge Error: {redact_data(str(e))}\n\n"
-        error_msg += "Make sure:\n"
-        error_msg += "1. Revit is running\n"
-        error_msg += "2. A project is open in Revit\n"
-        error_msg += "3. The AEC Model Bridge add-in is loaded\n"
-        error_msg += "4. The bridge is accessible at http://localhost:3000"
-
-        return [TextContent(type="text", text=error_msg)]
+        return _tool_error("bridge_error", f"Revit Bridge Error: {str(e)}")
 
     except Exception as e:
-        return [TextContent(
-            type="text",
-            text=f"Error: {redact_data(str(e))}"
-        )]
+        return _tool_error("execution_error", f"Error: {str(e)}")
+
+
+def _result_failed(result: Any) -> bool:
+    """Honor explicit provider failure signals without interpreting ordinary data."""
+    return isinstance(result, dict) and (
+        result.get("success") is False or result.get("ok") is False
+        or result.get("status") in ("error", "failed", "failure")
+    )
+
+
+def _tool_error(kind: str, message: str) -> CallToolResult:
+    """Preserve readable diagnostics while telling MCP clients the call failed."""
+    message = redact_data(message)
+    return CallToolResult(
+        isError=True,
+        content=[TextContent(type="text", text=message)],
+        structuredContent={"ok": False, "error": {"kind": kind, "message": message}},
+    )
 
 async def main():
     """Run the MCP server."""

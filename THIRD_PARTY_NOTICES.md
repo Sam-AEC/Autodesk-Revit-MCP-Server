@@ -5774,6 +5774,8 @@ Source: `<PackageReference>` items in `packages/*/*.csproj`. Only the package id
 |---|---|---|---|---|
 | IronPython | 2.7.12 | net48 only | see package | `packages/revit-bridge-addin/RevitBridge.csproj` |
 | IronPython | 3.4.1 | not net48 | see package | `packages/revit-bridge-addin/RevitBridge.csproj` |
+| IronPython.StdLib | 2.7.12 | net48 only | see package | `packages/revit-bridge-addin/RevitBridge.csproj` |
+| IronPython.StdLib | 3.4.1 | not net48 | see package | `packages/revit-bridge-addin/RevitBridge.csproj` |
 | Microsoft.AnalysisServices.AdomdClient.NetCore.retail.amd64 | 19.78.1.1 | all targets | see package | `packages/powerbi-bridge-tool/PowerBIBridge.csproj` |
 | Microsoft.Web.WebView2 | 1.0.2478.35 | all targets | see package | `packages/revit-bridge-addin/RevitBridge.csproj` |
 | Nice3point.Revit.Api.RevitAPI | $(RevitVersion).* | all targets | see package | `packages/revit-bridge-addin/RevitBridge.csproj` |

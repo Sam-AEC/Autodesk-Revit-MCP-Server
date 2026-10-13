@@ -65,8 +65,42 @@ The C# layer also references:
 - `System.Text.Json`
 - `IronPython` 2.7 on `net48`
 - `IronPython` 3.4.1 on the modern .NET targets used by Revit 2025-2027
+- `IronPython.StdLib` matching the engine version on each target
 
 The conditional IronPython dependency exists because the repo exposes an `execute_python` bridge command.
+
+The [official engine package](https://ironpython.net/download/) and
+[standard library package](https://www.nuget.org/packages/IronPython.StdLib/2.7.12)
+are separate. The matching standard-library packages copy their `Lib` files into
+the add-in build output. Existing packaging and installation scripts copy that
+output recursively, including the library.
+
+`PythonEngineFactory` loads the matching `IronPython.Modules.dll` beside the
+add-in before creating the engine, prioritizes the adjacent `Lib` directory,
+and verifies `json` and `time` imports. This matters in Revit because its
+application base is outside the add-in directory; IronPython's
+[built-in loader](https://github.com/IronLanguages/ironpython2/blob/ipy-2.7.12/Src/IronPython/Runtime/PythonContext.cs)
+otherwise silently continues without those modules when its assembly load fails. The
+`execute_python` response includes actual language-version and standard-library
+metadata after verification. Incomplete or mismatched dependencies return
+`success: false` with an actionable error.
+
+Revit 2024 runs Python 2.7 semantics; Revit 2025-2027 run Python 3.4 semantics
+through IronPython 3.4.1. The MCP server's bundled CPython is a separate process
+and its newer library is not used inside Revit. This change does not install
+pip packages or support CPython native extensions. Standard-library licenses
+are included in `LICENSES/IronPython-StdLib-2.7.txt` (upstream CPython 2.7
+license) and `LICENSES/IronPython-StdLib-3.4.txt` (from the official package);
+the applicable license is also copied beside the add-in binaries.
+
+Run `./scripts/test-ironpython-runtime.ps1` to build the 2024 and 2026 add-ins
+and exercise real IronPython against their packaged dependencies outside Revit.
+Use `-SkipBuild` for already-built outputs and `-ArtifactDirectory <new-path>`
+to retain compiled harnesses and logs. These checks cover import behavior and
+packaging, including an unrelated working directory and a missing library.
+They cannot prove Revit's assembly-loading behavior or which add-in is loaded;
+live acceptance still requires reloading the rebuilt add-in and repeating the
+imports through the approved `revit_execute_python` flow.
 
 ## Temporary Compile Exclusions
 

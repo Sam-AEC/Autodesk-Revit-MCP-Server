@@ -42,7 +42,8 @@ def server(tmp_path):
 
 
 def _call(name, args):
-    return asyncio.run(mcp_server.call_tool(name, args))[0].text
+    result = asyncio.run(mcp_server.call_tool(name, args))
+    return (result.content if hasattr(result, "content") else result)[0].text
 
 
 def _draft(approval, *action_args, tool=SET):

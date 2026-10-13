@@ -1152,7 +1152,8 @@ public static class BridgeCommandFactory
                 storage_type = p.StorageType.ToString(),
                 is_read_only = p.IsReadOnly,
                 is_shared = p.IsShared,
-                guid = p.GUID.ToString()
+                // Revit throws when GUID is read from a non-shared parameter.
+                guid = p.IsShared ? p.GUID.ToString() : null
             })
             .ToList();
 
@@ -2326,33 +2327,57 @@ public static class BridgeCommandFactory
 
         var viewId = payload.GetProperty("view_id").GetInt32();
         var outputPath = payload.GetProperty("output_path").GetString();
+        if (string.IsNullOrWhiteSpace(outputPath))
+            throw new ArgumentException("output_path must name an image file");
+
+        outputPath = System.IO.Path.GetFullPath(outputPath);
         var imageFormat = payload.TryGetProperty("format", out var fmt)
-            ? fmt.GetString()
-            : "PNG";
+            ? fmt.GetString()?.ToUpperInvariant()
+            : System.IO.Path.GetExtension(outputPath).TrimStart('.').ToUpperInvariant();
         var resolution = payload.TryGetProperty("resolution", out var res)
             ? res.GetInt32()
             : 150;
+        var hasWidth = payload.TryGetProperty("width", out var width) && width.ValueKind == JsonValueKind.Number;
+        var hasHeight = payload.TryGetProperty("height", out var height) && height.ValueKind == JsonValueKind.Number;
+        var pixelSize = hasWidth ? width.GetInt32() : hasHeight ? height.GetInt32() : resolution;
+
+        var fileType = imageFormat switch
+        {
+            "JPG" or "JPEG" => ImageFileType.JPEGLossless,
+            "BMP" => ImageFileType.BMP,
+            "TIF" or "TIFF" => ImageFileType.TIFF,
+            _ => ImageFileType.PNG
+        };
+        imageFormat = fileType == ImageFileType.PNG ? "PNG" : imageFormat;
 
         var view = doc.GetElement(new ElementId((long)viewId)) as View;
         if (view == null)
             throw new ArgumentException($"View with ID {viewId} not found");
 
+        var outputDirectory = System.IO.Path.GetDirectoryName(outputPath)!;
+        var filePrefix = System.IO.Path.GetFileNameWithoutExtension(outputPath);
+        if (string.IsNullOrWhiteSpace(filePrefix))
+            throw new ArgumentException("output_path must name an image file");
+        System.IO.Directory.CreateDirectory(outputDirectory);
+
+        // SetOfViews appends Revit's view name to this file prefix. Track changed
+        // artifacts so an old export cannot make a failed export look successful.
+        var existingFiles = System.IO.Directory.EnumerateFiles(outputDirectory, filePrefix + "*")
+            .ToDictionary(path => path, path =>
+            {
+                var file = new System.IO.FileInfo(path);
+                return (file.Length, file.LastWriteTimeUtc);
+            }, StringComparer.OrdinalIgnoreCase);
+
         var options = new ImageExportOptions
         {
             ZoomType = ZoomFitType.FitToPage,
-            PixelSize = resolution,
+            PixelSize = pixelSize,
             ImageResolution = ImageResolution.DPI_150,
-            FilePath = System.IO.Path.GetDirectoryName(outputPath),
-            FitDirection = FitDirectionType.Horizontal,
-            HLRandWFViewsFileType = imageFormat switch
-            {
-                "PNG" => ImageFileType.PNG,
-                "JPG" => ImageFileType.JPEGLossless,
-                "JPEG" => ImageFileType.JPEGLossless,
-                "BMP" => ImageFileType.BMP,
-                "TIFF" => ImageFileType.TIFF,
-                _ => ImageFileType.PNG
-            },
+            FilePath = System.IO.Path.Combine(outputDirectory, filePrefix),
+            FitDirection = hasHeight && !hasWidth ? FitDirectionType.Vertical : FitDirectionType.Horizontal,
+            HLRandWFViewsFileType = fileType,
+            ShadowViewsFileType = fileType,
             ExportRange = ExportRange.SetOfViews
         };
 
@@ -2366,20 +2391,33 @@ public static class BridgeCommandFactory
 
             trans.Commit();
 
-            var expectedFile = System.IO.Path.Combine(
-                System.IO.Path.GetDirectoryName(outputPath),
-                $"{SanitizeFileName(view.Name)}.{imageFormat.ToLower()}"
-            );
+            var exportedFiles = System.IO.Directory.EnumerateFiles(outputDirectory, filePrefix + "*")
+                .Select(path => new System.IO.FileInfo(path))
+                .Where(file => file.Length > 0 &&
+                    new[] { ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff" }
+                        .Contains(file.Extension, StringComparer.OrdinalIgnoreCase) &&
+                    (!existingFiles.TryGetValue(file.FullName, out var previous) ||
+                     previous.Length != file.Length || previous.LastWriteTimeUtc != file.LastWriteTimeUtc))
+                .OrderBy(file => file.FullName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var actualFile = exportedFiles.FirstOrDefault()?.FullName;
+            var exportSucceeded = exportedFiles.Count > 0;
 
             return new
             {
                 view_id = viewId,
                 view_name = view.Name,
-                expected_file_path = expectedFile,
+                requested_file_path = outputPath,
+                expected_file_path = actualFile,
+                file_path = actualFile,
+                file_paths = exportedFiles.Select(file => file.FullName).ToArray(),
+                file_size_bytes = exportedFiles.Sum(file => file.Length),
                 format = imageFormat,
-                resolution_dpi = resolution,
-                file_exists = System.IO.File.Exists(expectedFile),
-                status = "success"
+                resolution_dpi = 150,
+                pixel_size = pixelSize,
+                file_exists = exportSucceeded,
+                status = exportSucceeded ? "success" : "error",
+                error = exportSucceeded ? null : "Revit did not produce a new or updated image file."
             };
         }
     }
@@ -4114,10 +4152,12 @@ public static class BridgeCommandFactory
         string output = "";
         string error = "";
         bool success = false;
+        object? runtime = null;
 
         try
         {
-            var engine = Python.CreateEngine();
+            var engine = PythonEngineFactory.Create();
+            runtime = PythonEngineFactory.Describe(engine);
 
             // Capture stdout and stderr into memory streams
             engine.Runtime.IO.SetOutput(outputMs, Encoding.UTF8);
@@ -4161,7 +4201,7 @@ public static class BridgeCommandFactory
             success = false;
         }
 
-        return new { success, output, error };
+        return new { success, output, error, runtime };
     }
 
     [BridgeCommand("revit.change_element_type", IsMutating = true)]

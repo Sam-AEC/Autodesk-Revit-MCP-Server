@@ -55,9 +55,21 @@
     <!-- IronPython enables in-process scripting with broad public Revit API access. -->
     <PackageReference Include="IronPython" Version="2.7.12" Condition="'$(TargetFramework)'=='net48'" />
     <PackageReference Include="IronPython" Version="3.4.1" Condition="'$(TargetFramework)'!='net48'" />
+    <!-- The engine package does not contain Python's standard library. These
+         matching packages copy their Lib content into the add-in output. -->
+    <PackageReference Include="IronPython.StdLib" Version="2.7.12" Condition="'$(TargetFramework)'=='net48'" />
+    <PackageReference Include="IronPython.StdLib" Version="3.4.1" Condition="'$(TargetFramework)'!='net48'" />
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="..\..\LICENSES\IronPython-StdLib-2.7.txt" Condition="'$(TargetFramework)'=='net48'">
+      <Link>IronPython.StdLib.LICENSE.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\LICENSES\IronPython-StdLib-3.4.txt" Condition="'$(TargetFramework)'!='net48'">
+      <Link>IronPython.StdLib.LICENSE.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="..\..\panel\**\*">
       <Link>panel\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

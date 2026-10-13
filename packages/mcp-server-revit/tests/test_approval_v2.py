@@ -107,7 +107,8 @@ def test_mcp_call_of_a_hidden_tool_is_refused(server):
     _, approval = server
     plan = asyncio.run(approval.execute_tool("plan_actions", {"actions": [{"tool": SET, "arguments": _args()}]}))
     out = asyncio.run(mcp_server.call_tool("approve_plan", {"plan_id": plan["plan_id"]}))
-    assert "not available to AI clients" in out[0].text
+    assert out.isError
+    assert "not available to AI clients" in out.content[0].text
     assert approval.gate.load_plan(plan["plan_id"])["state"] == "pending"
 
 
@@ -142,7 +143,8 @@ def test_run_async_path_marks_the_action_executed(server):
     first, second = asyncio.run(go())
     assert "queued" in first[0].text
     assert gate.load_plan(pid)["state"] == "executed"
-    assert "Approval Gate Blocked" in second[0].text
+    assert second.isError
+    assert "Approval Gate Blocked" in second.content[0].text
 
 
 # ---- command-line approval -------------------------------------------------------

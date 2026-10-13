@@ -369,7 +369,7 @@ def mcp(tmp_path, monkeypatch):
 
 def _mcp_call(name, arguments):
     out = asyncio.run(mcp_server.call_tool(name, arguments))
-    return out[0].text
+    return (out.content if hasattr(out, "content") else out)[0].text
 
 
 def test_mcp_list_pending_plans_has_no_review_view_and_keeps_the_raw_review(mcp):

@@ -87,5 +87,13 @@ async def test_server_boots_lists_tools_and_answers_health(tmp_path: Path) -> No
             assert "revit_health executed successfully" in text
             payload = json.loads(text.split("Result:\n", 1)[1])
             assert payload["status"] == "healthy"
+
+            # Error text alone used to be normalized by the SDK as isError=False.
+            blocked = await session.call_tool("revit_execute_python", {"script": "print(doc.Title)"})
+            assert blocked.isError
+            assert blocked.structuredContent["error"]["kind"] == "approval_blocked"
+            unknown = await session.call_tool("missing_villa_tool", {})
+            assert unknown.isError
+            assert unknown.structuredContent["error"]["kind"] == "unknown_tool"
     # Leaving both context managers must terminate the child without hanging;
     # reaching this line is the "closes cleanly" assertion.

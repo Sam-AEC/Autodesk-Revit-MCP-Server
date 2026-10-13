@@ -1,0 +1,1028 @@
+[
+ {
+  "name": "AMB2_HRV",
+  "category": "mech",
+  "w": 0.9,
+  "d": 0.6,
+  "h": 0.5,
+  "ports": [
+   {
+    "pos": [
+     -0.47,
+     0,
+     0.25
+    ],
+    "dir": "-x",
+    "kind": "duct",
+    "system": "outdoor",
+    "dia_mm": 200,
+    "flow": "in",
+    "label": "outdoor intake"
+   },
+   {
+    "pos": [
+     0.47,
+     0,
+     0.25
+    ],
+    "dir": "+x",
+    "kind": "duct",
+    "system": "exhaust",
+    "dia_mm": 200,
+    "flow": "out",
+    "label": "exhaust"
+   },
+   {
+    "pos": [
+     0.25,
+     0,
+     0.52
+    ],
+    "dir": "+z",
+    "kind": "duct",
+    "system": "supply",
+    "dia_mm": 200,
+    "flow": "out",
+    "label": "supply to rooms"
+   },
+   {
+    "pos": [
+     -0.25,
+     0,
+     0.52
+    ],
+    "dir": "+z",
+    "kind": "duct",
+    "system": "return",
+    "dia_mm": 200,
+    "flow": "in",
+    "label": "extract from rooms"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_HeatPump",
+  "category": "mech",
+  "w": 0.6,
+  "d": 0.6,
+  "h": 1.8,
+  "ports": [
+   {
+    "pos": [
+     0.32,
+     -0.2,
+     1.6
+    ],
+    "dir": "+x",
+    "kind": "pipe",
+    "system": "hsup",
+    "dia_mm": 40,
+    "flow": "out",
+    "label": "to ground manifold"
+   },
+   {
+    "pos": [
+     0.32,
+     0,
+     1.6
+    ],
+    "dir": "+x",
+    "kind": "pipe",
+    "system": "hsup",
+    "dia_mm": 40,
+    "flow": "out",
+    "label": "to first-floor manifold"
+   },
+   {
+    "pos": [
+     0.32,
+     0.2,
+     1.6
+    ],
+    "dir": "+x",
+    "kind": "pipe",
+    "system": "hsup",
+    "dia_mm": 40,
+    "flow": "out",
+    "label": "to cylinder coil"
+   },
+   {
+    "pos": [
+     0.32,
+     -0.2,
+     1.2
+    ],
+    "dir": "+x",
+    "kind": "pipe",
+    "system": "hret",
+    "dia_mm": 40,
+    "flow": "in",
+    "label": "from ground manifold"
+   },
+   {
+    "pos": [
+     0.32,
+     0,
+     1.2
+    ],
+    "dir": "+x",
+    "kind": "pipe",
+    "system": "hret",
+    "dia_mm": 40,
+    "flow": "in",
+    "label": "from first-floor manifold"
+   },
+   {
+    "pos": [
+     0.32,
+     0.2,
+     1.2
+    ],
+    "dir": "+x",
+    "kind": "pipe",
+    "system": "hret",
+    "dia_mm": 40,
+    "flow": "in",
+    "label": "from cylinder coil"
+   },
+   {
+    "pos": [
+     0,
+     -0.32,
+     0.9
+    ],
+    "dir": "-y",
+    "kind": "elec",
+    "system": "power",
+    "label": "power"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_DHW_Cylinder",
+  "category": "mech",
+  "w": 0.6,
+  "d": 0.6,
+  "h": 1.6,
+  "ports": [
+   {
+    "pos": [
+     0.12,
+     0,
+     0.0
+    ],
+    "dir": "-z",
+    "kind": "pipe",
+    "system": "cold",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "cold"
+   },
+   {
+    "pos": [
+     0.12,
+     0,
+     1.62
+    ],
+    "dir": "+z",
+    "kind": "pipe",
+    "system": "hot",
+    "dia_mm": 32,
+    "flow": "out",
+    "label": "hot"
+   },
+   {
+    "pos": [
+     0.32,
+     -0.15,
+     1.0
+    ],
+    "dir": "+x",
+    "kind": "pipe",
+    "system": "hsup",
+    "dia_mm": 40,
+    "flow": "in",
+    "label": "hsup"
+   },
+   {
+    "pos": [
+     0.32,
+     0.15,
+     1.0
+    ],
+    "dir": "+x",
+    "kind": "pipe",
+    "system": "hret",
+    "dia_mm": 40,
+    "flow": "out",
+    "label": "hret"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_Manifold_G",
+  "category": "mech",
+  "w": 0.9,
+  "d": 0.12,
+  "h": 0.35,
+  "ports": [
+   {
+    "pos": [
+     -0.47,
+     0,
+     0.27
+    ],
+    "dir": "-x",
+    "kind": "pipe",
+    "system": "hsup",
+    "dia_mm": 40,
+    "flow": "in",
+    "label": "main supply"
+   },
+   {
+    "pos": [
+     -0.47,
+     0,
+     0.08
+    ],
+    "dir": "-x",
+    "kind": "pipe",
+    "system": "hret",
+    "dia_mm": 40,
+    "flow": "out",
+    "label": "main return"
+   },
+   {
+    "pos": [
+     -0.32,
+     0,
+     0.37
+    ],
+    "dir": "+z",
+    "kind": "pipe",
+    "system": "hsup",
+    "dia_mm": 32,
+    "flow": "out",
+    "label": "loop 1 supply"
+   },
+   {
+    "pos": [
+     -0.32,
+     0,
+     -0.02
+    ],
+    "dir": "-z",
+    "kind": "pipe",
+    "system": "hret",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "loop 1 return"
+   },
+   {
+    "pos": [
+     -0.16,
+     0,
+     0.37
+    ],
+    "dir": "+z",
+    "kind": "pipe",
+    "system": "hsup",
+    "dia_mm": 32,
+    "flow": "out",
+    "label": "loop 2 supply"
+   },
+   {
+    "pos": [
+     -0.16,
+     0,
+     -0.02
+    ],
+    "dir": "-z",
+    "kind": "pipe",
+    "system": "hret",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "loop 2 return"
+   },
+   {
+    "pos": [
+     0.0,
+     0,
+     0.37
+    ],
+    "dir": "+z",
+    "kind": "pipe",
+    "system": "hsup",
+    "dia_mm": 32,
+    "flow": "out",
+    "label": "loop 3 supply"
+   },
+   {
+    "pos": [
+     0.0,
+     0,
+     -0.02
+    ],
+    "dir": "-z",
+    "kind": "pipe",
+    "system": "hret",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "loop 3 return"
+   },
+   {
+    "pos": [
+     0.15999999999999998,
+     0,
+     0.37
+    ],
+    "dir": "+z",
+    "kind": "pipe",
+    "system": "hsup",
+    "dia_mm": 32,
+    "flow": "out",
+    "label": "loop 4 supply"
+   },
+   {
+    "pos": [
+     0.15999999999999998,
+     0,
+     -0.02
+    ],
+    "dir": "-z",
+    "kind": "pipe",
+    "system": "hret",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "loop 4 return"
+   },
+   {
+    "pos": [
+     0.32,
+     0,
+     0.37
+    ],
+    "dir": "+z",
+    "kind": "pipe",
+    "system": "hsup",
+    "dia_mm": 32,
+    "flow": "out",
+    "label": "loop 5 supply"
+   },
+   {
+    "pos": [
+     0.32,
+     0,
+     -0.02
+    ],
+    "dir": "-z",
+    "kind": "pipe",
+    "system": "hret",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "loop 5 return"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_Manifold_F",
+  "category": "mech",
+  "w": 0.9,
+  "d": 0.12,
+  "h": 0.35,
+  "ports": [
+   {
+    "pos": [
+     -0.47,
+     0,
+     0.27
+    ],
+    "dir": "-x",
+    "kind": "pipe",
+    "system": "hsup",
+    "dia_mm": 40,
+    "flow": "in",
+    "label": "main supply"
+   },
+   {
+    "pos": [
+     -0.47,
+     0,
+     0.08
+    ],
+    "dir": "-x",
+    "kind": "pipe",
+    "system": "hret",
+    "dia_mm": 40,
+    "flow": "out",
+    "label": "main return"
+   },
+   {
+    "pos": [
+     -0.32,
+     0,
+     0.37
+    ],
+    "dir": "+z",
+    "kind": "pipe",
+    "system": "hsup",
+    "dia_mm": 32,
+    "flow": "out",
+    "label": "loop 1 supply"
+   },
+   {
+    "pos": [
+     -0.32,
+     0,
+     -0.02
+    ],
+    "dir": "-z",
+    "kind": "pipe",
+    "system": "hret",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "loop 1 return"
+   },
+   {
+    "pos": [
+     -0.16,
+     0,
+     0.37
+    ],
+    "dir": "+z",
+    "kind": "pipe",
+    "system": "hsup",
+    "dia_mm": 32,
+    "flow": "out",
+    "label": "loop 2 supply"
+   },
+   {
+    "pos": [
+     -0.16,
+     0,
+     -0.02
+    ],
+    "dir": "-z",
+    "kind": "pipe",
+    "system": "hret",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "loop 2 return"
+   },
+   {
+    "pos": [
+     0.0,
+     0,
+     0.37
+    ],
+    "dir": "+z",
+    "kind": "pipe",
+    "system": "hsup",
+    "dia_mm": 32,
+    "flow": "out",
+    "label": "loop 3 supply"
+   },
+   {
+    "pos": [
+     0.0,
+     0,
+     -0.02
+    ],
+    "dir": "-z",
+    "kind": "pipe",
+    "system": "hret",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "loop 3 return"
+   },
+   {
+    "pos": [
+     0.15999999999999998,
+     0,
+     0.37
+    ],
+    "dir": "+z",
+    "kind": "pipe",
+    "system": "hsup",
+    "dia_mm": 32,
+    "flow": "out",
+    "label": "loop 4 supply"
+   },
+   {
+    "pos": [
+     0.15999999999999998,
+     0,
+     -0.02
+    ],
+    "dir": "-z",
+    "kind": "pipe",
+    "system": "hret",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "loop 4 return"
+   },
+   {
+    "pos": [
+     0.32,
+     0,
+     0.37
+    ],
+    "dir": "+z",
+    "kind": "pipe",
+    "system": "hsup",
+    "dia_mm": 32,
+    "flow": "out",
+    "label": "loop 5 supply"
+   },
+   {
+    "pos": [
+     0.32,
+     0,
+     -0.02
+    ],
+    "dir": "-z",
+    "kind": "pipe",
+    "system": "hret",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "loop 5 return"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_Panel",
+  "category": "elec_eq",
+  "w": 0.5,
+  "d": 0.15,
+  "h": 0.7,
+  "ports": [
+   {
+    "pos": [
+     0,
+     -0.09,
+     0.35
+    ],
+    "dir": "-y",
+    "kind": "elec",
+    "system": "power",
+    "label": "power"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_PF_WC",
+  "category": "plumb",
+  "w": 0.4,
+  "d": 0.7,
+  "h": 0.4,
+  "ports": [
+   {
+    "pos": [
+     0.1,
+     0.36,
+     0.25
+    ],
+    "dir": "+y",
+    "kind": "pipe",
+    "system": "cold",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "cold"
+   },
+   {
+    "pos": [
+     -0.1,
+     0.36,
+     0.15
+    ],
+    "dir": "+y",
+    "kind": "pipe",
+    "system": "san",
+    "dia_mm": 110,
+    "flow": "out",
+    "label": "san"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_PF_Basin",
+  "category": "plumb",
+  "w": 0.6,
+  "d": 0.45,
+  "h": 0.2,
+  "ports": [
+   {
+    "pos": [
+     -0.15,
+     0.245,
+     0.1
+    ],
+    "dir": "+y",
+    "kind": "pipe",
+    "system": "cold",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "cold"
+   },
+   {
+    "pos": [
+     0.15,
+     0.245,
+     0.1
+    ],
+    "dir": "+y",
+    "kind": "pipe",
+    "system": "hot",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "hot"
+   },
+   {
+    "pos": [
+     0,
+     0.245,
+     -0.05
+    ],
+    "dir": "+y",
+    "kind": "pipe",
+    "system": "san",
+    "dia_mm": 40,
+    "flow": "out",
+    "label": "san"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_PF_Sink",
+  "category": "plumb",
+  "w": 0.8,
+  "d": 0.5,
+  "h": 0.2,
+  "ports": [
+   {
+    "pos": [
+     -0.15,
+     0.27,
+     0.1
+    ],
+    "dir": "+y",
+    "kind": "pipe",
+    "system": "cold",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "cold"
+   },
+   {
+    "pos": [
+     0.15,
+     0.27,
+     0.1
+    ],
+    "dir": "+y",
+    "kind": "pipe",
+    "system": "hot",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "hot"
+   },
+   {
+    "pos": [
+     0,
+     0.27,
+     -0.05
+    ],
+    "dir": "+y",
+    "kind": "pipe",
+    "system": "san",
+    "dia_mm": 40,
+    "flow": "out",
+    "label": "san"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_PF_Shower",
+  "category": "plumb",
+  "w": 0.9,
+  "d": 0.9,
+  "h": 0.05,
+  "ports": [
+   {
+    "pos": [
+     -0.15,
+     0.47,
+     1.0
+    ],
+    "dir": "+y",
+    "kind": "pipe",
+    "system": "cold",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "cold"
+   },
+   {
+    "pos": [
+     0.15,
+     0.47,
+     1.0
+    ],
+    "dir": "+y",
+    "kind": "pipe",
+    "system": "hot",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "hot"
+   },
+   {
+    "pos": [
+     0,
+     0,
+     -0.02
+    ],
+    "dir": "-z",
+    "kind": "pipe",
+    "system": "san",
+    "dia_mm": 50,
+    "flow": "out",
+    "label": "san"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_PF_Bath",
+  "category": "plumb",
+  "w": 1.7,
+  "d": 0.75,
+  "h": 0.55,
+  "ports": [
+   {
+    "pos": [
+     0.87,
+     0.15,
+     0.45
+    ],
+    "dir": "+x",
+    "kind": "pipe",
+    "system": "cold",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "cold"
+   },
+   {
+    "pos": [
+     0.87,
+     -0.15,
+     0.45
+    ],
+    "dir": "+x",
+    "kind": "pipe",
+    "system": "hot",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "hot"
+   },
+   {
+    "pos": [
+     0.7,
+     0,
+     -0.02
+    ],
+    "dir": "-z",
+    "kind": "pipe",
+    "system": "san",
+    "dia_mm": 40,
+    "flow": "out",
+    "label": "san"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_Radiator",
+  "category": "mech",
+  "w": 1.0,
+  "d": 0.1,
+  "h": 0.6,
+  "ports": [
+   {
+    "pos": [
+     -0.52,
+     0,
+     0.5
+    ],
+    "dir": "-x",
+    "kind": "pipe",
+    "system": "hsup",
+    "dia_mm": 32,
+    "flow": "in",
+    "label": "hsup"
+   },
+   {
+    "pos": [
+     -0.52,
+     0,
+     0.1
+    ],
+    "dir": "-x",
+    "kind": "pipe",
+    "system": "hret",
+    "dia_mm": 32,
+    "flow": "out",
+    "label": "hret"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_AirTerminal_Supply",
+  "category": "air",
+  "w": 0.3,
+  "d": 0.3,
+  "h": 0.08,
+  "ports": [
+   {
+    "pos": [
+     0,
+     0,
+     0.1
+    ],
+    "dir": "+z",
+    "kind": "duct",
+    "system": "supply",
+    "dia_mm": 125,
+    "flow": "in",
+    "label": "supply"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_AirTerminal_Extract",
+  "category": "air",
+  "w": 0.3,
+  "d": 0.3,
+  "h": 0.08,
+  "ports": [
+   {
+    "pos": [
+     0,
+     0,
+     0.1
+    ],
+    "dir": "+z",
+    "kind": "duct",
+    "system": "return",
+    "dia_mm": 125,
+    "flow": "out",
+    "label": "return"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_Socket",
+  "category": "elec_fx",
+  "w": 0.08,
+  "d": 0.03,
+  "h": 0.08,
+  "ports": [
+   {
+    "pos": [
+     0,
+     -0.04,
+     0.04
+    ],
+    "dir": "-y",
+    "kind": "elec",
+    "system": "power",
+    "label": "power"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_Light",
+  "category": "light",
+  "w": 0.3,
+  "d": 0.3,
+  "h": 0.05,
+  "ports": [
+   {
+    "pos": [
+     0,
+     0,
+     0.07
+    ],
+    "dir": "+z",
+    "kind": "elec",
+    "system": "power",
+    "label": "power"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_WaterMain",
+  "category": "mech",
+  "w": 0.3,
+  "d": 0.2,
+  "h": 0.5,
+  "ports": [
+   {
+    "pos": [
+     0,
+     0,
+     0.52
+    ],
+    "dir": "+z",
+    "kind": "pipe",
+    "system": "cold",
+    "dia_mm": 32,
+    "flow": "out",
+    "label": "water main from meter"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_DrainOut",
+  "category": "plumb",
+  "w": 0.2,
+  "d": 0.2,
+  "h": 0.1,
+  "ports": [
+   {
+    "pos": [
+     0,
+     0,
+     0.12
+    ],
+    "dir": "+z",
+    "kind": "pipe",
+    "system": "san",
+    "dia_mm": 110,
+    "flow": "in",
+    "label": "to building drain"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_VentCap",
+  "category": "plumb",
+  "w": 0.2,
+  "d": 0.2,
+  "h": 0.1,
+  "ports": [
+   {
+    "pos": [
+     0,
+     0,
+     -0.02
+    ],
+    "dir": "-z",
+    "kind": "pipe",
+    "system": "vent",
+    "dia_mm": 75,
+    "flow": "in",
+    "label": "vent through roof"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_Louvre_Intake",
+  "category": "air",
+  "w": 0.4,
+  "d": 0.1,
+  "h": 0.4,
+  "ports": [
+   {
+    "pos": [
+     0,
+     -0.07,
+     0.2
+    ],
+    "dir": "-y",
+    "kind": "duct",
+    "system": "outdoor",
+    "dia_mm": 200,
+    "flow": "out",
+    "label": "outdoor air intake"
+   }
+  ]
+ },
+ {
+  "name": "AMB2_Louvre_Exhaust",
+  "category": "air",
+  "w": 0.4,
+  "d": 0.1,
+  "h": 0.4,
+  "ports": [
+   {
+    "pos": [
+     0,
+     -0.07,
+     0.2
+    ],
+    "dir": "-y",
+    "kind": "duct",
+    "system": "exhaust",
+    "dia_mm": 200,
+    "flow": "in",
+    "label": "exhaust to outdoors"
+   }
+  ]
+ }
+]
