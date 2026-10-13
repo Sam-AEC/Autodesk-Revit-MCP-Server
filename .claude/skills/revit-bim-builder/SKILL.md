@@ -43,6 +43,14 @@ defects and build the loop in.
   roll back anything else. A swallowed warning is still a defect: re-measure the warning count afterwards.
 - Floors keep Comments under a different parameter than walls: tag with the fallback in the prelude.
 - Bridge requests time out at 30 s. Keep a script under about 20 s; export one image per call.
+- Placing content: never type coordinates for a fixture from assumptions. A family's origin is not its centre, rotation is
+  about the origin, a bounding box includes hidden extent, and `FacingOrientation` means different things per family
+  (WC: points to the back; bed: sideways). Measure the real geometry (mesh/solid vertices), find the back/head from the
+  geometry, rotate, then move so the visible edge touches the wall face (`docs/recipes/villa/p7g_back_to_wall.py`).
+- Level-based families: the placement z is an offset FROM the level. Pass 0.
+- `get_BoundingBox`/geometry are `None` until `doc.Regenerate()` inside the transaction; calling it outside one raises.
+- Phase-indexed properties (`FromRoom`, `ToRoom`, `Room`) show as `indexer#` in IronPython: use `get_FromRoom(phase)`.
+- Findings catalogue and the reasoning behind each rule: `docs/bim-agent-findings.md`.
 
 ## Content
 Use families that exist in the model or the user's libraries (Heijmans `73_HB_` furniture, planting, structural

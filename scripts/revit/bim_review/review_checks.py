@@ -178,6 +178,72 @@ for sv in secs:
     check("PASS" if n_mine >= 15 and has_stair else "FAIL", "SECTION", "'%s' shows %d villa elements, stair visible: %s" % (sv.get_Parameter(BuiltInParameter.VIEW_NAME).AsString(), n_mine, has_stair))
 if not secs: check("FAIL", "SECTION", "no section view")
 
+# 14 fixtures against walls, the right way round (measured from geometry, because FacingOrientation means different
+#    things in different families: for the WC it points to the BACK, for beds it points sideways)
+_opts = Options(); _opts.ComputeReferences = False; _opts.DetailLevel = ViewDetailLevel.Fine
+def _verts(e):
+    out = []
+    for g in e.get_Geometry(_opts):
+        geoms = g.GetInstanceGeometry() if isinstance(g, GeometryInstance) else [g]
+        for s_ in geoms:
+            if isinstance(s_, Mesh):
+                for v_ in s_.Vertices: out.append((v_.X, v_.Y, v_.Z))
+            elif isinstance(s_, Solid) and s_.Volume > 1e-9:
+                for ed in s_.Edges:
+                    c_ = ed.AsCurve()
+                    for t_ in (0.0, 1.0):
+                        p_ = c_.Evaluate(t_, True); out.append((p_.X, p_.Y, p_.Z))
+    return out
+def _back(e, kind):
+    """(unit back direction (dx, dy), back-edge midpoint (x, y) in feet) or None"""
+    v = _verts(e)
+    if not v: return None
+    xs = [p[0] for p in v]; ys = [p[1] for p in v]
+    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+    ax = (x1 - x0) >= (y1 - y0)
+    lo = x0 if ax else y0; hi = x1 if ax else y1; span = hi - lo
+    low = [p for p in v if (p[0] if ax else p[1]) < lo + 0.15 * span]; high = [p for p in v if (p[0] if ax else p[1]) > hi - 0.15 * span]
+    if kind == "bed":
+        a = max([p[2] for p in low] or [0]); b = max([p[2] for p in high] or [0]); head_low = a > b
+    else:
+        wl = (max([(p[1] if ax else p[0]) for p in low] or [0]) - min([(p[1] if ax else p[0]) for p in low] or [0]))
+        wh = (max([(p[1] if ax else p[0]) for p in high] or [0]) - min([(p[1] if ax else p[0]) for p in high] or [0]))
+        head_low = wl > wh
+    if ax: d = (-1.0, 0.0) if head_low else (1.0, 0.0); mid = ((x0 if head_low else x1), (y0 + y1) / 2)
+    else:  d = (0.0, -1.0) if head_low else (0.0, 1.0); mid = ((x0 + x1) / 2, (y0 if head_low else y1))
+    return d, mid
+def _wall_behind(e, d, mid):
+    best = None
+    for w_ in walls:
+        lo_, hi_ = zrange_m(w_)
+        lv = doc.GetElement(e.LevelId); z0 = (lv.Elevation if lv is not None else 0) * FT
+        if not (lo_ <= z0 + 0.5 and hi_ >= z0 + 0.5): continue
+        c_ = w_.Location.Curve; pr = c_.Project(XYZ(mid[0], mid[1], c_.GetEndPoint(0).Z))
+        if pr is None: continue
+        vx, vy = pr.XYZPoint.X - mid[0], pr.XYZPoint.Y - mid[1]; dist = pr.Distance
+        if dist < 1e-6: gap = -w_.Width / 2; behind = True
+        else: behind = (vx * d[0] + vy * d[1]) / dist > 0.7; gap = dist - w_.Width / 2
+        if behind and (best is None or gap < best[0]): best = (gap, w_)
+    return best
+fix_bad = []; checked = 0; wrong_level = []
+for e in furn:
+    if not isinstance(e, FamilyInstance): continue
+    fam = e.Symbol.FamilyName
+    kind = "bed" if (fam.startswith("Bed") or fam == "AMB_Bed_King") else ("wc" if fam == "74_HB_Wandcloset" else None)
+    lv = doc.GetElement(e.LevelId)
+    if lv is not None:
+        lo_, hi_ = zrange_m(e)
+        if lo_ is not None and abs(lo_ - lv.Elevation * FT) > 0.35: wrong_level.append("%s id %d z %.2f vs level %.2f" % (fam[:18], e.Id.Value, lo_, lv.Elevation * FT))
+    if kind is None: continue
+    r_ = _back(e, kind)
+    if r_ is None: continue
+    checked += 1
+    nb = _wall_behind(e, r_[0], r_[1])
+    if nb is None: fix_bad.append("%s id %d: no wall behind its %s" % (fam[:16], e.Id.Value, "head" if kind == "bed" else "back"))
+    elif nb[0] * FT > 0.08 or nb[0] * FT < -0.05: fix_bad.append("%s id %d: %s is %.2f m from the wall behind it" % (fam[:16], e.Id.Value, "head" if kind == "bed" else "back", nb[0] * FT))
+check("PASS" if not wrong_level else "FAIL", "FIXTURE_LEVEL", "%d furniture/fixtures not standing on their level (z offset applied twice?) %s" % (len(wrong_level), wrong_level[:3]))
+check("PASS" if not fix_bad else "FAIL", "FIXTURE_BACK", "%d of %d beds/WCs checked: %d with the head/back not against a wall behind them %s" % (checked, checked, len(fix_bad), fix_bad[:4]))
+
 nf = len([r for r in RESULTS if r == "FAIL"]); npass = len([r for r in RESULTS if r == "PASS"])
 say("RESULT %d FAIL / %d PASS" % (nf, npass))
 __output__ = "\n".join(LOG)
