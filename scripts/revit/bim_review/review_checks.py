@@ -136,9 +136,17 @@ furn_cats = (int(BuiltInCategory.OST_Furniture), int(BuiltInCategory.OST_Plumbin
 furn = [e for e in VILLA if cat(e) in furn_cats]
 inroom = {}
 for f in furn:
+    r = None
     try:
-        r = f.Room if hasattr(f, "Room") else None
-    except Exception: r = None
+        if isinstance(f, FamilyInstance): r = f.get_Room(doc.GetElement(f.CreatedPhaseId))
+    except Exception:
+        r = None
+    if r is None:
+        try:
+            lp = f.Location.Point; lvl = doc.GetElement(f.LevelId)
+            r = doc.GetRoomAtPoint(XYZ(lp.X, lp.Y, (lvl.Elevation if lvl is not None else lp.Z) + 1.0))
+        except Exception:
+            r = None
     if r is not None: inroom[r.Id.Value] = inroom.get(r.Id.Value, 0) + 1
 unfurnished = [r.get_Parameter(BuiltInParameter.ROOM_NAME).AsString() for r in rooms if r.Id.Value not in inroom]
 check("PASS" if rooms and len(unfurnished) <= 1 else "FAIL", "FURNISHING", "%d furniture/fixture/planting elements ; %d of %d rooms empty %s" % (len(furn), len(unfurnished), len(rooms), unfurnished[:6]))

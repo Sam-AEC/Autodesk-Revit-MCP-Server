@@ -78,7 +78,9 @@ def level_named(name):
 TAG = "AMB_VILLA:"
 _CATS = (BuiltInCategory.OST_Walls, BuiltInCategory.OST_Floors, BuiltInCategory.OST_Roofs, BuiltInCategory.OST_Doors,
          BuiltInCategory.OST_Windows, BuiltInCategory.OST_Rooms, BuiltInCategory.OST_Ceilings, BuiltInCategory.OST_Stairs,
-         BuiltInCategory.OST_Columns, BuiltInCategory.OST_StructuralColumns)
+         BuiltInCategory.OST_Columns, BuiltInCategory.OST_StructuralColumns, BuiltInCategory.OST_StructuralFraming,
+         BuiltInCategory.OST_Furniture, BuiltInCategory.OST_PlumbingFixtures, BuiltInCategory.OST_Planting, BuiltInCategory.OST_Casework,
+         BuiltInCategory.OST_Site, BuiltInCategory.OST_SpecialityEquipment, BuiltInCategory.OST_ElectricalFixtures, BuiltInCategory.OST_Topography)
 
 def _comments_param(e):
     p = e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)

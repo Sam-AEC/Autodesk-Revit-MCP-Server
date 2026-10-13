@@ -4,7 +4,7 @@ say("purged %d earlier p3e elements" % purge(PH))
 L0, L1 = level_named("00 begane grond"), level_named("AMB_01 First Floor")
 st_type = find_type(StairsType, "300_27_beton trap")
 say("stairs type found: %s" % (st_type is not None))
-X = 2.3; Y0, Y1 = -4.2, -0.3           # run centreline (villa-local metres): 3.9 m = 17 treads of 230 mm -> 18 risers of ~178 mm = 3.2 m
+X = 2.3; Y0, Y1 = -3.4, 0.5           # run centreline (villa-local metres): 3.9 m = 17 treads of 230 mm -> 18 risers of ~178 mm = 3.2 m
 sid = None
 scope = StairsEditScope(doc, "AMB: stair")
 try:
@@ -29,8 +29,9 @@ if sid is not None:
     # the slab opening is 4.7 m long; close everything north of the stair's top riser with a matching floor patch
     fl = find_type(FloorType, "AMB_Floor_Upper_280")
     def patch():
-        loops = List[CurveLoop](); loops.Add(loop([(1.8, -0.3), (2.8, -0.3), (2.8, 0.6), (1.8, 0.6)], L1.Elevation))
-        f = Floor.Create(doc, loops, fl.Id, L1.Id); tag(f, PH)
+        for (y0, y1) in ((-4.1, -3.4), (0.5, 0.6)):          # the slab opening is y -4.1 .. 0.6; the stair covers -3.4 .. 0.5
+            loops = List[CurveLoop](); loops.Add(loop([(1.8, y0), (2.8, y0), (2.8, y1), (1.8, y1)], L1.Elevation))
+            f = Floor.Create(doc, loops, fl.Id, L1.Id); tag(f, PH)
     run("AMB: close slab opening above the stair", patch)
     s = doc.GetElement(sid)
     def tg(): tag(s, PH)
