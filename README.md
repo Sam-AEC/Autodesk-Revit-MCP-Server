@@ -21,7 +21,7 @@ Open-source MCP server and native add-in for Revit 2024 – 2027. Works with Cla
 Status: on the dev branch, not yet released.
 
 <p align="center">
-  <img src="docs/images/readme/demo.gif" alt="Demo: a 3D model of a building sits beside the Revit panel. An AI assistant finds 12 doors with no Mark and drafts a plan. The plan waits in the Revit panel until you approve it, then the values are read back. Example values, simulated session." width="900">
+  <img src="docs/images/readme/revit-villa-panel.png" alt="Revit villa model beside the AEC Model Bridge panel with Dev mode enabled." width="900">
 </p>
 
 AEC Model Bridge is the open-source Revit MCP server that lets Claude, Codex,
