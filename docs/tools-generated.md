@@ -126,9 +126,14 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `revit_check_orientation` | Check that walls face the right way: probes 0. | No | sync |
 | `revit_export` | Export selected sheets or views as PDF or DWG, or the model as IFC or NWC, inside the workspace under an approved action. | Yes | sync |
 | `revit_list_views_sheets_schedules` | List views, sheets, schedules and view templates in the active document, with filters, placement status and pagination. | No | sync |
+| `revit_make_family` | Make loadable Revit families from data (name, category, box size, pipe, duct or electrical ports) under an approved action: builds from a family template, saves the. | Yes | sync |
 | `revit_make_schedule` | Create a tagged schedule with requested fields, sorting and filters under an approved action. | Yes | sync |
 | `revit_make_sheet` | Create a tagged sheet and place supplied views under an approved action. | Yes | sync |
 | `revit_make_view` | Create a framed 3D, plan, section or elevation view under an approved action. | Yes | sync |
+| `revit_mep_check_elements` | Dry run of the category guard: say whether elements would be accepted for a pipe, duct or electrical system, and why not (wrong category, no connectors, wrong domain, wrong system, no free connector). | No | sync |
+| `revit_mep_circuit` | Make native electrical circuits (ElectricalSystem) from a list of placed elements and a panel. | Yes | sync |
+| `revit_mep_connect` | Join pairs of connectors that already touch (equipment to a pipe or duct end, or two pipe or duct ends) directly or with a union, transition or elbow, then list the open ends left. | Yes | sync |
+| `revit_mep_route` | Run pipe or duct between connectors or points, or branch it off a trunk, with elbows, unions, transitions, takeoffs and tees. | Yes | sync |
 | `revit_probe_family` | Inspect a family for category, nested instances, parameters, connectors and geometry. | No | sync |
 | `revit_render_check` | Export a view to a workspace PNG and inspect its pixel content for a blank image. | No | sync |
 | `revit_review` | Run selected read-only Revit checks for an explicit scope and return FAIL, PASS or INCOMPLETE with evidence. | No | sync |
