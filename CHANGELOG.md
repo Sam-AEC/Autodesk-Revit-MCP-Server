@@ -6,6 +6,9 @@
 
 Status: on the dev branch, not yet released.
 
+- Dry run: every write tool of the docs, family and MEP modules takes `dry_run`. It does the work and the checks, then always rolls the group back and reports `would_change`; it writes no file and loads nothing. Still approval-gated like a real write.
+- Parameters: new `revit_get_parameters` (read-only) and `revit_set_parameters` (approval-gated, up to 500 elements, explicit units, never creates parameters, refuses read-only and critical ones with a reason per element, reads every value back and returns a `revert` list). UNVERIFIED in Revit.
+
 - API lookup: new read-only `revit_api_lookup` answers whether a Revit API type or member exists, with its signature and the nearest real names when it does not, from the documentation XML that ships with Revit (2024 to 2027) or the NuGet cache. No Revit needed. Agents should check unfamiliar members with it before writing a script.
 - IFC: new read-only `revit_ifc_check` compares an exported IFC with the live model per category (counts, missing elements, classification, materials, storeys, expected parameters, origin offset). It is never PASS when the Revit side was truncated or the IFC could not be read; `ifc_only` checks the file alone. UNVERIFIED in Revit.
 - Openings: new `revit_sparing_find` (read-only: where MEP crosses walls and floors, in linked models too, with a suggested size and any existing opening) and `revit_sparing_place` (approval-gated: places a loaded sparing family or a native opening, tagged and idempotent, with `dry_run`). Approval status and copying to discipline models are not built yet. UNVERIFIED in Revit.

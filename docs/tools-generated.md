@@ -126,6 +126,7 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `revit_check_naming_and_params` | Check scoped elements for required parameter values, duplicate Marks and names matching a supplied pattern. | No | sync |
 | `revit_check_orientation` | Check that walls face the right way: probes 0. | No | sync |
 | `revit_export` | Export selected sheets or views as PDF or DWG, or the model as IFC or NWC, inside the workspace under an approved action. | Yes | sync |
+| `revit_get_parameters` | Read parameter values of elements picked by id, ids or a selector (category, name, level, tag): one row per element and parameter with the value in the unit revit_set_parameters expects, Revit's display text, read-only, and whether revit_set_parameters would write it and why not. | No | sync |
 | `revit_ifc_check` | Compare an exported IFC with the live Revit model and list what the export dropped: elements per category, classification (NL/SfB, Assembly Code), materials, storey assignment, expected parameters, duplicates at one placement, and the origin offset against the survey point. | No | sync |
 | `revit_list_views_sheets_schedules` | List views, sheets, schedules and view templates in the active document, with filters, placement status and pagination. | No | sync |
 | `revit_make_family` | Make loadable Revit families from data (name, category, box size, pipe, duct or electrical ports) under an approved action: builds from a family template, saves the. | Yes | sync |
@@ -139,6 +140,7 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `revit_probe_family` | Inspect a family for category, nested instances, parameters, connectors and geometry. | No | sync |
 | `revit_render_check` | Export a view to a workspace PNG and inspect its pixel content for a blank image. | No | sync |
 | `revit_review` | Run selected read-only Revit checks for an explicit scope and return FAIL, PASS or INCOMPLETE with evidence. | No | sync |
+| `revit_set_parameters` | Batch-set instance or type parameters of up to 500 elements from data: items pick elements by id, ids or a selector (category, name, level, tag) and give params {name: value} with explicit units (mm, m, deg, number, int, bool, text, elementid by name). | Yes | sync |
 | `revit_sparing_find` | Find where MEP runs (pipes, ducts, conduits, cable trays) pass through walls and floors, also in links, and suggest a sparing per crossing: MEP size plus clearance, rounded up, with host thickness, angle and any existing opening. | No | sync |
 | `revit_sparing_place` | Place sparingen at the crossings revit_sparing_find reports: a loaded sparing family or a native opening, sized, with an approval status. | Yes | sync |
 | `revit_system_report` | Inspect scoped MEP elements for connector domains, system membership, connections, open ends and size differences. | No | sync |
