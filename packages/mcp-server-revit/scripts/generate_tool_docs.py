@@ -21,6 +21,7 @@ from revit_mcp_server.providers import (
     AECMapperProvider,
     SQLiteExporterProvider,
     JobProvider,
+    RevitJobProvider,
     RhinoProvider,
     SemanticGraphProvider,
     SpeckleProvider,
@@ -76,6 +77,7 @@ def main():
     add_provider("AEC Mapper", lambda: AECMapperProvider(workspace=workspace))
     add_provider("SQLite Exporter", lambda: SQLiteExporterProvider(workspace=workspace, registry=registry))
     add_provider("Job", lambda: JobProvider(manager=job_manager))
+    add_provider("Revit Jobs", lambda: RevitJobProvider(revit=RevitProvider(workspace=workspace), manager=job_manager))
     add_provider("Rhino", lambda: RhinoProvider(workspace=workspace))
     add_provider("Navisworks", lambda: NavisworksProvider(workspace=workspace))
     add_provider("Semantic Graph", lambda: SemanticGraphProvider())

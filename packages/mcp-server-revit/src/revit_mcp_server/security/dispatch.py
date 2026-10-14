@@ -5,7 +5,7 @@ panel's /execute route all go through here, so a new path cannot forget a check:
 
 - approve_plan, reject_plan and rollback_plan are refused (a person runs them through
   ApprovalProvider.execute_human_tool);
-- a mutating tool must consume an approved, unchanged plan action BEFORE it runs
+- a mutating tool (unless the provider reports this call read-only, see gating.py) must consume an approved, unchanged plan action BEFORE it runs
   (ApprovalGate.claim_action); the action stays consumed if the tool fails.
 """
 from __future__ import annotations
@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional
 
 from ..errors import BridgeError
 from .approval import HUMAN_ONLY_TOOLS, ApprovalGate
+from .gating import requires_approval
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,10 @@ def gate_before(registry: Any, gate: Optional[ApprovalGate], name: str, argument
     refuse_human_only(name)
     tool_def = registry.lookup_tool(name) if registry is not None else None
     if gate is None or not (tool_def and tool_def.is_mutating):
+        return None
+    # A call that provably cannot change the model (revit_execute_python with mode='read',
+    # or a revit_run_job wrapping one) skips the gate. A provider may raise to refuse it.
+    if not requires_approval(registry, name, tool_def, arguments):
         return None
     return gate.claim_action(name, arguments)
 

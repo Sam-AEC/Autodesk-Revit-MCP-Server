@@ -193,13 +193,14 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `revit_delete_sheet` | Delete a sheet by ElementId. | Yes | sync |
 | `revit_duplicate_sheet` | Duplicate a sheet, optionally with its views, using one of Revit's duplicate options. | Yes | sync |
 | `revit_edit_family` | Open a family for editing in the Revit family editor. | Yes | sync |
-| `revit_execute_python` | Execute arbitrary Python/IronPython code inside Revit with broad access to the public Revit API. | Yes | sync |
+| `revit_execute_python` | Advanced: run IronPython 2. | Yes | sync |
 | `revit_export_dwg` | Export a view to a DWG file at a path inside the allowed workspace. | No | sync |
 | `revit_export_ifc` | Export the model to an IFC file at a path inside the allowed workspace. | No | sync |
 | `revit_export_image` | Export a view to an image file of the given pixel size at a path inside the allowed workspace. | No | sync |
 | `revit_export_navisworks` | Export the model to a Navisworks NWC file at a path inside the allowed workspace. | No | sync |
 | `revit_extract_snapshot` | Extract a semantic BIM snapshot of the active document. | No | sync |
 | `revit_get_categories` | List the Revit categories available in the active document. | No | sync |
+| `revit_get_context` | Read-only snapshot of the live Revit session: which build of the add-in is loaded (and whether it matches this server), Revit version, active document (title, path, guid, workshared), active view, how many requests are queued, which request is running and for how long, and the approval mode. | No | sync |
 | `revit_get_design_options` | List the design option sets and options of the active Revit document. | No | sync |
 | `revit_get_document_info` | Return metadata about the active Revit document, such as its title, path and workshare status. | No | sync |
 | `revit_get_element_bounding_box` | Return the axis-aligned bounding box (min and max corner, feet) of an element. | No | sync |
@@ -212,6 +213,7 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `revit_get_parameter_value` | Read the value of one named parameter on one element. | No | sync |
 | `revit_get_phase_filters` | List the phase filters of the active Revit document. | No | sync |
 | `revit_get_phases` | List the project phases of the active Revit document. | No | sync |
+| `revit_get_result` | Collect the outcome of an earlier Revit call that returned status 'running' with a request_id. | No | sync |
 | `revit_get_revision_sequences` | List the revision sequences defined in the active Revit document. | No | sync |
 | `revit_get_rvt_links` | List the linked Revit models (link types) in the active document. | No | sync |
 | `revit_get_schedule_data` | Return the rows and columns of an existing schedule. | No | sync |
@@ -223,7 +225,9 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `revit_get_warnings` | Return the current warnings of the active Revit project (for example overlapping or duplicate elements). | No | sync |
 | `revit_get_worksets` | List the worksets of a workshared model with their owners and open state. | No | sync |
 | `revit_health` | Check that the Revit bridge is reachable and return its status information. | No | sync |
+| `revit_inspect_elements` | Read-only bounded inspection of explicit element IDs using existing dedicated document, geometry and selected parameter reads. | No | sync |
 | `revit_invoke_method` | Advanced escape hatch: call any public Revit API method by class and method name through reflection, optionally inside a transaction. | Yes | sync |
+| `revit_list_commands` | List the commands the open Revit add-in supports (for example revit. | No | sync |
 | `revit_list_elements` | List the elements of one Revit category (for example Walls, Floors, Roofs, Doors or Windows) in the active document. | No | sync |
 | `revit_list_families` | List the families loaded in the active Revit document together with their types. | No | sync |
 | `revit_list_levels` | List all levels in the active Revit project with their names and elevations. | No | sync |
@@ -241,6 +245,7 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `revit_place_window` | Place a window of a given family and type in a host wall at a location. | Yes | sync |
 | `revit_populate_titleblock` | Write a set of parameter values into the title block of a sheet. | Yes | sync |
 | `revit_preview_elements` | Preview which elements a proposed change affects: select and zoom to them in the active view and temporarily isolate them. | No | sync |
+| `revit_raw_command` | Advanced: send any Revit add-in command (for example revit. | Yes | sync |
 | `revit_reflect_get` | Advanced: read any public Revit API property of an object identified by target_id, through reflection. | Yes | sync |
 | `revit_reflect_set` | Advanced escape hatch: set any writable Revit API property of an object identified by target_id, through reflection. | Yes | sync |
 | `revit_relinquish_all` | Relinquish every element and workset the current user owns in a workshared model. | Yes | sync |
@@ -258,6 +263,14 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `revit_tag_all_in_view` | Tag every element of a category in the active view. | Yes | sync |
 | `revit_ungroup` | Dissolve a model group into its member elements. | Yes | sync |
 | `revit_unpin_element` | Unpin a previously pinned element so it can be moved again. | Yes | sync |
+
+## Revit Jobs Provider
+
+| Tool Name | Description | Mutating? | Execution Type |
+| --- | --- | --- | --- |
+| `revit_job_cancel` | Cancel a Revit job that is still queued. | No | sync |
+| `revit_job_status` | Get the state of a Revit job: queued, running, completed, failed or cancelled, with elapsed seconds, the last progress lines and the output once it has finished. | No | sync |
+| `revit_run_job` | Run a Revit tool or an IronPython script as a background job and get a job_id back. | Yes | sync |
 
 ## Rhino Provider
 

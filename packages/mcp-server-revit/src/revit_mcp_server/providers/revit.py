@@ -1,3 +1,4 @@
+import asyncio
 import re
 import contextlib
 import contextvars
@@ -13,6 +14,7 @@ from ..bridge.mock import MockBridge
 from ..config import BridgeMode, config
 from ..errors import BridgeError, WorkspaceViolation
 from ..legacy.tools import TOOL_HANDLERS
+from ..security.read_mode import execute_python_payload, is_read_mode_call
 from ..security.workspace import WorkspaceMonitor
 from .base import AECProvider, ProviderTool, enrich_mutation_metadata
 from .element_inspection import INSPECTION_SCHEMA, inspect_elements, validate_inspection
@@ -132,6 +134,10 @@ class RevitProvider(AECProvider):
         finally:
             _BRIDGE_OVERRIDE.reset(reset)
 
+    def call_is_read_only(self, name: str, arguments: Dict[str, Any]) -> bool:
+        """Lets the approval gate skip a revit_execute_python call made with mode='read'."""
+        return name == "revit_execute_python" and is_read_mode_call(arguments)
+
     def _build_bridge(self, factory=None):
         if self.mode == BridgeMode.bridge:
             from ..bridge.discovery import available_host_versions, select_switch
@@ -225,13 +231,16 @@ class RevitProvider(AECProvider):
             return await inspect_elements(self.execute_tool, arguments)
 
         if name == "revit_get_context":
-            return revit_context.get_context(
-                self._active_bridge(), live=self.mode == BridgeMode.bridge, approval_mode=config.approval_mode
+            return await asyncio.to_thread(
+                revit_context.get_context,
+                self._active_bridge(),
+                live=self.mode == BridgeMode.bridge,
+                approval_mode=config.approval_mode,
             )
         if name == "revit_get_result":
             if self.mode != BridgeMode.bridge:
                 raise ValueError("revit_get_result needs a live Revit connection; it is not available in mock mode.")
-            return revit_context.get_result(self._active_bridge(), arguments)
+            return await asyncio.to_thread(revit_context.get_result, self._active_bridge(), arguments)
 
         # Check path parameters for workspace compliance
         self._assert_paths_in_workspace(arguments)
@@ -279,8 +288,10 @@ class RevitProvider(AECProvider):
                     # and can drift out of sync with what the bridge actually accepts.
                     logger.warning(f"Revit legacy handler validation warning: {e}")
 
-            # Send to bridge client
-            return self._active_bridge().send_tool(bridge_tool, payload)
+            # Send to bridge client. send_tool blocks (HTTP plus polling for up to the soft
+            # wait), so run it off the event loop; the loop keeps serving other calls (B-16).
+            bridge = self._active_bridge()
+            return await asyncio.to_thread(bridge.send_tool, bridge_tool, payload)
         else:
             # Mock mode
             legacy_dot_name = bridge_tool
@@ -293,7 +304,8 @@ class RevitProvider(AECProvider):
                 return handler({"request_id": "mcp-mock", **payload}, self.workspace)
 
             # Fallback to general mock response
-            return self._active_bridge().send_tool(bridge_tool, payload)
+            bridge = self._active_bridge()
+            return await asyncio.to_thread(bridge.send_tool, bridge_tool, payload)
 
     def _assert_paths_in_workspace(self, arguments: Dict[str, Any]) -> None:
         path_keys = ["path", "csv_path", "output_path", "file_path", "template_path"]
@@ -808,7 +820,7 @@ class RevitProvider(AECProvider):
                     "value": args.get("value"),
                 },
             ),
-            "revit_execute_python": ("revit.execute_python", lambda args: {"script": args.get("script")}),
+            "revit_execute_python": ("revit.execute_python", execute_python_payload),
             # Direct mode: the real command name and payload come from the call itself (checked in execute_tool).
             "revit_raw_command": ("", lambda args: dict(args.get("payload") or {})),
             "revit_change_element_type": (
@@ -1958,8 +1970,11 @@ class RevitProvider(AECProvider):
                 "Advanced: run IronPython 2.7 inside the open Revit session with full Revit API access. "
                 "Predefined variables: doc (active Document), uidoc, uiapp and app. Results are returned as "
                 "{success, output, error}; write output with print() or by setting __output__. "
-                "Every script, including read-only scripts, follows the approval rules: refused in look-only mode, "
-                "requires an approved plan in ask-first mode, and runs while the panel's timed Auto window is on. "
+                "Scripts in the default mode='write', including read-only scripts, follow the approval rules: refused "
+                "in look-only mode, requires an approved plan in ask-first mode, and runs while the panel's timed Auto "
+                "window is on. "
+                "mode='read' needs no approval but cannot open transactions: the script is refused if it mentions "
+                "Transaction, SubTransaction or TransactionGroup, and the add-in blocks them at run time. "
                 "To change the model, open your own transaction: "
                 "t = Transaction(doc, 'name'); t.Start(); ...; t.Commit(). "
                 "Lengths are in Revit internal units (feet; divide millimetres by 304.8). "
@@ -1969,7 +1984,20 @@ class RevitProvider(AECProvider):
             ),
             inputSchema={
                 "type": "object",
-                "properties": {"script": {"type": "string", "description": "IronPython 2.7 source. Example: print(doc.Title)"}},
+                "properties": {
+                    "script": {"type": "string", "description": "IronPython 2.7 source. Example: print(doc.Title)"},
+                    "mode": {
+                        "type": "string",
+                        "enum": ["read", "write"],
+                        "default": "write",
+                        "description": (
+                            "'write' (default) may change the model and needs an approved plan_id. "
+                            "'read' needs no approval; the script is refused if it mentions Transaction, "
+                            "SubTransaction or TransactionGroup, and the add-in blocks them at run time. "
+                            "A safety rail against mistakes, not a security boundary."
+                        ),
+                    },
+                },
                 "required": ["script"],
             },
         ),

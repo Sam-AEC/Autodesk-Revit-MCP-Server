@@ -4149,61 +4149,12 @@ public static partial class BridgeCommandFactory
         if (doc == null) throw new InvalidOperationException("No active document");
 
         var script = payload.GetProperty("script").GetString() ?? "";
-        var outputMs = new MemoryStream();
-        var errorMs = new MemoryStream();
-        string output = "";
-        string error = "";
-        bool success = false;
-        object? runtime = null;
+        string? mode = payload.TryGetProperty("mode", out var modeProp) && modeProp.ValueKind == JsonValueKind.String
+            ? modeProp.GetString()
+            : null;
 
-        try
-        {
-            var engine = PythonEngineFactory.Create();
-            runtime = PythonEngineFactory.Describe(engine);
-
-            // Capture stdout and stderr into memory streams
-            engine.Runtime.IO.SetOutput(outputMs, Encoding.UTF8);
-            engine.Runtime.IO.SetErrorOutput(errorMs, Encoding.UTF8);
-
-            // Pre-load Revit assemblies so the script can use "from Autodesk.Revit.DB import *"
-            engine.Runtime.LoadAssembly(typeof(Document).Assembly);       // RevitAPI.dll
-            engine.Runtime.LoadAssembly(typeof(UIApplication).Assembly);  // RevitAPIUI.dll
-
-            var scope = engine.CreateScope();
-            scope.SetVariable("doc", doc);
-            scope.SetVariable("uidoc", app.ActiveUIDocument);
-            scope.SetVariable("uiapp", app);
-            scope.SetVariable("app", app.Application);
-            scope.SetVariable("__output__", "");
-
-            engine.Execute(script, scope);
-
-            // Read captured stdout
-            outputMs.Position = 0;
-            output = new StreamReader(outputMs, Encoding.UTF8).ReadToEnd();
-
-            // Also honour __output__ variable if the script set it explicitly
-            if (scope.TryGetVariable("__output__", out object outVar) && outVar is string outStr && !string.IsNullOrEmpty(outStr))
-                output = string.IsNullOrEmpty(output) ? outStr : outStr + "\n" + output;
-
-            success = true;
-        }
-        catch (Exception ex)
-        {
-            try
-            {
-                errorMs.Position = 0;
-                var errText = new StreamReader(errorMs, Encoding.UTF8).ReadToEnd();
-                error = string.IsNullOrEmpty(errText) ? ex.Message : errText + "\n" + ex.Message;
-            }
-            catch
-            {
-                error = ex.Message;
-            }
-            success = false;
-        }
-
-        return new { success, output, error, runtime };
+        // Engine, scope, read-mode guard and progress() live in PythonScriptRunner.cs / PythonEngineFactory.cs.
+        return PythonScriptRunner.Run(app, doc, script, mode);
     }
 
     [BridgeCommand("revit.change_element_type", IsMutating = true)]

@@ -537,6 +537,7 @@ NOT_READ_ONLY: dict[str, tuple[bool, bool]] = {
     "speckle_oauth_refresh": (False, True),
     "speckle_checkout_version": (False, True),
     "job_cancel": (True, True),
+    "revit_job_cancel": (True, True),
     "rhino_generate_diagrid_tower": (False, False),
 }
 
