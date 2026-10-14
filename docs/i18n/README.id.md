@@ -20,7 +20,7 @@ Server MCP sumber terbuka dan add-in native untuk Revit 2024 – 2027. Bekerja d
 </div>
 
 <p align="center">
-  <img src="../images/readme/demo.gif" alt="Demo: model 3D sebuah gedung berada di samping panel Revit. Asisten AI menemukan 12 pintu tanpa Mark dan menyusun rencana. Rencana menunggu di panel Revit sampai Anda menyetujuinya, lalu nilainya dibaca ulang untuk diperiksa. Nilai contoh, sesi simulasi." width="900">
+  <img src="../images/readme/revit-villa-panel.png" alt="Model vila di Revit di samping panel AEC Model Bridge dengan mode Dev aktif." width="900">
 </p>
 
 AEC Model Bridge adalah server MCP Revit sumber terbuka yang memungkinkan Claude, Codex, Cursor, dan asisten AI lain membaca dan mengedit model Revit yang sedang Anda buka, dengan setiap perubahan Anda setujui lebih dulu. Proyek ini menggabungkan server MCP berbasis Python dengan add-in Revit native: tool hanya baca langsung memeriksa model, sedangkan perubahan pada model secara default memerlukan rencana yang sudah disetujui. [Lihat alur persetujuan](#cara-kerja-persetujuan).

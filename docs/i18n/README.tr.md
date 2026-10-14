@@ -20,7 +20,7 @@ Revit 2024 – 2027 için açık kaynaklı MCP sunucusu ve yerel eklenti. Claude
 </div>
 
 <p align="center">
-  <img src="../images/readme/demo.gif" alt="Demo: Bir binanın 3B modeli Revit panelinin yanında durur. Bir yapay zekâ asistanı Mark değeri olmayan 12 kapıyı bulur ve bir plan hazırlar. Plan, siz onaylayana kadar Revit panelinde bekler; ardından değerler doğrulama için geri okunur. Örnek değerler, simüle edilmiş oturum." width="900">
+  <img src="../images/readme/revit-villa-panel.png" alt="Dev modu açık AEC Model Bridge panelinin yanında Revit villa modeli." width="900">
 </p>
 
 AEC Model Bridge, Claude, Codex, Cursor ve diğer yapay zekâ asistanlarının açık Revit modelinizi okumasını ve düzenlemesini sağlayan açık kaynaklı Revit MCP sunucusudur; her değişikliği önce siz onaylarsınız. Python tabanlı bir MCP sunucusunu yerel bir Revit eklentisiyle birleştirir: salt okunur araçlar modeli hemen inceler, model değişiklikleri ise varsayılan olarak onaylanmış bir plan gerektirir. [Onay akışına bakın](#onay-nasıl-çalışır).

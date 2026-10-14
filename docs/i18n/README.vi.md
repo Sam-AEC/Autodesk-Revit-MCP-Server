@@ -20,7 +20,7 @@ Máy chủ MCP mã nguồn mở và add-in gốc cho Revit 2024 – 2027. Hoạt
 </div>
 
 <p align="center">
-  <img src="../images/readme/demo.gif" alt="Demo: mô hình 3D của một tòa nhà nằm cạnh bảng Revit. Trợ lý AI tìm 12 cửa không có Mark và soạn một kế hoạch. Kế hoạch chờ trong bảng Revit cho đến khi bạn phê duyệt, sau đó các giá trị được đọc lại để kiểm tra. Giá trị minh họa, phiên mô phỏng." width="900">
+  <img src="../images/readme/revit-villa-panel.png" alt="Mô hình biệt thự trong Revit bên cạnh bảng AEC Model Bridge với chế độ Dev được bật." width="900">
 </p>
 
 AEC Model Bridge là máy chủ MCP mã nguồn mở cho Revit, cho phép Claude, Codex, Cursor và các trợ lý AI khác đọc và chỉnh sửa mô hình Revit bạn đang mở, với mọi thay đổi đều do bạn phê duyệt trước. Công cụ này kết hợp máy chủ MCP viết bằng Python với add-in Revit gốc: các công cụ chỉ đọc kiểm tra mô hình ngay lập tức, còn thay đổi trên mô hình mặc định cần một kế hoạch đã được phê duyệt. [Xem luồng phê duyệt](#cách-phê-duyệt-hoạt-động).

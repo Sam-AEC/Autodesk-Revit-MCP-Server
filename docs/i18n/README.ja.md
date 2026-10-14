@@ -20,7 +20,7 @@ Revit 2024 – 2027 向けのオープンソースの MCP サーバーとネイ�
 </div>
 
 <p align="center">
-  <img src="../images/readme/demo.gif" alt="デモ：Revit パネルの横に建物の 3D モデルが表示されています。AI アシスタントが Mark のない 12 枚のドアを見つけて計画を作成します。計画は Revit パネルで承認を待ち、承認後に値を読み戻して確認します。値は例で、セッションはシミュレーションです。" width="900">
+  <img src="../images/readme/revit-villa-panel.png" alt="Dev モードが有効な AEC Model Bridge パネルの横に表示された Revit のヴィラモデル。" width="900">
 </p>
 
 AEC Model Bridge は、Claude、Codex、Cursor などの AI アシスタントが、開いている Revit モデルを読み取り・編集できるようにするオープンソースの Revit MCP サーバーです。変更はすべて、先にあなたが承認します。Python 製の MCP サーバーとネイティブの Revit アドインで構成され、読み取り専用ツールはすぐにモデルを調査でき、モデルの変更にはデフォルトで承認済みのプランが必要です。[承認フローを見る](#承認の仕組み)。

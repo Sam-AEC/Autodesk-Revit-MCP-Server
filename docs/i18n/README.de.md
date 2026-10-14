@@ -20,7 +20,7 @@ Open-Source-MCP-Server und natives Add-in für Revit 2024 – 2027. Funktioniert
 </div>
 
 <p align="center">
-  <img src="../images/readme/demo.gif" alt="Demo: Ein KI-Assistent findet 12 Türen ohne Mark und entwirft einen Plan. Der Plan wartet im Revit-Panel auf Ihre Freigabe, danach werden die Werte zur Kontrolle zurückgelesen. Beispielwerte, simulierte Sitzung." width="900">
+  <img src="../images/readme/revit-villa-panel.png" alt="Villenmodell in Revit neben dem AEC Model Bridge-Panel mit aktiviertem Dev-Modus." width="900">
 </p>
 
 AEC Model Bridge ist der Open-Source-Revit-MCP-Server, mit dem Claude, Codex, Cursor und andere KI-Assistenten Ihr geöffnetes Revit-Modell lesen und bearbeiten können – jede Änderung erst nach Ihrer Freigabe. Er kombiniert einen MCP-Server in Python mit einem nativen Revit-Add-in: Schreibgeschützte Werkzeuge untersuchen das Modell sofort, und Änderungen am Modell erfordern standardmäßig einen freigegebenen Plan. [So funktioniert die Freigabe](#so-funktioniert-die-freigabe).

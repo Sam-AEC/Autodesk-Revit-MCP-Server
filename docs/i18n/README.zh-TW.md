@@ -20,7 +20,7 @@
 </div>
 
 <p align="center">
-  <img src="../images/readme/demo.gif" alt="示範：Revit 面板旁有一棟建築的 3D 模型。AI 助理找出 12 扇沒有標記（Mark）的門並擬定計畫。計畫會在 Revit 面板中等待你核准，核准後再讀回數值進行檢查。範例數值，模擬的工作階段。" width="900">
+  <img src="../images/readme/revit-villa-panel.png" alt="Revit 別墅模型位於 AEC Model Bridge 面板旁，Dev 模式已開啟。" width="900">
 </p>
 
 AEC Model Bridge 是開源的 Revit MCP 伺服器，讓 Claude、Codex、Cursor 等 AI 助理讀取並編輯你開啟中的 Revit 模型，且每一項變更都須先經你核准。它結合 Python MCP 伺服器與原生 Revit 增益集：唯讀工具可立即檢查模型，而模型的任何變更預設都必須有已核准的計畫。[查看核准流程](#核准如何運作)。
