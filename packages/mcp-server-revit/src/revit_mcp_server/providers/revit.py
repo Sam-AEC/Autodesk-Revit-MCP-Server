@@ -2085,7 +2085,8 @@ class RevitProvider(AECProvider):
                 "Lengths are in Revit internal units (feet; divide millimetres by 304.8). "
                 "The script runs on Revit's user-interface thread and cannot be cancelled, so keep it short "
                 "(well under 20 seconds) and work from element ids rather than whole-model geometry. "
-                "Use revit_list_commands first: a dedicated command is safer when one exists."
+                "Use revit_list_commands first: a dedicated command is safer when one exists. "
+                "Check unfamiliar API members with revit_api_lookup first: it confirms the name and signature from the Revit docs."
             ),
             inputSchema={
                 "type": "object",

@@ -27,6 +27,7 @@ defects and build the loop in.
 - Tie wall tops to levels (top constraint + offset). Unconnected heights are a defect.
 
 ## Traps (all hit in live use)
+- Invented API members: check any member you have not used before with `revit_api_lookup` (offline docs, says the Revit year).
 - IronPython 2.7 has no standard library (`collections` is missing). `Element.Name` can fail: use
   `get_Parameter(BuiltInParameter.SYMBOL_NAME_PARAM)` or the room name parameters.
 - Methods with `out` parameters cannot be called from IronPython (`NewFootPrintRoof`): use the add-in command
