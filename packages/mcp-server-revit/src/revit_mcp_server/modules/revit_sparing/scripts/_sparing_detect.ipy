@@ -1,0 +1,851 @@
+# Shared detection of the revit_sparing scripts (IronPython 2.7). Loaded after the revit module's _prelude.ipy (and,
+# for place, the revit_docs write prelude). Nothing in this file changes the model, so find.ipy stays a read script.
+#
+# ARGS = {categories, system, level, ids, host_categories, include_links, sparing_family, clearance_mm, round_to_mm,
+#         merge_tolerance_mm, existing_tolerance_mm, max_pairs, max_elements, time_budget_s}
+#
+# All geometry is in the active model's internal coordinates (feet); elements of a link are moved there with the
+# link's total transform. Reported coordinates are relative to the project base point when it can be read.
+# UNVERIFIED against a live Revit: see the module docstring.
+import math
+from System.Diagnostics import Stopwatch
+
+SP_MM_PER_FT = 304.8
+SP_FT_PER_MM = 1.0 / 304.8
+CELL_FT = 10.0            # broad-phase grid cell (about 3 m)
+BIG_HOST_CELLS = 400      # a host covering more cells is tested against every MEP element instead
+COS_PARALLEL = math.cos(math.radians(85.0))  # a run within 5 degrees of the host plane is not a passage
+PERPENDICULAR_DEG = 1.0
+SAME_RUN_COS = math.cos(math.radians(2.0))
+MAX_EXISTING = 20000
+Z_AXIS = (0.0, 0.0, 1.0)
+MEP_CATS = {"pipes": "OST_PipeCurves", "ducts": "OST_DuctCurves", "conduits": "OST_Conduit", "cabletrays": "OST_CableTray"}
+HOST_CATS = {"walls": "OST_Walls", "floors": "OST_Floors", "roofs": "OST_Roofs", "structuralframing": "OST_StructuralFraming"}
+
+
+# ---- vectors as plain tuples -------------------------------------------------------------------------------------------
+def v3(p):
+    return (p.X, p.Y, p.Z)
+
+
+def vadd(a, b):
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
+
+
+def vsub(a, b):
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def vmul(a, k):
+    return (a[0] * k, a[1] * k, a[2] * k)
+
+
+def vdot(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def vcross(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def vlen(a):
+    return math.sqrt(vdot(a, a))
+
+
+def vunit(a):
+    n = vlen(a)
+    if n < 1e-12:
+        return (0.0, 0.0, 0.0)
+    return (a[0] / n, a[1] / n, a[2] / n)
+
+
+def xyz(t):
+    return XYZ(t[0], t[1], t[2])
+
+
+def mm(feet):
+    return feet * SP_MM_PER_FT
+
+
+def round_up(value_mm, step):
+    return int(step * math.ceil(value_mm / step - 1e-9))
+
+
+# ---- boxes ---------------------------------------------------------------------------------------------------------------
+def box_of(points):
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    zs = [p[2] for p in points]
+    return ((min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs)))
+
+
+def box_corners(lo, hi):
+    out = []
+    for x in (lo[0], hi[0]):
+        for y in (lo[1], hi[1]):
+            for z in (lo[2], hi[2]):
+                out.append((x, y, z))
+    return out
+
+
+def grow(box, d):
+    return ((box[0][0] - d, box[0][1] - d, box[0][2] - d), (box[1][0] + d, box[1][1] + d, box[1][2] + d))
+
+
+def overlap(a, b):
+    for i in range(3):
+        if a[0][i] > b[1][i] or b[0][i] > a[1][i]:
+            return False
+    return True
+
+
+def inside(box, p, tol):
+    for i in range(3):
+        if p[i] < box[0][i] - tol or p[i] > box[1][i] + tol:
+            return False
+    return True
+
+
+# ---- documents: the active model and (optionally) its loaded links ------------------------------------------------------
+def tp(src, p):
+    t = src["t"]
+    if t is None:
+        return p
+    return v3(t.OfPoint(xyz(p)))
+
+
+def tv(src, v):
+    t = src["t"]
+    if t is None:
+        return v
+    return v3(t.OfVector(xyz(v)))
+
+
+def bbox_of(src, e):
+    try:
+        bb = e.get_BoundingBox(None)
+    except Exception:
+        bb = None
+    if bb is None:
+        return None
+    lo, hi = v3(bb.Min), v3(bb.Max)
+    if src["t"] is None:
+        return (lo, hi)
+    return box_of([tp(src, c) for c in box_corners(lo, hi)])
+
+
+def make_sources(state):
+    srcs = [{"doc": doc, "key": "", "name": "", "t": None, "li": None}]
+    if not ARGS.get("include_links"):
+        return srcs
+    for li in FilteredElementCollector(doc).OfClass(RevitLinkInstance):
+        name = ""
+        try:
+            name = li.Name
+        except Exception:
+            name = "link %d" % eid(li)
+        ld = None
+        try:
+            ld = li.GetLinkDocument()
+        except Exception:
+            ld = None
+        if ld is None:
+            info("LINK_NOT_LOADED", "link '%s' (id %d) is not loaded; it was not checked" % (name, eid(li)))
+            state["unmeasured"] += 1
+            continue
+        srcs.append({"doc": ld, "key": "L%d." % eid(li), "name": name, "t": li.GetTotalTransform(), "li": li})
+    return srcs
+
+
+def bic_of(name):
+    return getattr(BuiltInCategory, name, None)
+
+
+def cat_key(e, table):
+    try:
+        cid = eid(e.Category)
+    except Exception:
+        return None
+    for k in table:
+        b = bic_of(table[k])
+        if b is not None and int(b) == cid:
+            return k
+    return None
+
+
+def multi_cat_filter(keys, table):
+    typed = List[BuiltInCategory]()
+    n = 0
+    for k in keys:
+        b = bic_of(table[k])
+        if b is not None:
+            typed.Add(b)
+            n += 1
+    if n == 0:
+        return None
+    return ElementMulticategoryFilter(typed)
+
+
+# ---- parameters ----------------------------------------------------------------------------------------------------------
+def param_of(e, name):
+    bip = getattr(BuiltInParameter, name, None)
+    if bip is None or e is None:
+        return None
+    try:
+        return e.get_Parameter(bip)
+    except Exception:
+        return None
+
+
+def pnum(e, name):
+    """A positive length parameter in feet, else None."""
+    p = param_of(e, name)
+    if p is None:
+        return None
+    try:
+        if not p.HasValue:
+            return None
+    except Exception:
+        pass
+    try:
+        v = p.AsDouble()
+    except Exception:
+        return None
+    if v is None or v <= 0:
+        return None
+    return v
+
+
+def pstr(e, name):
+    p = param_of(e, name)
+    if p is None:
+        return ""
+    try:
+        return p.AsString() or ""
+    except Exception:
+        return ""
+
+
+# ---- MEP elements --------------------------------------------------------------------------------------------------------
+def mep_size(e, cat):
+    """{shape, w, h, insul} in feet, outer size including insulation; None when the size cannot be read."""
+    insul = 0.0
+    if cat in ("pipes", "ducts"):
+        insul = pnum(e, "RBS_REFERENCE_INSULATION_THICKNESS") or 0.0
+    w = h = None
+    shape = "round"
+    if cat == "pipes":
+        d = pnum(e, "RBS_PIPE_OUTER_DIAMETER") or pnum(e, "RBS_PIPE_DIAMETER_PARAM")
+        w = h = d
+    elif cat == "ducts":
+        w = pnum(e, "RBS_CURVE_WIDTH_PARAM")
+        h = pnum(e, "RBS_CURVE_HEIGHT_PARAM")
+        if w is not None and h is not None:
+            shape = "rect"
+        else:
+            d = pnum(e, "RBS_CURVE_DIAMETER_PARAM")
+            w = h = d
+    elif cat == "conduits":
+        d = pnum(e, "RBS_CONDUIT_OUTER_DIAM_PARAM") or pnum(e, "RBS_CONDUIT_DIAMETER_PARAM")
+        w = h = d
+    elif cat == "cabletrays":
+        w = pnum(e, "RBS_CABLETRAY_WIDTH_PARAM")
+        h = pnum(e, "RBS_CABLETRAY_HEIGHT_PARAM")
+        shape = "rect"
+    if w is None or h is None:
+        return None
+    return {"shape": shape, "w": w + 2 * insul, "h": h + 2 * insul, "insul": insul}
+
+
+def size_text(size):
+    if size["shape"] == "round":
+        return "dia %d" % int(round(mm(size["w"])))
+    return "%dx%d" % (int(round(mm(size["w"]))), int(round(mm(size["h"]))))
+
+
+def system_of(e):
+    name = pstr(e, "RBS_SYSTEM_NAME_PARAM")
+    if name:
+        return name
+    try:
+        s = e.MEPSystem
+        if s is not None:
+            return s.Name or ""
+    except Exception:
+        pass
+    return pstr(e, "RBS_CTC_SERVICE_TYPE")
+
+
+def level_of_mep(src, e):
+    try:
+        lv = e.ReferenceLevel
+        if lv is not None:
+            return lv.Name
+    except Exception:
+        pass
+    p = param_of(e, "RBS_START_LEVEL_PARAM")
+    try:
+        return src["doc"].GetElement(p.AsElementId()).Name
+    except Exception:
+        return ""
+
+
+def section_axis(src, e, d):
+    """Width direction of the cross section: the connector's BasisX when it lies across the run, else horizontal."""
+    try:
+        for c in e.ConnectorManager.Connectors:
+            bx = vunit(tv(src, v3(c.CoordinateSystem.BasisX)))
+            if vlen(bx) > 0.5 and abs(vdot(bx, d)) < 1e-3:
+                return bx
+    except Exception:
+        pass
+    if abs(d[2]) < 0.999:
+        return vunit(vcross(Z_AXIS, d))
+    return (1.0, 0.0, 0.0)
+
+
+def mep_record(src, e, state):
+    cat = cat_key(e, MEP_CATS)
+    if cat is None:
+        return None
+    crv = None
+    try:
+        crv = e.Location.Curve
+    except Exception:
+        crv = None
+    if crv is None or not isinstance(crv, Line):
+        state["skipped"] += 1
+        if state["skipped"] <= 20:
+            info("MEP_NOT_STRAIGHT", "%s id %s has no straight location line; it was not checked" % (cat, src["key"] + str(eid(e))))
+        return None
+    a = tp(src, v3(crv.GetEndPoint(0)))
+    b = tp(src, v3(crv.GetEndPoint(1)))
+    length = vlen(vsub(b, a))
+    if length < 1e-6:
+        return None
+    size = mep_size(e, cat)
+    if size is None:
+        state["skipped"] += 1
+        if state["skipped"] <= 20:
+            info("MEP_SIZE_UNKNOWN", "%s id %s: the size could not be read; it was not checked" % (cat, src["key"] + str(eid(e))))
+        return None
+    d = vmul(vsub(b, a), 1.0 / length)
+    radius = math.sqrt(size["w"] * size["w"] + size["h"] * size["h"]) / 2.0
+    return {
+        "src": src, "e": e, "id": eid(e), "key": src["key"] + str(eid(e)), "cat": cat, "a": a, "b": b, "d": d,
+        "len": length, "size": size, "ax": section_axis(src, e, d), "system": system_of(e),
+        "box": grow(box_of([a, b]), radius),
+    }
+
+
+def collect_meps(srcs, state):
+    cap = int(ARGS["max_elements"])
+    want_sys = (ARGS.get("system") or "").lower()
+    want_level = ARGS.get("level") or ""
+    out = []
+
+    def accept(src, e):
+        if want_sys and system_of(e).lower().find(want_sys) < 0:
+            return
+        if want_level and level_of_mep(src, e) != want_level:
+            return
+        rec = mep_record(src, e, state)
+        if rec is not None:
+            out.append(rec)
+
+    ids = ARGS.get("ids") or []
+    if ids:
+        for i in ids:
+            if len(out) >= cap:
+                state["capped"] = "max_elements"
+                break
+            e = doc.GetElement(ElementId(int(i)))
+            if e is None or cat_key(e, MEP_CATS) is None:
+                state["not_mep"].append(int(i))
+                continue
+            accept(srcs[0], e)
+        return out
+    flt = multi_cat_filter(ARGS["categories"], MEP_CATS)
+    if flt is None:
+        return out
+    for src in srcs:
+        for e in FilteredElementCollector(src["doc"]).WhereElementIsNotElementType().WherePasses(flt):
+            if len(out) >= cap:
+                state["capped"] = "max_elements"
+                break
+            accept(src, e)
+        if state["capped"]:
+            break
+    return out
+
+
+# ---- hosts ---------------------------------------------------------------------------------------------------------------
+def host_record(src, e):
+    cat = cat_key(e, HOST_CATS)
+    if cat is None:
+        return None
+    box = bbox_of(src, e)
+    if box is None:
+        return None
+    rec = {"src": src, "e": e, "id": eid(e), "key": src["key"] + str(eid(e)), "cat": cat, "box": box,
+           "solids": None, "arc": None, "n": None, "thick": None}
+    if cat == "walls":
+        crv = None
+        try:
+            crv = e.Location.Curve
+        except Exception:
+            crv = None
+        if crv is not None and not isinstance(crv, Line) and hasattr(crv, "Center"):
+            rec["arc"] = tp(src, v3(crv.Center))
+        else:
+            try:
+                rec["n"] = vunit(tv(src, v3(e.Orientation)))
+            except Exception:
+                return None
+        try:
+            rec["thick"] = e.Width
+        except Exception:
+            rec["thick"] = None
+    elif cat in ("floors", "roofs"):
+        rec["n"] = Z_AXIS
+        rec["thick"] = pnum(e, "FLOOR_ATTR_THICKNESS_PARAM" if cat == "floors" else "ROOF_ATTR_THICKNESS_PARAM")
+    else:
+        try:
+            crv = e.Location.Curve
+            dd = tv(src, vsub(v3(crv.GetEndPoint(1)), v3(crv.GetEndPoint(0))))
+        except Exception:
+            return None
+        hz = (dd[0], dd[1], 0.0)
+        if vlen(hz) < 1e-6:
+            return None
+        hz = vunit(hz)
+        rec["n"] = (-hz[1], hz[0], 0.0)
+    return rec
+
+
+def collect_hosts(srcs, meps, state):
+    if not meps:
+        return []
+    union = box_of([m["box"][0] for m in meps] + [m["box"][1] for m in meps])
+    flt = multi_cat_filter(ARGS["host_categories"], HOST_CATS)
+    if flt is None:
+        return []
+    cap = int(ARGS["max_elements"])
+    out = []
+    for src in srcs:
+        lo, hi = union
+        if src["t"] is not None:
+            inv = src["t"].Inverse
+            lo, hi = box_of([v3(inv.OfPoint(xyz(c))) for c in box_corners(lo, hi)])
+        near = BoundingBoxIntersectsFilter(Outline(xyz(lo), xyz(hi)))
+        for e in FilteredElementCollector(src["doc"]).WhereElementIsNotElementType().WherePasses(flt).WherePasses(near):
+            if len(out) >= cap:
+                state["capped"] = "max_elements"
+                break
+            rec = host_record(src, e)
+            if rec is not None:
+                out.append(rec)
+        if len(out) >= cap:
+            break
+    return out
+
+
+def frame(h, p):
+    """(n, u, v) of a host at point p: n = passage direction, u and v span the sparing (u = width, v = height)."""
+    if h["arc"] is not None:
+        r = vsub(p, h["arc"])
+        n = vunit((r[0], r[1], 0.0))
+    else:
+        n = h["n"]
+    if abs(n[2]) > 0.999:
+        return n, (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)
+    u = vunit(vcross(Z_AXIS, n))
+    return n, u, vcross(n, u)
+
+
+def host_solids(h):
+    if h["solids"] is not None:
+        return h["solids"]
+    out = []
+    try:
+        geo = h["e"].get_Geometry(Options())
+    except Exception:
+        geo = None
+
+    def walk(g):
+        for o in g:
+            if isinstance(o, Solid):
+                if o.Volume > 1e-9:
+                    out.append(o)
+            elif isinstance(o, GeometryInstance):
+                walk(o.GetInstanceGeometry())
+
+    if geo is not None:
+        walk(geo)
+    if h["src"]["t"] is not None:
+        out = [SolidUtils.CreateTransformed(s, h["src"]["t"]) for s in out]
+    h["solids"] = out
+    return out
+
+
+def passages(m, h, gap):
+    """Parameter ranges (feet along the MEP line) where the centre line is inside the host's solids."""
+    line = Line.CreateBound(xyz(m["a"]), xyz(m["b"]))
+    ranges = []
+    for s in host_solids(h):
+        try:
+            res = s.IntersectWithCurve(line, SolidCurveIntersectionOptions())
+        except Exception:
+            continue
+        if res is None:
+            continue
+        for i in range(res.SegmentCount):
+            seg = res.GetCurveSegment(i)
+            t0 = vdot(vsub(v3(seg.GetEndPoint(0)), m["a"]), m["d"])
+            t1 = vdot(vsub(v3(seg.GetEndPoint(1)), m["a"]), m["d"])
+            ranges.append((min(t0, t1), max(t0, t1)))
+    ranges.sort()
+    merged = []
+    for r in ranges:
+        if merged and r[0] - merged[-1][1] <= gap:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], r[1]))
+        else:
+            merged.append(r)
+    return merged
+
+
+def plane_hit(m, h):
+    """Where the MEP line crosses the mid plane of a host that has a hole there (straight walls, floors, roofs)."""
+    if h["cat"] == "structuralframing" or h["arc"] is not None:
+        return None
+    lo, hi = h["box"]
+    mid = ((lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0, (lo[2] + hi[2]) / 2.0)
+    n = h["n"]
+    den = vdot(n, m["d"])
+    if abs(den) < COS_PARALLEL:
+        return None
+    t = vdot(n, vsub(mid, m["a"])) / den
+    if t < 0 or t > m["len"]:
+        return None
+    p = vadd(m["a"], vmul(m["d"], t))
+    if not inside(h["box"], p, 10 * SP_FT_PER_MM):
+        return None
+    return t
+
+
+# ---- existing openings and sparing families ------------------------------------------------------------------------------
+def collect_existing(srcs, state):
+    out = []
+    fam = ARGS.get("sparing_family") or ""
+    for src in srcs:
+        for o in FilteredElementCollector(src["doc"]).OfClass(Opening):
+            box = bbox_of(src, o)
+            if box is not None:
+                out.append({"kind": "opening", "e": o, "src": src, "box": box, "p": None, "key": src["key"] + str(eid(o))})
+            if len(out) >= MAX_EXISTING:
+                break
+        if fam:
+            for f in FilteredElementCollector(src["doc"]).OfClass(Family):
+                if f.Name != fam:
+                    continue
+                for sid in f.GetFamilySymbolIds():
+                    for fi in FilteredElementCollector(src["doc"]).WherePasses(FamilyInstanceFilter(src["doc"], sid)):
+                        p = None
+                        try:
+                            p = tp(src, v3(fi.Location.Point))
+                        except Exception:
+                            p = None
+                        out.append({"kind": "sparing", "e": fi, "src": src, "box": bbox_of(src, fi), "p": p, "key": src["key"] + str(eid(fi))})
+        if len(out) >= MAX_EXISTING:
+            info("EXISTING_CAPPED", "more than %d openings and sparing families; the rest was not used to find existing sparingen" % MAX_EXISTING)
+            state["unmeasured"] += 1
+            break
+    return out
+
+
+def find_existing(existing, p, tol, n, thick):
+    """The first opening or sparing family at p: its box holds p, or its insertion point lies within tol of p in the
+    host plane and inside the host thickness (a face-based family sits on the host face, not at the centre)."""
+    for x in existing:
+        if x["box"] is not None and inside(x["box"], p, tol):
+            return x
+        if x["p"] is not None:
+            off = vsub(x["p"], p)
+            along = vdot(off, n)
+            if vlen(vsub(off, vmul(n, along))) <= tol and abs(along) <= thick / 2.0 + tol:
+                return x
+    return None
+
+
+# ---- one crossing ----------------------------------------------------------------------------------------------------------
+def half_extent(m, n, e, thick):
+    """Half the size, along in-plane direction e, of the hole the MEP section needs through a host of this thickness."""
+    d = m["d"]
+    nd = vdot(n, d)
+    a = m["ax"]
+    b = vcross(d, a)
+    ed = vdot(e, d)
+    ka = vdot(e, a) - vdot(n, a) * ed / nd
+    kb = vdot(e, b) - vdot(n, b) * ed / nd
+    size = m["size"]
+    if size["shape"] == "round":
+        core = size["w"] / 2.0 * math.sqrt(ka * ka + kb * kb)
+    else:
+        core = size["w"] / 2.0 * abs(ka) + size["h"] / 2.0 * abs(kb)
+    return core + thick / 2.0 * abs(ed / nd)
+
+
+def raw_crossing(m, h, t, thick_measured, existing, tol):
+    c = vadd(m["a"], vmul(m["d"], t))
+    n, u, v = frame(h, c)
+    cosang = abs(vdot(n, m["d"]))
+    if cosang < COS_PARALLEL:
+        return None
+    thick = h["thick"] if h["thick"] else thick_measured
+    if not thick:
+        return None
+    return {"m": m, "h": h, "t": t, "c": c, "n": n, "u": u, "v": v, "cos": cosang, "thick": thick,
+            "hu": half_extent(m, n, u, thick), "hv": half_extent(m, n, v, thick), "ex": find_existing(existing, c, tol, n, thick)}
+
+
+def pair_crossings(m, h, existing, state):
+    gap = ARGS["merge_tolerance_mm"] * SP_FT_PER_MM
+    tol = ARGS["existing_tolerance_mm"] * SP_FT_PER_MM
+    out = []
+    ranges = passages(m, h, gap)
+    for r in ranges:
+        mid = (r[0] + r[1]) / 2.0
+        c = vadd(m["a"], vmul(m["d"], mid))
+        n = frame(h, c)[0]
+        cr = raw_crossing(m, h, mid, (r[1] - r[0]) * abs(vdot(n, m["d"])), existing, tol)
+        if cr is None:
+            state["parallel"] += 1
+        else:
+            out.append(cr)
+    if not ranges:
+        t = plane_hit(m, h)
+        if t is not None:
+            p = vadd(m["a"], vmul(m["d"], t))
+            if find_existing(existing, p, tol, frame(h, p)[0], h["thick"] or 0.0) is not None:
+                cr = raw_crossing(m, h, t, None, existing, tol)
+                if cr is not None:
+                    out.append(cr)
+    return out
+
+
+# ---- grouping, naming, sizing ---------------------------------------------------------------------------------------------
+def same_run(a, b):
+    if a["m"]["key"] == b["m"]["key"]:
+        return True
+    sa, sb = a["m"]["system"], b["m"]["system"]
+    return bool(sa) and sa == sb and abs(vdot(a["m"]["d"], b["m"]["d"])) >= SAME_RUN_COS
+
+
+def group_crossings(raws):
+    tol = ARGS["merge_tolerance_mm"] * SP_FT_PER_MM
+    raws.sort(key=lambda r: (r["h"]["key"], r["m"]["key"], r["t"]))
+    by_host = {}
+    groups = []
+    for r in raws:
+        home = None
+        for g in by_host.get(r["h"]["key"], []):
+            for o in g["members"]:
+                if same_run(o, r) and vlen(vsub(o["c"], r["c"])) <= tol:
+                    home = g
+                    break
+            if home is not None:
+                break
+        if home is None:
+            home = {"members": []}
+            by_host.setdefault(r["h"]["key"], []).append(home)
+            groups.append(home)
+        home["members"].append(r)
+    return groups
+
+
+def levels_by_height():
+    out = []
+    for lv in FilteredElementCollector(doc).OfClass(Level):
+        z = None
+        try:
+            z = lv.ProjectElevation
+        except Exception:
+            z = None
+        if z is None:
+            z = lv.Elevation
+        out.append((z, lv))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def level_at(levels, z):
+    best = None
+    for lz, lv in levels:
+        if lz <= z + 1e-3:
+            best = lv
+    if best is None and levels:
+        best = levels[0][1]
+    return best
+
+
+def project_origin():
+    try:
+        return v3(BasePoint.GetProjectBasePoint(doc).Position), "project"
+    except Exception:
+        return (0.0, 0.0, 0.0), "internal"
+
+
+def finish_group(g, levels, used_ids):
+    f = g["members"][0]
+    c0, n, u, v = f["c"], f["n"], f["u"], f["v"]
+    umin = vmin = 1e30
+    umax = vmax = -1e30
+    ex = None
+    thick = 0.0
+    meps = []
+    for r in g["members"]:
+        du = vdot(u, vsub(r["c"], c0))
+        dv = vdot(v, vsub(r["c"], c0))
+        umin, umax = min(umin, du - r["hu"]), max(umax, du + r["hu"])
+        vmin, vmax = min(vmin, dv - r["hv"]), max(vmax, dv + r["hv"])
+        thick = max(thick, r["thick"])
+        if ex is None and r["ex"] is not None:
+            ex = r["ex"]
+        if r["m"]["key"] not in meps:
+            meps.append(r["m"]["key"])
+    centre = vadd(c0, vadd(vmul(u, (umin + umax) / 2.0), vmul(v, (vmin + vmax) / 2.0)))
+    angle = math.degrees(math.acos(min(1.0, f["cos"])))
+    base = f["m"]["key"] + "x" + f["h"]["key"]
+    k = used_ids.get(base, 0) + 1
+    used_ids[base] = k
+    cid = base if k == 1 else "%s#%d" % (base, k)
+    clear = ARGS["clearance_mm"]
+    step = ARGS["round_to_mm"]
+    w_mm, h_mm = mm(umax - umin), mm(vmax - vmin)
+    single_round = len(meps) == 1 and len(g["members"]) == 1 and f["m"]["size"]["shape"] == "round"
+    shape = "round" if single_round and angle <= PERPENDICULAR_DEG else "rect"
+    sw = round_up(w_mm + 2 * clear, step)
+    sh = round_up(h_mm + 2 * clear, step)
+    if shape == "round":
+        sw = sh = max(sw, sh)
+    lv = level_at(levels, centre[2])
+    g.update({
+        "id": cid, "first": f, "c": centre, "n": n, "u": u, "v": v, "angle": angle, "thick": thick, "ex": ex,
+        "meps": meps, "shape": shape, "sw": sw, "sh": sh, "sd": round_up(mm(thick), step), "level": lv,
+        "level_name": lv.Name if lv is not None else "",
+    })
+    return g
+
+
+# ---- the whole detection ---------------------------------------------------------------------------------------------------
+def detect():
+    """{crossings, state, origin, coords}. Never raises for model content; budgets stop the work and set state['stopped']."""
+    state = {"stopped": "", "capped": "", "pairs": 0, "parallel": 0, "skipped": 0, "unmeasured": 0, "not_mep": [], "meps": 0, "hosts": 0}
+    watch = Stopwatch.StartNew()
+    budget_ms = int(float(ARGS["time_budget_s"]) * 1000)
+    max_pairs = int(ARGS["max_pairs"])
+    srcs = make_sources(state)
+    meps = collect_meps(srcs, state)
+    if state["not_mep"]:
+        info("IDS_NOT_MEP", "%d id(s) are not pipes, ducts, conduits or cable trays of the active model: %s" % (
+            len(state["not_mep"]), ",".join([str(i) for i in state["not_mep"][:20]])))
+    hosts = collect_hosts(srcs, meps, state)
+    state["meps"], state["hosts"] = len(meps), len(hosts)
+    existing = collect_existing(srcs, state) if meps and hosts else []
+    grid = {}
+    big = []
+    for i in range(len(hosts)):
+        lo, hi = hosts[i]["box"]
+        x0, x1 = int(math.floor(lo[0] / CELL_FT)), int(math.floor(hi[0] / CELL_FT))
+        y0, y1 = int(math.floor(lo[1] / CELL_FT)), int(math.floor(hi[1] / CELL_FT))
+        if (x1 - x0 + 1) * (y1 - y0 + 1) > BIG_HOST_CELLS:
+            big.append(i)
+            continue
+        for cx in range(x0, x1 + 1):
+            for cy in range(y0, y1 + 1):
+                grid.setdefault((cx, cy), []).append(i)
+    raws = []
+    for m in meps:
+        if state["stopped"]:
+            break
+        lo, hi = m["box"]
+        seen = set(big)
+        cand = list(big)
+        for cx in range(int(math.floor(lo[0] / CELL_FT)), int(math.floor(hi[0] / CELL_FT)) + 1):
+            for cy in range(int(math.floor(lo[1] / CELL_FT)), int(math.floor(hi[1] / CELL_FT)) + 1):
+                for i in grid.get((cx, cy), []):
+                    if i not in seen:
+                        seen.add(i)
+                        cand.append(i)
+        cand.sort()
+        for i in cand:
+            h = hosts[i]
+            if h["key"] == m["key"] or not overlap(m["box"], h["box"]):
+                continue
+            if state["pairs"] >= max_pairs:
+                state["stopped"] = "max_pairs"
+                break
+            if watch.ElapsedMilliseconds > budget_ms:
+                state["stopped"] = "time_budget_s"
+                break
+            state["pairs"] += 1
+            raws.extend(pair_crossings(m, h, existing, state))
+    levels = levels_by_height()
+    used = {}
+    crossings = [finish_group(g, levels, used) for g in group_crossings(raws)]
+    origin, coords = project_origin()
+    for g in crossings:
+        g["origin"] = origin
+    if state["capped"] and not state["stopped"]:
+        state["stopped"] = state["capped"]
+    if state["stopped"]:
+        info("TRUNCATED", "stopped early at %s after %d MEP/host pairs (%d ms): the crossing list is incomplete. Narrow with level, system, ids or categories, or raise the budget." % (
+            state["stopped"], state["pairs"], watch.ElapsedMilliseconds))
+    if state["parallel"]:
+        info("PARALLEL_IN_HOST", "%d MEP run(s) lie inside a host along its plane, not through it; that is a clash, not a sparing (see revit_check_clashes)" % state["parallel"])
+    return {"crossings": crossings, "state": state, "origin": origin, "coords": coords}
+
+
+def detection_meta(res):
+    st = res["state"]
+    crossings = res["crossings"]
+    open_n = len([g for g in crossings if g["ex"] is not None])
+    meta("crossings", len(crossings))
+    meta("already_open", open_n)
+    meta("need_sparing", len(crossings) - open_n)
+    meta("mep_elements", st["meps"])
+    meta("hosts", st["hosts"])
+    meta("pairs_tested", st["pairs"])
+    meta("parallel_in_host", st["parallel"])
+    meta("skipped_elements", st["skipped"])
+    meta("truncated", 1 if st["stopped"] else 0)
+    meta("truncated_reason", st["stopped"])
+    meta("coordinates", res["coords"])
+    partial = bool(st["stopped"]) or st["unmeasured"] > 0
+    meta("partial", 1 if partial else 0)
+    meta("verified", 0 if (partial or st["skipped"] > 0) else 1)
+
+
+def existing_text(ex):
+    if ex is None:
+        return "", ""
+    return "%s %s" % (ex["kind"], ex["key"]), str(eid(ex["e"]))
+
+
+def crossing_pairs(g):
+    f = g["first"]
+    m, h = f["m"], f["h"]
+    ex_text, ex_id = existing_text(g["ex"])
+    return [
+        ("crossing_id", g["id"]), ("mep_id", m["id"]), ("mep_link", m["src"]["name"]), ("mep_cat", m["cat"]),
+        ("system", m["system"]), ("host_id", h["id"]), ("host_link", h["src"]["name"]), ("host_cat", h["cat"]),
+        ("level", g["level_name"]),
+        ("x_mm", "%.1f" % mm(g["c"][0] - g["origin"][0])), ("y_mm", "%.1f" % mm(g["c"][1] - g["origin"][1])),
+        ("z_mm", "%.1f" % mm(g["c"][2] - g["origin"][2])),
+        ("mep_size", size_text(m["size"])), ("insul_mm", "%.1f" % mm(m["size"]["insul"])),
+        ("host_t_mm", "%.1f" % mm(g["thick"])), ("angle_deg", "%.1f" % g["angle"]),
+        ("passage", "perpendicular" if g["angle"] <= PERPENDICULAR_DEG else "oblique"),
+        ("existing", ex_text), ("existing_id", ex_id), ("shape", g["shape"]),
+        ("sparing_w_mm", g["sw"]), ("sparing_h_mm", g["sh"]), ("sparing_d_mm", g["sd"]),
+        ("members", len(g["members"])), ("mep_ids", ",".join(g["meps"])),
+    ]

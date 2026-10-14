@@ -1,0 +1,318 @@
+{
+  "id": "revit_sparing",
+  "name": "Revit sparingen (MEP openings)",
+  "version": "0.1.0",
+  "schema_version": 1,
+  "min_hub_version": "1.2.0",
+  "description": "Sparingen: openings where pipes, ducts, conduits and cable trays pass through walls and floors. find (read-only) lists every crossing with MEP size, host thickness, passage angle, an existing opening if any, and a suggested sparing size; links optional. place (write, needs an approved plan) puts a sparing family or native opening at each crossing, sets its size and an approval status, and replaces only the sparingen it made under the same tag. Not yet run against a live Revit.",
+  "author": "AEC Model Bridge",
+  "license": "GPL-3.0-or-later",
+  "requires_providers": [
+    "revit"
+  ],
+  "permissions": [
+    "model.read",
+    "model.write"
+  ],
+  "commands": [
+    {
+      "id": "find",
+      "title": "Find where MEP runs (pipes, ducts, conduits, cable trays) pass through walls and floors, also in links, and suggest a sparing per crossing: MEP size plus clearance, rounded up, with host thickness, angle and any existing opening. Read-only and budgeted. For general clashes use revit_check_clashes or revit_check_intersections; for sparingen use this, then revit_sparing_place.",
+      "mcp_tool": "revit_sparing_find",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "pipes",
+                "ducts",
+                "conduits",
+                "cabletrays"
+              ],
+              "description": "One MEP category."
+            },
+            "description": "MEP categories to check: pipes, ducts, conduits, cabletrays. Default all four."
+          },
+          "system": {
+            "type": "string",
+            "description": "Only MEP elements whose system name contains this text (case-insensitive), for example 'Riolering' or 'Supply Air'. Default: every system."
+          },
+          "level": {
+            "type": "string",
+            "description": "Only MEP elements whose reference level has exactly this name. Default: every level."
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "description": "ElementId of a pipe, duct, conduit or cable tray in the active model."
+            },
+            "description": "Only these MEP elements of the active model (at most 2000). Links are then not searched for MEP."
+          },
+          "host_categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "walls",
+                "floors",
+                "roofs",
+                "structuralframing"
+              ],
+              "description": "One host category."
+            },
+            "description": "Host categories the MEP may pass through: walls, floors, roofs, structuralframing. Default walls and floors."
+          },
+          "include_links": {
+            "type": "boolean",
+            "default": false,
+            "description": "Also search loaded linked models, for hosts and for MEP (for example the architect's walls or the structural floors). Link transforms are applied. Default false."
+          },
+          "sparing_family": {
+            "type": "string",
+            "description": "Name of the sparing family already used in the models; its instances count as an existing opening at a crossing. Native openings always count. revit_sparing_place uses family_name when this is left out."
+          },
+          "clearance_mm": {
+            "type": "number",
+            "default": 25,
+            "description": "Free space around the MEP on every side, added to the outer size (insulation included). Default 25 mm."
+          },
+          "round_to_mm": {
+            "type": "number",
+            "default": 10,
+            "description": "The suggested sparing size and depth are rounded up to a multiple of this. Default 10 mm."
+          },
+          "merge_tolerance_mm": {
+            "type": "number",
+            "default": 100,
+            "description": "Crossings of the same MEP run (same element, or same system and direction) through the same host closer than this become one sparing. Default 100 mm."
+          },
+          "existing_tolerance_mm": {
+            "type": "number",
+            "default": 50,
+            "description": "An existing opening or sparing family within this distance of a crossing centre counts as already there. Default 50 mm."
+          },
+          "max_pairs": {
+            "type": "integer",
+            "default": 20000,
+            "description": "Stop after this many MEP/host pairs whose boxes overlap; the result is then truncated and not verified. Default 20000."
+          },
+          "max_elements": {
+            "type": "integer",
+            "default": 2000,
+            "description": "At most this many MEP elements and this many hosts are read; more makes the result truncated. Default 2000, at most 20000."
+          },
+          "time_budget_s": {
+            "type": "number",
+            "default": 15,
+            "description": "Stop the geometry tests after this many seconds so Revit is not blocked longer (1 to 25). Default 15."
+          },
+          "limit": {
+            "type": "integer",
+            "default": 200,
+            "description": "Rows returned (1 to 500). Default 200; the full list goes to the detail file when cut."
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0,
+            "description": "Skip this many rows (paging). Default 0."
+          }
+        }
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "place",
+      "title": "Place sparingen at the crossings revit_sparing_find reports: a loaded sparing family or a native opening, sized, with an approval status. Write tool: needs an approved plan, one transaction per sparing, rolls back on failure unless on_error is skip, replaces only what it made under the same tag. Run revit_sparing_find first; dry_run shows the result without keeping it.",
+      "mcp_tool": "revit_sparing_place",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "tag": {
+            "type": "string",
+            "description": "Your label for this batch, 1-80 ASCII characters, for example 'SPA-L01'. A re-run with the same tag replaces only the sparingen it made; other sparingen are never touched."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "family",
+              "opening"
+            ],
+            "description": "family: place a loaded sparing family. opening: a native rectangular opening in a wall, floor or roof of the active model (not in a link)."
+          },
+          "family_name": {
+            "type": "string",
+            "description": "mode family: the loaded sparing family (face-based, work-plane based, wall or floor hosted, or unhosted)."
+          },
+          "type_name": {
+            "type": "string",
+            "description": "mode family: the type of that family to place."
+          },
+          "size_parameters": {
+            "type": "object",
+            "description": "mode family: the instance parameters that get the size, for example {\"width\": \"b\", \"height\": \"h\", \"depth\": \"d\"}; diameter is used for a round crossing when given. Missing parameters stop the call before anything changes and list the ones the family has.",
+            "properties": {
+              "width": {
+                "type": "string",
+                "description": "Length parameter for the width (along the wall, or X in a floor)."
+              },
+              "height": {
+                "type": "string",
+                "description": "Length parameter for the height (vertical in a wall, or Y in a floor)."
+              },
+              "depth": {
+                "type": "string",
+                "description": "Length parameter for the depth (host thickness, rounded up)."
+              },
+              "diameter": {
+                "type": "string",
+                "description": "Length parameter for the diameter of a round sparing."
+              }
+            }
+          },
+          "status_parameter": {
+            "type": "string",
+            "description": "Text instance parameter that holds the approval status, for example 'Sparing status'. Default none: no status is written."
+          },
+          "status_value": {
+            "type": "string",
+            "description": "Value written to status_parameter. Default 'Voorstel'."
+          },
+          "crossing_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "A crossing_id from revit_sparing_find."
+            },
+            "description": "Place only these crossings (crossing_id values from revit_sparing_find with the same filters). Default: every crossing that needs a sparing."
+          },
+          "max_sparings": {
+            "type": "integer",
+            "default": 100,
+            "description": "Refuse the call when more sparingen would be placed than this (1 to 500). Default 100."
+          },
+          "on_error": {
+            "type": "string",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort",
+            "description": "abort: the first failure rolls everything back. skip: keep what worked and list what failed."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Do all the work, report it with the post-check, then roll everything back. Default false."
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "pipes",
+                "ducts",
+                "conduits",
+                "cabletrays"
+              ],
+              "description": "One MEP category."
+            },
+            "description": "MEP categories to check: pipes, ducts, conduits, cabletrays. Default all four."
+          },
+          "system": {
+            "type": "string",
+            "description": "Only MEP elements whose system name contains this text (case-insensitive), for example 'Riolering' or 'Supply Air'. Default: every system."
+          },
+          "level": {
+            "type": "string",
+            "description": "Only MEP elements whose reference level has exactly this name. Default: every level."
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "description": "ElementId of a pipe, duct, conduit or cable tray in the active model."
+            },
+            "description": "Only these MEP elements of the active model (at most 2000). Links are then not searched for MEP."
+          },
+          "host_categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "walls",
+                "floors",
+                "roofs",
+                "structuralframing"
+              ],
+              "description": "One host category."
+            },
+            "description": "Host categories the MEP may pass through: walls, floors, roofs, structuralframing. Default walls and floors."
+          },
+          "include_links": {
+            "type": "boolean",
+            "default": false,
+            "description": "Also search loaded linked models, for hosts and for MEP (for example the architect's walls or the structural floors). Link transforms are applied. Default false."
+          },
+          "sparing_family": {
+            "type": "string",
+            "description": "Name of the sparing family already used in the models; its instances count as an existing opening at a crossing. Native openings always count. revit_sparing_place uses family_name when this is left out."
+          },
+          "clearance_mm": {
+            "type": "number",
+            "default": 25,
+            "description": "Free space around the MEP on every side, added to the outer size (insulation included). Default 25 mm."
+          },
+          "round_to_mm": {
+            "type": "number",
+            "default": 10,
+            "description": "The suggested sparing size and depth are rounded up to a multiple of this. Default 10 mm."
+          },
+          "merge_tolerance_mm": {
+            "type": "number",
+            "default": 100,
+            "description": "Crossings of the same MEP run (same element, or same system and direction) through the same host closer than this become one sparing. Default 100 mm."
+          },
+          "existing_tolerance_mm": {
+            "type": "number",
+            "default": 50,
+            "description": "An existing opening or sparing family within this distance of a crossing centre counts as already there. Default 50 mm."
+          },
+          "max_pairs": {
+            "type": "integer",
+            "default": 20000,
+            "description": "Stop after this many MEP/host pairs whose boxes overlap; the result is then truncated and not verified. Default 20000."
+          },
+          "max_elements": {
+            "type": "integer",
+            "default": 2000,
+            "description": "At most this many MEP elements and this many hosts are read; more makes the result truncated. Default 2000, at most 20000."
+          },
+          "time_budget_s": {
+            "type": "number",
+            "default": 15,
+            "description": "Stop the geometry tests after this many seconds so Revit is not blocked longer (1 to 25). Default 15."
+          }
+        },
+        "required": [
+          "tag",
+          "mode"
+        ]
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    }
+  ]
+}
