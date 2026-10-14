@@ -4,7 +4,6 @@ import json
 from types import SimpleNamespace
 
 from revit_mcp_server.providers.semantic_provider import SemanticProvider
-from revit_mcp_server.semantic import engine
 from revit_mcp_server.security.workspace import WorkspaceMonitor
 
 

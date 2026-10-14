@@ -119,7 +119,10 @@ def test_sandbox_rejects_outside_paths(mod, ws, tmp_path):
 def test_sandbox_rejects_symlink_escape(mod, ws, tmp_path):
     target = _zip(tmp_path / "t.bcfzip", [("bcf.version", b"<Version VersionId='2.1'/>")])
     link = ws.allowed_directories[0] / "link.bcfzip"
-    link.symlink_to(target)
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks unavailable")
     with pytest.raises(bcf.BcfError):
         mod.import_bcf("link.bcfzip", workspace=ws)
 
