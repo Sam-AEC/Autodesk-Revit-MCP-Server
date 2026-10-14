@@ -18,13 +18,13 @@
                        "source":  "github",
                        "subfolder":  "packages/mcp-server-revit"
                    },
-    "version":  "1.4.0",
+    "version":  "1.5.0",
     "packages":  [
                      {
                          "registryType":  "mcpb",
-                         "identifier":  "https://github.com/Sam-AEC/aec-model-bridge/releases/download/v1.4.0/aec-model-bridge-1.4.0.mcpb",
+                         "identifier":  "https://github.com/Sam-AEC/aec-model-bridge/releases/download/v1.5.0/aec-model-bridge-1.5.0.mcpb",
                          "fileSha256":  "005c9524735ccb1c5d51432bb0969bbd1ad27c4a3765565be8c80922885854a1",
-                         "version":  "1.4.0",
+                         "version":  "1.5.0",
                          "transport":  {
                                            "type":  "stdio"
                                        },

@@ -2,7 +2,7 @@
   "name": "aec-model-bridge",
   "displayName": "AEC Model Bridge",
   "description": "Revit and BIM tools for Copilot agent mode and other MCP clients in VS Code. Sets up the MCP server with zero config.",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "publisher": "Sam-AEC",
   "license": "GPL-3.0-or-later",
   "icon": "media/icon.png",

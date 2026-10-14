@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.0 - 2026-10-14
+
 Status: on the dev branch, not yet released.
 
 - **Breaking:** the old creators were hardened in place. `revit_create_wall` takes `wall_type` and `reverse` (flip the exterior side) and uses the default basic wall type when none is given. `revit_create_floor` forwards `floor_type` and no longer defaults to a foundation slab. `revit_create_roof` forwards `roof_type` (it used to pass none, so Revit refused) and `slope` (rise over run; omitted means flat; the old hidden default of 0.5 was never applied and is gone). `revit_create_level` also creates the floor plan view unless `create_plan_view` is false. An unknown type name now fails instead of falling back. Not yet run in Revit.
@@ -23,6 +25,7 @@ Status: on the dev branch, not yet released.
 - Security: a person can now recover a plan stuck by a crashed process. `aec-model-bridge-approve recover <plan_id> --reason ...` marks actions left in `running` as `abandoned` (never re-run, the approved plan becomes `partial`, remaining actions need a new plan); `show` lists running actions with their age. It is not an MCP tool and nothing recovers automatically. Plan writes retry `os.replace` up to 5 times on a Windows `PermissionError` before failing with a clear error (UNVERIFIED on Windows). `docs/security.md` lists the remaining gaps and ADR 0017 (Proposed) covers document binding and expiry; no behaviour change for those.
 - Brand: add the Cerberus sub-mark artwork (Ember mesh: three jackal heads in an ouroboros ring) under `assets/cerberus/` for the Cerberus feature, and rewrite `docs/design/brand.md` to separate the product brand (AEC Model Bridge, Pier mark) from the feature sub-mark. The product mark, installer images, icons and READMEs keep the Pier mark. Setting the repository social preview in Settings remains a manual step.
 - Security: log and error redaction now also covers UNC network paths (`\\server\share\model.rvt`, the usual way central models are shared) and backslash paths without a drive letter. Before, a server or share name could appear in audit logs and error messages. This also fixes `test_redaction_in_server` on Linux.
+
 
 ## 1.4.0 - 2026-10-09
 

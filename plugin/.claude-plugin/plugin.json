@@ -1,6 +1,6 @@
 {
   "name": "aec-model-bridge",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Read and review the Autodesk Revit model you have open. Every change is a plan that a person approves first.",
   "author": {
     "name": "A. Sam Mohammad",

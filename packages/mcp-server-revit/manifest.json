@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "aec-model-bridge",
   "display_name": "AEC Model Bridge",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Revit MCP server: 200+ tools to read and edit BIM models, every change human-approved.",
   "long_description": "AEC Model Bridge lets Claude and other MCP clients read and edit the Autodesk Revit model you have open. It needs Windows, a licensed Revit 2024-2027 and the AEC Model Bridge add-in (see the install guide). The server exposes more than 200 tools for model authoring, parameters, sheets and views, QA/QC, exports (IFC, DWG, images, Navisworks), worksharing and advanced API access, plus IFC, Rhino/Grasshopper and Speckle providers. Every tool that changes the model requires a plan that a human approves first (approval mode 'required', the default). Independent project, not affiliated with Autodesk. Dual licensed: GPL-3.0-or-later with a Revit linking exception, or a commercial license.",
   "author": {
