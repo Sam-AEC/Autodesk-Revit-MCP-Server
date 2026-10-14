@@ -9,6 +9,7 @@ from .navisworks import NavisworksProvider
 from .graph import SemanticGraphProvider
 from .cloud import SpeckleProvider, AutodeskDataProvider
 from .job_provider import JobProvider
+from .revit_jobs import RevitJobProvider
 from .exporter import SQLiteExporterProvider
 from .proxy import McpProxyProvider
 from .approval_provider import ApprovalProvider
@@ -29,6 +30,7 @@ __all__ = [
     "SpeckleProvider",
     "AutodeskDataProvider",
     "JobProvider",
+    "RevitJobProvider",
     "SQLiteExporterProvider",
     "McpProxyProvider",
     "ApprovalProvider",
