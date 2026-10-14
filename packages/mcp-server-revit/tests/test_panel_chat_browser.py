@@ -13,7 +13,7 @@ Skipped cleanly, with the reason, when no Chromium can load a trivial page (set 
 to point at one; AMB_REQUIRE_BROWSER=1 turns that skip into a failure). A page that never
 finishes fails within a minute with the browser's stderr instead of hanging.
 Anything needing live WebView2 (clipboard permission, CSP on file://, IME, DPI) is NOT
-covered here; see docs/dev-test-plan.md section E.
+covered here; check it by hand in Revit.
 """
 
 from __future__ import annotations

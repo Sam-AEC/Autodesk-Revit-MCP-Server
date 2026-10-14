@@ -1,5 +1,5 @@
 """
-clash_triage module - read-only triage of Navisworks clash results (ADR 0015, slice A).
+clash_triage module - read-only triage of Navisworks clash results (see docs/clash-triage.md, slice A).
 
 Commands:
   match_clashes     - Match both items of every clash to Revit elements and report how sure each match is.

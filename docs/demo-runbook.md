@@ -17,8 +17,8 @@ contains #95), do not run Step 6 or the undo steps against anything you care
 about, and treat the first real write on a throwaway copy as a test in its own
 right. Steps 1 to 5 and the rejected-plan run do not write to the model.
 
-This runbook matches `dev`, not the last release. The test plan for `dev` is
-[dev-test-plan.md](dev-test-plan.md); it also lists the known limits.
+This runbook matches `dev`, not the last release. The pre-release checks and
+known limits are in [release-checklist.md](release-checklist.md).
 
 Bounded read-only Revit 2024 checks passed on 14 October 2026; see
 [the live validation report](revit-addin-live-validation-2026-10-14.md).
@@ -381,8 +381,8 @@ file, the audit log and both snapshot ids.
   14 October 2026 read-only smoke checks do not establish this workflow.
 - Undo is Ctrl+Z once per action. There is no one-step undo for a plan.
 
-The fuller list, with how to check each, is in
-[dev-test-plan.md](dev-test-plan.md#h-known-limits-do-not-report-as-new-findings).
+The fuller list is in
+[release-checklist.md](release-checklist.md#6-known-limits-of-the-dev-drop).
 
 ## Record for each run
 

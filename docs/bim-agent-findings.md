@@ -108,8 +108,7 @@ error impossible to ship. The reviewer in `scripts/revit/bim_review` is the firs
 ## G. Villa takeover audit (2026-10-13, Revit 2024.3): bridge and assistant limits
 
 Measured on the live model (194 selected elements) before any change. Source fixes are in the add-in and MCP server; a fix is only
-**live-verified** once the rebuilt add-in is loaded (see upgrade-plan section 8). Spatial evidence lives in the
-[takeover handoff](AI-REVIT-MODELING-HANDOFF.md) and its JSON state file.
+**live-verified** once the rebuilt add-in is loaded (see upgrade-plan section 8).
 
 | ID | Observation | Remedy / status |
 |---|---|---|
@@ -124,6 +123,6 @@ Measured on the live model (194 selected elements) before any change. Source fix
 | S3-09 | Dedicated readers expose position and box but not family host, orientation, transform or connector topology; `create_duct/pipe` do not connect or size | Capability gap (plan 1.6, 3.4) |
 | S3-10 | A tiny exterior image cannot show facade quality, clearances or construction detail | Review framed elevations, plans and sections (plan 1.10) |
 
-Reusable review steps: [workflows/villa-refinement-review.md](workflows/villa-refinement-review.md). Autodesk references:
+Autodesk references:
 [Parameter.IsShared / GUID](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/333ff41b-e6a7-d959-60bf-c3bfae495581.htm),
 [ExportImage](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/b98a3e71-39fa-bf7a-cb3d-591d8b1fcd93.htm).

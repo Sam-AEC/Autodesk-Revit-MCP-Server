@@ -56,7 +56,7 @@ Status: publish steps are in [vscode-extension.yml](../.github/workflows/vscode-
 
 ## Client Configurations
 
-Setup guides for further clients, each marked UNVERIFIED until tested on a live install: [Visual Studio](clients/visual-studio.md), [JetBrains](clients/jetbrains.md), [Codex](clients/codex.md), [Gemini CLI](clients/gemini-cli.md), [Windsurf](clients/windsurf.md) and [Cline](clients/cline.md). Cline can also install from [llms-install.md](../llms-install.md).
+Setup guides for further clients (Visual Studio, JetBrains, Codex, Gemini CLI, Windsurf, Cline) are in [clients.md](clients.md), each marked UNVERIFIED until tested on a live install. Cline can also install from [llms-install.md](../llms-install.md).
 
 ### VS Code / GitHub Copilot
 

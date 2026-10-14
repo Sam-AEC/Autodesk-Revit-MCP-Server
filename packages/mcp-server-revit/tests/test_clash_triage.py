@@ -1,4 +1,4 @@
-"""Tests for the read-only clash triage module (ADR 0015, slice A). Fixtures only; no live Revit or Navisworks."""
+"""Tests for the read-only clash triage module (see docs/clash-triage.md, slice A). Fixtures only; no live Revit or Navisworks."""
 import importlib.util
 import json
 from pathlib import Path
