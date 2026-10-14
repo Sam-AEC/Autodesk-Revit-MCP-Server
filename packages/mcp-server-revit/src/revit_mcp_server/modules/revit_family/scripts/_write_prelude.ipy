@@ -1,0 +1,171 @@
+# Shared prelude of the revit_family write script (make_family). IronPython 2.7 source.
+# Loaded after the revit module's _prelude.ipy (line protocol, eid, doc_meta, ...).
+# Same rules as the revit_docs write scripts:
+#   * all project changes happen inside one TransactionGroup, every family load in its own Transaction;
+#   * on_error "abort" (default): the first failure rolls the whole group back, the project is as it was;
+#     "skip": keep what worked, list what did not;
+#   * Revit warnings are dismissed and listed; an error-level failure rolls that transaction back;
+#   * the group is always closed (committed or rolled back) before the script returns, even after an exception.
+# Differences: a step may run without a project transaction (txn=False): building a family happens in its own
+# family document, never in the project. A call where nothing was committed is always rolled back, never assimilated.
+RUN = [None]
+
+
+class Abort(Exception):
+    pass
+
+
+class StepError(Exception):
+    def __init__(self, message, ids=None):
+        Exception.__init__(self, message)
+        self.ids = list(ids or [])
+
+
+class Collector(IFailuresPreprocessor):
+    """Dismisses warnings (and records their text); an error rolls the transaction back and is recorded."""
+
+    def __init__(self, warnings, errors):
+        self.warnings = warnings
+        self.errors = errors
+
+    def PreprocessFailures(self, accessor):
+        bad = False
+        for f in list(accessor.GetFailureMessages()):
+            text = f.GetDescriptionText()
+            if f.GetSeverity() == FailureSeverity.Warning:
+                self.warnings.append(text)
+                accessor.DeleteWarning(f)
+            else:
+                bad = True
+                self.errors.append(text)
+        if bad:
+            return FailureProcessingResult.ProceedWithRollBack
+        return FailureProcessingResult.Continue
+
+
+class Runner(object):
+    def __init__(self, title, on_error):
+        self.on_error = on_error if on_error in ("abort", "skip") else "abort"
+        self.changed = []
+        self.failed_steps = []
+        self.failed_ids = []
+        self.post_failed = 0
+        self.committed = 0
+        self.warnings = []
+        self.closed = False
+        self.crashed = False
+        self.outcome = "ok"
+        self.group = TransactionGroup(doc, title)
+        self.group.Start()
+        RUN[0] = self
+
+    def step(self, label, work, ids=None, txn=True):
+        """Run work() (in its own project Transaction unless txn is False); returns its result, or None when it failed (skip mode)."""
+        errors = []
+        t = None
+        if txn:
+            t = Transaction(doc, label)
+            t.Start()
+        try:
+            if t is not None:
+                opts = t.GetFailureHandlingOptions()
+                opts.SetFailuresPreprocessor(Collector(self.warnings, errors))
+                t.SetFailureHandlingOptions(opts)
+            result = work()
+            if t is not None:
+                status = t.Commit()
+                if status != TransactionStatus.Committed:
+                    why = (": " + "; ".join(errors[:3])) if errors else ""
+                    raise StepError("Revit did not commit it (%s)%s" % (status, why), ids)
+                self.committed += 1
+            return result
+        except Exception as ex:
+            try:
+                if t is not None and t.HasStarted():
+                    t.RollBack()
+            except Exception:
+                pass
+            culprit = list(getattr(ex, "ids", None) or ids or [])
+            text = str(ex)
+            if errors and text.find(errors[0]) < 0:
+                text = text + " [Revit: " + "; ".join(errors[:3]) + "]"
+            self.failed_steps.append(label)
+            for i in culprit:
+                if i not in self.failed_ids:
+                    self.failed_ids.append(i)
+            suffix = ""
+            if culprit:
+                suffix = " (element ids: %s)" % ",".join([str(i) for i in culprit])
+            fail("STEP_FAILED", "%s: %s%s" % (label, text, suffix))
+            if self.on_error == "abort":
+                raise Abort()
+            return None
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        failed = bool(self.failed_steps) or self.post_failed > 0 or self.crashed
+        rollback = failed and (self.on_error == "abort" or self.crashed or self.committed == 0)
+        try:
+            if rollback:
+                if self.group.HasStarted():
+                    if self.group.RollBack() != TransactionStatus.RolledBack:
+                        raise StepError("Revit did not roll back the transaction group")
+                self.changed = []
+                self.outcome = "rolled_back"
+            else:
+                if self.group.Assimilate() != TransactionStatus.Committed:
+                    raise StepError("Revit did not commit the transaction group")
+                if failed:
+                    self.outcome = "partial_failure" if self.failed_steps else "post_check_failed"
+        except Exception as ex:
+            self.outcome = "group_close_failed"
+            fail("GROUP_CLOSE_FAILED", "%s: %s" % (ex.__class__.__name__, ex))
+        meta("outcome", self.outcome)
+        meta("on_error", self.on_error)
+        meta("changed_ids", ",".join([str(i) for i in self.changed]))
+        meta("failed_ids", ",".join([str(i) for i in self.failed_ids]))
+        seen = []
+        for w in self.warnings:
+            if w not in seen:
+                seen.append(w)
+        for w in seen[:20]:
+            info("REVIT_WARNING_DISMISSED", w)
+        meta("warnings_dismissed", len(self.warnings))
+
+
+def run_write(fn):
+    """Run main() and always close the open group. Returns the line-protocol text."""
+    try:
+        fn()
+    except Abort:
+        pass
+    except Exception as ex:
+        error("script_exception", "%s: %s" % (ex.__class__.__name__, ex))
+        if RUN[0] is not None:
+            RUN[0].crashed = True
+    finally:
+        if RUN[0] is not None:
+            RUN[0].close()
+    return finish()
+
+
+def refuse(kind, message, ids=None):
+    """Nothing was changed: the request cannot be carried out as asked."""
+    meta("outcome", kind)
+    meta("changed_ids", "")
+    meta("failed_ids", ",".join([str(i) for i in (ids or [])]))
+    fail(kind.upper(), message)
+
+
+def item(pairs):
+    row([("row_type", "item")] + pairs)
+
+
+def post(check, ok, detail):
+    row([("row_type", "post"), ("check", check), ("ok", 1 if ok else 0), ("detail", detail)])
+    if not ok:
+        if RUN[0] is not None:
+            RUN[0].post_failed += 1
+        fail("POST_CHECK_FAILED", "%s: %s" % (check, detail))
