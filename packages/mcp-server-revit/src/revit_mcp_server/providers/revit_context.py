@@ -17,7 +17,7 @@ CONTEXT_TOOLS = [
         description=(
             "Read-only snapshot of the live Revit session: which build of the add-in is loaded (and whether it matches "
             "this server), Revit version, active document (title, path, guid, workshared), active view, how many "
-            "requests are queued, which request is running and for how long, and the approval mode. Call it first in a "
+            "requests are queued, which request is running and for how long, and the approval mode in force right now (including a temporary Auto window from the panel and when it ends). Call it first in a "
             "session and after any restart. Needs no approval. A stale add-in that predates this tool is reported, not an error."
         ),
         inputSchema={"type": "object", "properties": {}, "required": []},
@@ -60,13 +60,22 @@ def _call_quick(bridge: Any, command: str) -> dict[str, Any]:
     return bridge.send_tool(command, {})
 
 
-def get_context(bridge: Any, *, live: bool, approval_mode: str) -> dict[str, Any]:
+def get_context(
+    bridge: Any, *, live: bool, approval_mode: str, approval: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Merge the add-in's unqueued /health (queue, running job, build) with its revit.get_context command.
 
     /health is answered on the HTTP thread, so it still works while Revit is busy with a long script;
     the command needs the Revit thread and may only report 'running' in that case.
     """
     server = {"version": _server_version(), "approval_mode": approval_mode}
+    if approval:
+        # The mode in force right now (a signed, time-limited 'auto' window from the panel counts),
+        # not just the one the process started with.
+        server["approval_mode"] = approval.get("mode") or approval_mode
+        server["configured_approval_mode"] = approval.get("configured_mode") or approval_mode
+        server["auto_window"] = approval.get("auto_window")
+        server["auto_expires_at"] = approval.get("auto_expires_at")
     if not live:
         return {
             "ok": True,

@@ -64,3 +64,47 @@ def test_runtime_script_compiles_the_factory_and_checks_the_bundled_modules():
     assert "PythonEngineFactory.cs" in RUNTIME_SCRIPT
     assert "Lib/json/__init__.py" in RUNTIME_SCRIPT
     assert "throw" in RUNTIME_SCRIPT
+
+
+DEPLOY_SCRIPT = (REPO_ROOT / "scripts" / "deploy-addin.ps1").read_text(encoding="utf-8")
+
+
+def test_missing_lib_degrades_instead_of_disabling_python():
+    create = FACTORY.split("public static ScriptEngine Create()", 1)[1].split("public static void ShutdownQuietly", 1)[0]
+    # only the Modules assembly is still a hard requirement; Lib is optional
+    assert 'File.Exists(Path.Combine(StandardLibraryPath, "json"' not in create
+    assert "StandardLibraryAvailable" in create
+    assert '"import time"' in create
+    assert "standard_library_warning" in FACTORY and "deploy-addin.ps1" in FACTORY
+
+
+def test_runner_shuts_the_engine_down_after_every_script():
+    text = RUNNER.replace("\r\n", "\n")
+    marker = "finally\n        {\n            ActiveProgress = null;"
+    finally_block = text.split(marker, 1)[1].split("\n    }\n", 1)[0]
+    assert "PythonEngineFactory.ShutdownQuietly(engine)" in finally_block
+    assert "Runtime.Shutdown()" in FACTORY.split("ShutdownQuietly(ScriptEngine? engine)", 1)[1]
+
+
+def test_runner_rolls_back_transactions_a_script_left_open():
+    text = RUNNER.replace("\r\n", "\n")
+    assert "RollBackOpenTransactions(doc, scope)" in text
+    # both the failure path and the "script returned but never committed" path
+    assert text.count("RollBackOpenTransactions(doc, scope)") >= 2
+    for kind in ("SubTransaction", "Transaction", "TransactionGroup"):
+        assert f"is {kind} " in text
+    assert "TransactionStatus.Started" in text and ".RollBack()" in text
+    assert "transaction_left_open" in text and "transactions_rolled_back" in text
+
+
+def test_deploy_script_mirrors_the_whole_folder_and_verifies_it():
+    assert "robocopy" in DEPLOY_SCRIPT and "/MIR" in DEPLOY_SCRIPT
+    assert r"C:\ProgramData\AECModelBridge\bin" in DEPLOY_SCRIPT
+    assert 'Get-Process -Name "Revit"' in DEPLOY_SCRIPT and "-Force" in DEPLOY_SCRIPT
+    assert "backup" in DEPLOY_SCRIPT.lower() and "Restore-Backup" in DEPLOY_SCRIPT
+    assert "LastWriteTimeUtc" in DEPLOY_SCRIPT and ".Length" in DEPLOY_SCRIPT
+    assert r"Lib\json\__init__.py" in DEPLOY_SCRIPT
+    # same exclusions as the installer, which must stay the single layout reference
+    iss = (REPO_ROOT / "scripts" / "installer" / "AECModelBridge.iss").read_text(encoding="utf-8")
+    for name in ("RevitAPI.dll", "RevitAPIUI.dll", "AdWindows.dll", "AdskLicensingSDK_*.dll"):
+        assert name in iss and name in DEPLOY_SCRIPT

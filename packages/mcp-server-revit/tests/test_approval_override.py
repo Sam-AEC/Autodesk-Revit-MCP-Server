@@ -7,7 +7,6 @@ import threading
 
 import pytest
 
-from revit_mcp_server import panel_server
 from revit_mcp_server.panel_server import build_server
 from revit_mcp_server.security import approval_override as ov
 from revit_mcp_server.security.approval import ApprovalGate

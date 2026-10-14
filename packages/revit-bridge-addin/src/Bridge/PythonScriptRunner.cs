@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Events;
 using Autodesk.Revit.UI;
+using Microsoft.Scripting.Hosting;
 
 namespace RevitBridge.Bridge;
 
@@ -74,6 +75,8 @@ internal static class PythonScriptRunner
         var outputMs = new MemoryStream();
         var errorMs = new MemoryStream();
         object? runtime = null;
+        ScriptEngine? engine = null;
+        ScriptScope? scope = null;
         var changedCount = 0;
         var savesBlocked = 0;
         EventHandler<DocumentChangedEventArgs>? onChanged = null;
@@ -82,7 +85,7 @@ internal static class PythonScriptRunner
 
         try
         {
-            var engine = PythonEngineFactory.Create();
+            engine = PythonEngineFactory.Create();
             runtime = PythonEngineFactory.Describe(engine);
             // Pre-load Revit assemblies so the script can use "from Autodesk.Revit.DB import *"
             engine.Runtime.LoadAssembly(typeof(Document).Assembly);       // RevitAPI.dll
@@ -91,7 +94,7 @@ internal static class PythonScriptRunner
             engine.Runtime.IO.SetOutput(outputMs, Encoding.UTF8);
             engine.Runtime.IO.SetErrorOutput(errorMs, Encoding.UTF8);
 
-            var scope = engine.CreateScope();
+            scope = engine.CreateScope();
             scope.SetVariable("doc", doc);
             scope.SetVariable("uidoc", app.ActiveUIDocument);
             scope.SetVariable("uiapp", app);
@@ -121,6 +124,18 @@ internal static class PythonScriptRunner
             if (scope.TryGetVariable("__output__", out object outVar) && outVar is string outStr && !string.IsNullOrEmpty(outStr))
                 output = string.IsNullOrEmpty(output) ? outStr : outStr + "\n" + output;
 
+            // A script that started a transaction and never committed it would block the next command
+            // ("a transaction is already open"). Roll it back and say so instead of reporting success.
+            var left = RollBackOpenTransactions(doc, scope);
+            if (left.RolledBack > 0)
+            {
+                return Result(false, output,
+                    "The script ended with a transaction still open (started, never committed). It was rolled back, so its changes were discarded."
+                    + (left.StillOpen ? " The document still reports an open transaction that the bridge cannot reach; check Revit before continuing." : "")
+                    + " Commit inside the script, or use 'with Transaction(...) as t:' and call t.Commit().",
+                    mode, progress, "transaction_left_open", changedCount, runtime, left.RolledBack);
+            }
+
             if (changedCount > 0 || savesBlocked > 0)
             {
                 return Result(false, output,
@@ -145,18 +160,110 @@ internal static class PythonScriptRunner
                 error = ex.Message;
             }
             var kind = changedCount > 0 || savesBlocked > 0 ? "read_mode_violation" : null;
-            return Result(false, "", error, mode, progress, kind, changedCount, runtime);
+            var left = RollBackOpenTransactions(doc, scope);
+            if (left.RolledBack > 0 || left.StillOpen)
+            {
+                error += $"\nThe failed script left {left.RolledBack} transaction(s) open; they were rolled back so the next command can run."
+                    + (left.StillOpen ? " The document still reports an open transaction that the bridge could not reach." : "");
+                kind ??= "transaction_left_open";
+            }
+            if (!PythonEngineFactory.StandardLibraryAvailable && error.Contains("No module named"))
+                error += "\n" + PythonEngineFactory.MissingLibraryWarning;
+            return Result(false, "", error, mode, progress, kind, changedCount, runtime, left.RolledBack);
         }
         finally
         {
             ActiveProgress = null;
+            // Shut the runtime down after every script, success or failure, so nothing carries over.
+            PythonEngineFactory.ShutdownQuietly(engine);
             if (onChanged != null) app.Application.DocumentChanged -= onChanged;
             if (onSaving != null) app.Application.DocumentSaving -= onSaving;
             if (onSavingAs != null) app.Application.DocumentSavingAs -= onSavingAs;
         }
     }
 
-    private static object Result(bool success, string output, string error, string mode, ProgressBuffer progress, string? kind, int changedCount, object? runtime)
+    /// <summary>
+    /// Rolls back transactions the script left started. Revit has no list of open transactions, so this
+    /// looks at the objects the script kept in its top-level variables (and one level into lists, tuples
+    /// and dictionaries): sub-transactions first, then transactions, then groups. A transaction held only
+    /// in a function's local variable cannot be found; <c>StillOpen</c> reports that case.
+    /// </summary>
+    internal static (int RolledBack, bool StillOpen) RollBackOpenTransactions(Document doc, ScriptScope? scope)
+    {
+        var rolledBack = 0;
+        try
+        {
+            var found = new List<object>();
+            if (scope != null)
+            {
+                foreach (var item in scope.GetItems())
+                {
+                    CollectTransactions(item.Value, found, 1);
+                }
+            }
+            foreach (var order in new[] { 0, 1, 2 })
+            {
+                foreach (var candidate in found)
+                {
+                    try
+                    {
+                        if (order == 0 && candidate is SubTransaction sub && sub.IsValidObject && sub.GetStatus() == TransactionStatus.Started)
+                        {
+                            sub.RollBack();
+                            rolledBack++;
+                        }
+                        else if (order == 1 && candidate is Transaction tx && tx.IsValidObject && tx.GetStatus() == TransactionStatus.Started)
+                        {
+                            tx.RollBack();
+                            rolledBack++;
+                        }
+                        else if (order == 2 && candidate is TransactionGroup group && group.IsValidObject && group.GetStatus() == TransactionStatus.Started)
+                        {
+                            group.RollBack();
+                            rolledBack++;
+                        }
+                    }
+                    catch
+                    {
+                        // Keep going: the remaining objects may still be reachable.
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Scope enumeration failed; fall through to the IsModifiable check.
+        }
+        var stillOpen = false;
+        try { stillOpen = doc.IsValidObject && doc.IsModifiable; } catch { /* document went away */ }
+        return (rolledBack, stillOpen);
+    }
+
+    private static void CollectTransactions(object? value, List<object> found, int depth)
+    {
+        if (value == null) return;
+        if (value is Transaction || value is SubTransaction || value is TransactionGroup)
+        {
+            if (!found.Contains(value)) found.Add(value);
+            return;
+        }
+        if (depth <= 0 || value is string) return;
+        if (value is System.Collections.IDictionary dict)
+        {
+            foreach (System.Collections.DictionaryEntry entry in dict) CollectTransactions(entry.Value, found, depth - 1);
+        }
+        else if (value is System.Collections.IEnumerable items)
+        {
+            var seen = 0;
+            foreach (var entry in items)
+            {
+                CollectTransactions(entry, found, depth - 1);
+                if (++seen >= 1000) break;
+            }
+        }
+    }
+
+    private static object Result(bool success, string output, string error, string mode, ProgressBuffer progress, string? kind, int changedCount, object? runtime, int transactionsRolledBack = 0)
     {
         return new
         {
@@ -167,6 +274,7 @@ internal static class PythonScriptRunner
             progress = progress.Snapshot(),
             error_kind = kind,
             model_changes_in_read_mode = changedCount,
+            transactions_rolled_back = transactionsRolledBack,
             runtime,
         };
     }
