@@ -193,8 +193,9 @@ def _hub_tools(provider):
 
 # Tools the hub answers itself instead of forwarding one fixed add-in command: revit_raw_command forwards
 # whatever command the caller names (validated at call time, see tests/test_raw_command.py) and
-# revit_list_commands reads the add-in's own command list.
-LOCALLY_HANDLED = frozenset({"revit_raw_command", "revit_list_commands"})
+# revit_list_commands reads the add-in's own command list, revit_get_result asks the bridge for an
+# earlier request by id (GET /result/{id}) and runs no command.
+LOCALLY_HANDLED = frozenset({"revit_raw_command", "revit_list_commands", "revit_get_result"})
 
 
 # --------------------------------------------------------------------------- #

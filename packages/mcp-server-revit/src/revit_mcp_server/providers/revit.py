@@ -16,6 +16,7 @@ from ..legacy.tools import TOOL_HANDLERS
 from ..security.workspace import WorkspaceMonitor
 from .base import AECProvider, ProviderTool, enrich_mutation_metadata
 from .element_inspection import INSPECTION_SCHEMA, inspect_elements, validate_inspection
+from . import revit_context
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +224,15 @@ class RevitProvider(AECProvider):
                 raise ValueError("revit_inspect_elements requires a live Revit connection; it is not available in mock mode.")
             return await inspect_elements(self.execute_tool, arguments)
 
+        if name == "revit_get_context":
+            return revit_context.get_context(
+                self._active_bridge(), live=self.mode == BridgeMode.bridge, approval_mode=config.approval_mode
+            )
+        if name == "revit_get_result":
+            if self.mode != BridgeMode.bridge:
+                raise ValueError("revit_get_result needs a live Revit connection; it is not available in mock mode.")
+            return revit_context.get_result(self._active_bridge(), arguments)
+
         # Check path parameters for workspace compliance
         self._assert_paths_in_workspace(arguments)
 
@@ -312,6 +322,7 @@ class RevitProvider(AECProvider):
     def _init_tool_mapping(self):
         self._tool_mapping = {
             "revit_health": ("revit.health", lambda args: {}),
+            "revit_get_context": ("revit.get_context", lambda args: {}),
             "revit_list_levels": ("revit.list_levels", lambda args: {}),
             "revit_list_views": ("revit.list_views", lambda args: {}),
             "revit_get_document_info": ("revit.get_document_info", lambda args: {}),
@@ -2071,6 +2082,7 @@ class RevitProvider(AECProvider):
             },
         ),
     ]
+    _capabilities += revit_context.CONTEXT_TOOLS
 
     async def shutdown(self) -> None:
         close = getattr(getattr(self, "_bridge", None), "close", None)

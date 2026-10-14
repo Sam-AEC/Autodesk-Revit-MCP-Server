@@ -28,6 +28,38 @@ namespace RevitBridge
             }
         }
 
+        /// <summary>
+        /// Identifies the loaded build: informational version, the assembly's module id (changes
+        /// whenever the code changes) and the file's write time. Lets a caller tell that the add-in
+        /// Revit loaded is older than the repository.
+        /// </summary>
+        public static object BuildInfo
+        {
+            get
+            {
+                var assembly = Assembly.GetExecutingAssembly();
+                string? informational = null;
+                string? moduleId = null;
+                string? builtUtc = null;
+                try { informational = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion; } catch { }
+                try { moduleId = assembly.ManifestModule.ModuleVersionId.ToString("N"); } catch { }
+                try
+                {
+                    if (!string.IsNullOrEmpty(assembly.Location))
+                        builtUtc = System.IO.File.GetLastWriteTimeUtc(assembly.Location).ToString("o");
+                }
+                catch { }
+
+                return new
+                {
+                    version = Version,
+                    informational_version = informational ?? Version,
+                    module_id = moduleId,
+                    assembly_file_time_utc = builtUtc
+                };
+            }
+        }
+
         public static bool TryOpenUrl(string url, out string? error)
         {
             try

@@ -14,7 +14,7 @@ using Microsoft.Scripting.Hosting;
 
 namespace RevitBridge.Bridge;
 
-public static class BridgeCommandFactory
+public static partial class BridgeCommandFactory
 {
     private static readonly Dictionary<string, Func<UIApplication, JsonElement, object>> _handlers = new();
     private static readonly List<object> _capabilities = new();
@@ -2411,7 +2411,9 @@ public static class BridgeCommandFactory
                 expected_file_path = actualFile,
                 file_path = actualFile,
                 file_paths = exportedFiles.Select(file => file.FullName).ToArray(),
-                file_size_bytes = exportedFiles.Sum(file => file.Length),
+                // Size of the file named in file_path; total_size_bytes covers every file Revit wrote.
+                file_size_bytes = exportedFiles.FirstOrDefault()?.Length ?? 0L,
+                total_size_bytes = exportedFiles.Sum(file => file.Length),
                 format = imageFormat,
                 resolution_dpi = 150,
                 pixel_size = pixelSize,
