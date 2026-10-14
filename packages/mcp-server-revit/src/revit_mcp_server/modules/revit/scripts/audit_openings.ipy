@@ -1,0 +1,440 @@
+# revit_audit_openings: measured audit of doors and windows (read only). Ported from the openings half of
+# docs/recipes/toolkit/audit_villa.py. Needs ARGS = {ids, tag, categories, max_elements, data, pos_tol_m,
+# time_budget_s, ray_test, swing}. Per opening: host wall, centre inside the wall piece (and the opening fits the
+# piece), sill / head against the wall, width / height, does it really cut the wall (ray through the centre, with a
+# control ray beside the opening; wall volume drop as fallback) and, for doors, the symbolic swing arc against the
+# hinge side. `data` = {"openings": [{mark|id, wall, x_m, y_m, w_mm, h_mm, sill_mm, hinge, swing, shape}]} adds the
+# comparison with the drawing. A check that cannot be made is an INFO line starting UNVERIFIED, never a pass.
+
+
+def unit(x, y):
+    n = (x * x + y * y) ** 0.5
+    if n < 1e-12:
+        return 1.0, 0.0
+    return x / n, y / n
+
+
+def mark_of(e):
+    p, where = find_param(e, "Mark")
+    return param_text(p)
+
+
+def sgn(v, eps):
+    if v > eps:
+        return 1
+    if v < -eps:
+        return -1
+    return 0
+
+
+def pick_view3d():
+    for v in FilteredElementCollector(doc).OfClass(View3D):
+        try:
+            if v.IsTemplate or v.IsPerspective:
+                continue
+        except Exception:
+            pass
+        return v
+    return None
+
+
+def plan_view_for(level_id, cache):
+    if level_id in cache:
+        return cache[level_id]
+    found = None
+    for v in FilteredElementCollector(doc).OfClass(ViewPlan):
+        try:
+            if v.IsTemplate or str(v.ViewType) != "FloorPlan":
+                continue
+            if v.GenLevel is not None and eid(v.GenLevel) == level_id:
+                found = v
+                break
+        except Exception:
+            continue
+    cache[level_id] = found
+    return found
+
+
+def swing_arc(fi, view):
+    """(centre, mid point) in feet of the largest plausible plan swing arc of a door, or None."""
+    opt = Options()
+    opt.View = view
+    opt.ComputeReferences = False
+    found = []
+
+    def walk(g):
+        for o in g:
+            if isinstance(o, Arc):
+                r = o.Radius * FT_TO_M
+                if 0.25 <= r <= 2.5:
+                    found.append(o)
+            elif isinstance(o, GeometryInstance):
+                walk(o.GetInstanceGeometry())
+
+    ge = fi.get_Geometry(opt)
+    if ge is None:
+        return None
+    walk(ge)
+    if not found:
+        return None
+    found.sort(key=lambda a: -a.Radius)
+    a = found[0]
+    return a.Center, a.Evaluate(0.5, True)
+
+
+def ray_hits(ri, ox, oy, oz, nx, ny):
+    """Number of hits of a ray from (ox, oy, oz) along (nx, ny, 0) on the target wall."""
+    hits = ri.Find(XYZ(ox, oy, oz), XYZ(nx, ny, 0.0))
+    return len(hits) if hits is not None else 0
+
+
+def main():
+    doc_meta()
+    budget = Budget(ARGS.get("time_budget_s") or 15)
+    spec = {"ids": ARGS.get("ids"), "tag": ARGS.get("tag"), "max_elements": ARGS.get("max_elements")}
+    cats = ARGS.get("categories") or []
+    if not cats and ARGS.get("tag"):
+        cats = ["Doors", "Windows"]
+    spec["categories"] = cats
+    elems = select_elements(spec, "audit_openings")
+    if elems is None:
+        return
+    openings = []
+    skipped = 0
+    for e in elems:
+        if isinstance(e, FamilyInstance) and (is_cat(e, "OST_Doors") or is_cat(e, "OST_Windows")):
+            openings.append(e)
+        else:
+            skipped += 1
+    if skipped:
+        info("NOT_AN_OPENING", "%d selected element(s) are not doors or windows and were skipped" % skipped)
+    if not openings:
+        error("empty_selection", "audit_openings: the selection contains no doors or windows")
+        return
+
+    data = ARGS.get("data") or {}
+    drows = list(data.get("openings") or [])
+    pos_tol = float(ARGS.get("pos_tol_m") or data.get("pos_tol_m") or 0.08)
+    want_ray = ARGS.get("ray_test", True)
+    want_swing = ARGS.get("swing", True)
+
+    view3d = pick_view3d() if want_ray else None
+    ray_cache = {}
+    plan_cache = {}
+    walls = {}
+    per_wall = {}
+    opening_ids = set([eid(o) for o in openings])
+    nocut_warn = {}
+    other_warn = {}
+    try:
+        for fm in doc.GetWarnings():
+            hit = []
+            for i in list(fm.GetFailingElements()) + list(fm.GetAdditionalElements()):
+                if eid(i) in opening_ids:
+                    hit.append(eid(i))
+            if hit:
+                desc = fm.GetDescriptionText()
+                low = str(desc).lower()
+                for i in hit:
+                    if "cut" in low or "does not intersect" in low:
+                        nocut_warn.setdefault(i, []).append(desc)
+                    else:
+                        other_warn.setdefault(i, []).append(desc)
+    except Exception as ex:
+        info("UNVERIFIED_WARNINGS", "document warnings could not be read: %s" % ex)
+
+    by_mark = {}
+    by_id = {}
+    for o in openings:
+        by_id[eid(o)] = o
+        m = mark_of(o)
+        if m:
+            by_mark[m] = o
+    data_for = {}
+    for d in drows:
+        target = None
+        if d.get("id") is not None and int(d["id"]) in by_id:
+            target = by_id[int(d["id"])]
+        elif d.get("mark") is not None and str(d["mark"]) in by_mark:
+            target = by_mark[str(d["mark"])]
+        if target is None:
+            fail("OPEN_MISSING", "data row %s was not found among the %d selected openings" % (d.get("mark", d.get("id")), len(openings)))
+        else:
+            data_for[eid(target)] = d
+
+    n_doors = 0
+    n_windows = 0
+    bad = 0
+    cut_verified = 0
+    ray_inconclusive = []
+    swing_unverified = []
+    partial = False
+    for fi in openings:
+        if budget.expired():
+            partial = True
+            break
+        fid = eid(fi)
+        is_door = is_cat(fi, "OST_Doors")
+        if is_door:
+            n_doors += 1
+        else:
+            n_windows += 1
+        kind = "Door" if is_door else "Window"
+        mark = mark_of(fi)
+        label = "%s %d%s" % (kind, fid, (" (mark %s)" % mark) if mark else "")
+        problems = 0
+        host = attr(fi, "Host")
+        if host is None:
+            fail("OPEN_NO_HOST", "%s has no host wall" % label)
+            row([("id", fid), ("category", kind), ("mark", mark), ("host_id", ""), ("status", "no_host")])
+            bad += 1
+            continue
+        if not isinstance(host, Wall):
+            info("UNVERIFIED_HOST", "%s is hosted by %s %d, not by a wall: wall checks skipped" % (label, cat_name(host), eid(host)))
+            row([("id", fid), ("category", kind), ("mark", mark), ("host_id", eid(host)), ("status", "not_wall_hosted")])
+            continue
+        hid = eid(host)
+        loc = fi.Location
+        hloc = host.Location
+        if loc is None or not isinstance(loc, LocationPoint) or hloc is None or not isinstance(hloc, LocationCurve):
+            info("UNVERIFIED_LOCATION", "%s: no location point or the host has no location curve; wall fit not measured" % label)
+            row([("id", fid), ("category", kind), ("mark", mark), ("host_id", hid), ("status", "no_location")])
+            continue
+        pt = loc.Point
+        crv = hloc.Curve
+        wlen = crv.Length
+        z0 = crv.GetEndPoint(0).Z
+        res = crv.Project(XYZ(pt.X, pt.Y, z0))
+        along = crv.ComputeNormalizedParameter(res.Parameter) * wlen
+        p0 = crv.GetEndPoint(0)
+        p1 = crv.GetEndPoint(1)
+        dx, dy = unit(p1.X - p0.X, p1.Y - p0.Y)
+        o = host.Orientation
+        nx, ny = unit(o.X, o.Y)
+        thick = attr(host, "Width", 0.0)
+        wbb = host.get_BoundingBox(None)
+        bb = fi.get_BoundingBox(None)
+
+        w_ft = first_double(fi, ["DOOR_WIDTH", "WINDOW_WIDTH", "FAMILY_WIDTH_PARAM", "FAMILY_ROUGH_WIDTH_PARAM"])
+        h_ft = first_double(fi, ["DOOR_HEIGHT", "WINDOW_HEIGHT", "FAMILY_HEIGHT_PARAM", "FAMILY_ROUGH_HEIGHT_PARAM"])
+        dims_src = "parameters"
+        if bb is not None:
+            if w_ft is None:
+                w_ft = (bb.Max.X - bb.Min.X) * abs(dx) + (bb.Max.Y - bb.Min.Y) * abs(dy)
+                dims_src = "bounding box"
+            if h_ft is None:
+                h_ft = bb.Max.Z - bb.Min.Z
+                dims_src = "bounding box"
+        if w_ft is None or h_ft is None:
+            info("UNVERIFIED_SIZE", "%s: no width / height parameter and no bounding box" % label)
+            w_ft = w_ft or 0.0
+            h_ft = h_ft or 0.0
+
+        # 1. centre inside the wall piece, and the opening fits the piece
+        if along < -0.05 or along > wlen + 0.05:
+            fail("OPEN_OUTSIDE_WALL", "%s: the centre projects %s m along a wall of length %s m (host %d), outside the wall piece" % (label, to_m(along), to_m(wlen), hid))
+            problems += 1
+        elif w_ft > 0 and (along - w_ft / 2.0 < -0.03 or along + w_ft / 2.0 > wlen + 0.03):
+            fail("OPEN_EDGE", "%s: width %s m centred %s m along a %s m wall (host %d) runs past the wall end" % (label, to_m(w_ft), to_m(along), to_m(wlen), hid))
+            problems += 1
+
+        # 2. sill and head against the wall
+        sill_m = None
+        head_m = None
+        if bb is not None and wbb is not None:
+            sill_m = to_m(bb.Min.Z - wbb.Min.Z)
+            head_m = to_m(bb.Max.Z - wbb.Min.Z)
+            if bb.Max.Z > wbb.Max.Z + 0.07:
+                fail("OPEN_HEAD", "%s: head at %s m is %s m above the top of host wall %d" % (label, head_m, to_m(bb.Max.Z - wbb.Max.Z), hid))
+                problems += 1
+            if bb.Min.Z < wbb.Min.Z - 0.07:
+                fail("OPEN_SILL", "%s: bottom at %s m is %s m below the base of host wall %d" % (label, sill_m, to_m(wbb.Min.Z - bb.Min.Z), hid))
+                problems += 1
+            if is_door and sill_m is not None and sill_m > 0.1:
+                info("DOOR_SILL_RAISED", "%s: the door bottom is %s m above the wall base" % (label, sill_m))
+            cz = (bb.Min.Z + bb.Max.Z) / 2.0
+        else:
+            info("UNVERIFIED_SILL", "%s: no bounding box for the opening or its wall; sill and head not measured" % label)
+            cz = pt.Z
+
+        wi = walls.get(hid)
+        if wi is None:
+            wi = {"wall": host, "len": wlen, "thick": thick, "height": (wbb.Max.Z - wbb.Min.Z) if wbb is not None else 0.0, "exp": 0.0, "ids": [], "cut": []}
+            walls[hid] = wi
+        factor = 1.0
+
+        # 3. comparison with the drawing data
+        d = data_for.get(fid)
+        if d is not None:
+            if d.get("wall") is not None:
+                hm = mark_of(host)
+                want = str(d["wall"])
+                if hm != want and str(hid) != want:
+                    fail("OPEN_HOST", "%s is hosted in wall %s (id %d), the data says %s" % (label, hm or "(no mark)", hid, want))
+                    problems += 1
+            if d.get("x_m") is not None and d.get("y_m") is not None:
+                dist = ((pt.X * FT_TO_M - float(d["x_m"])) ** 2 + (pt.Y * FT_TO_M - float(d["y_m"])) ** 2) ** 0.5
+                if dist > pos_tol:
+                    fail("OPEN_POS", "%s is %s m from its data position (tolerance %s m)" % (label, round(dist, 3), pos_tol))
+                    problems += 1
+            if d.get("w_mm") is not None and w_ft:
+                spec_w = float(d["w_mm"]) / 1000.0
+                have_w = w_ft * FT_TO_M
+                if have_w > spec_w + 0.2 or have_w < 0.6 * spec_w:
+                    fail("OPEN_WIDTH", "%s width %s m, data %s m" % (label, round(have_w, 3), spec_w))
+                    problems += 1
+            if d.get("h_mm") is not None and h_ft:
+                spec_h = float(d["h_mm"]) / 1000.0
+                if abs(h_ft * FT_TO_M - spec_h) > 0.1:
+                    fail("OPEN_HEIGHT", "%s height %s m, data %s m" % (label, round(h_ft * FT_TO_M, 3), spec_h))
+                    problems += 1
+            if d.get("sill_mm") is not None and sill_m is not None:
+                if abs(sill_m - float(d["sill_mm"]) / 1000.0) > 0.06:
+                    fail("OPEN_Z", "%s sill %s m above the wall base, data %s m" % (label, sill_m, float(d["sill_mm"]) / 1000.0))
+                    problems += 1
+            shape = str(d.get("shape") or "")
+            factor = {"": 1.0, "rect": 1.0, "segmental": 0.93, "round": 0.88, "horseshoe": 0.85}.get(shape, 0.85)
+
+        wi["exp"] += (w_ft * h_ft * thick * factor)
+        wi["ids"].append(fid)
+
+        # 4. does the opening really cut the wall?
+        cut_state = "unverified"
+        if view3d is not None and thick > 0 and w_ft > 0:
+            ri = ray_cache.get(hid)
+            if ri is None:
+                try:
+                    ri = ReferenceIntersector(host.Id, FindReferenceTarget.Element, view3d)
+                except Exception as ex:
+                    ri = False
+                    info("UNVERIFIED_RAY", "ray test unavailable (%s)" % ex)
+                ray_cache[hid] = ri
+            if ri:
+                try:
+                    back = thick / 2.0 + 1.0
+                    centre_hits = ray_hits(ri, pt.X - nx * back, pt.Y - ny * back, cz, nx, ny)
+                    side = w_ft / 2.0 + 0.5
+                    control = 0
+                    for s in (-1.0, 1.0):
+                        sx = pt.X + dx * s * side
+                        sy = pt.Y + dy * s * side
+                        control += ray_hits(ri, sx - nx * back, sy - ny * back, cz, nx, ny)
+                    if control > 0:
+                        cut_state = "not_cut" if centre_hits > 0 else "cut"
+                    else:
+                        cut_state = "unverified"
+                except Exception as ex:
+                    cut_state = "unverified"
+                    info("UNVERIFIED_RAY", "%s: ray test failed (%s)" % (label, ex))
+        if cut_state == "not_cut":
+            fail("OPEN_NOT_CUT", "%s does not cut host wall %d: a ray through its centre still hits the wall" % (label, hid))
+            problems += 1
+            cut_verified += 1
+        elif cut_state == "cut":
+            cut_verified += 1
+        else:
+            ray_inconclusive.append(fid)
+        wi["cut"].append(cut_state)
+        if fid in nocut_warn:
+            fail("OPEN_WARNING_NOCUT", "%s: Revit warning '%s'" % (label, nocut_warn[fid][0]))
+            problems += 1
+        for text in other_warn.get(fid, [])[:2]:
+            info("OPEN_WARNING", "%s: Revit warning '%s'" % (label, text))
+
+        # 5. door swing against the hinge
+        hinge = ""
+        swing = ""
+        if is_door and want_swing and bb is not None:
+            lvl = attr(fi, "LevelId")
+            lvl_id = eid(lvl) if lvl is not None else None
+            view = plan_view_for(lvl_id, plan_cache) if lvl_id is not None else None
+            arc = swing_arc(fi, view) if view is not None else None
+            if arc is None:
+                swing_unverified.append(fid)
+            else:
+                cen, mid = arc
+                off = (cen.X - pt.X) * dx + (cen.Y - pt.Y) * dy
+                hinge = "start" if off < 0 else "end"
+                side_n = (mid.X - cen.X) * nx + (mid.Y - cen.Y) * ny
+                func = ""
+                try:
+                    func = str(host.WallType.Function)
+                except Exception:
+                    pass
+                if sgn(side_n, 0.05) > 0:
+                    swing = "exterior" if func == "Exterior" else "orientation_side"
+                elif sgn(side_n, 0.05) < 0:
+                    swing = "interior" if func == "Exterior" else "opposite_side"
+                if w_ft and abs(abs(off) - w_ft / 2.0) > 0.5:
+                    fail("OPEN_SWING_HINGE", "%s: the swing arc centre is %s m from the opening centre along the wall; a hinge sits at a jamb, about %s m" % (label, to_m(abs(off)), to_m(w_ft / 2.0)))
+                    problems += 1
+                if d is not None:
+                    if d.get("hinge") and str(d["hinge"]) != hinge:
+                        fail("OPEN_SWING", "%s: hinge is at the wall %s, the data says %s" % (label, hinge, d["hinge"]))
+                        problems += 1
+                    if d.get("swing") and swing and str(d["swing"]) != swing:
+                        fail("OPEN_SWING", "%s: swings to the %s side, the data says %s" % (label, swing, d["swing"]))
+                        problems += 1
+        if problems:
+            bad += 1
+        row([
+            ("id", fid), ("category", kind), ("mark", mark), ("host_id", hid),
+            ("along_m", to_m(along)), ("wall_len_m", to_m(wlen)),
+            ("width_m", to_m(w_ft)), ("height_m", to_m(h_ft)),
+            ("sill_m", "" if sill_m is None else sill_m), ("head_m", "" if head_m is None else head_m),
+            ("cut", cut_state), ("hinge", hinge), ("swing", swing),
+            ("status", "fail" if problems else "ok"),
+        ])
+
+    # per wall: volume of the wall against the volume the openings should have taken out
+    for hid in walls:
+        wi = walls[hid]
+        host = wi["wall"]
+        if not wi["ids"] or wi["exp"] <= 0:
+            continue
+        p = host.get_Parameter(BuiltInParameter.HOST_VOLUME_COMPUTED) if bip("HOST_VOLUME_COMPUTED") is not None else None
+        if p is None or wi["height"] <= 0 or wi["thick"] <= 0:
+            info("UNVERIFIED_VOLUME", "wall %d: no computed volume; volume drop not measured" % hid)
+            continue
+        full = wi["len"] * wi["height"] * wi["thick"]
+        cut = full - p.AsDouble()
+        exp = wi["exp"]
+        if cut < 0.6 * exp:
+            text = "wall %d: %d opening(s) took out %s m3 of the ~%s m3 expected (full prism %s m3, now %s m3)" % (
+                hid, len(wi["ids"]), round(cut * FT3_TO_M3, 3), round(exp * FT3_TO_M3, 3), round(full * FT3_TO_M3, 3), round(p.AsDouble() * FT3_TO_M3, 3))
+            if "unverified" in wi["cut"]:
+                fail("OPEN_CUT_VOLUME", text)
+                bad += 1
+                for fid_ in wi["ids"]:
+                    if fid_ in ray_inconclusive:
+                        ray_inconclusive.remove(fid_)
+                        cut_verified += 1
+            else:
+                info("OPEN_CUT_VOLUME", text + " (rays say the openings cut; volume is approximate near wall joins)")
+        elif "unverified" in wi["cut"]:
+            for fid_ in wi["ids"]:
+                if fid_ in ray_inconclusive:
+                    ray_inconclusive.remove(fid_)
+                    cut_verified += 1
+
+    if ray_inconclusive:
+        if view3d is None and want_ray:
+            info("UNVERIFIED_CUT", "no 3D view in the document: the ray test did not run; cut of %d opening(s) rests on the wall volume only (ids %s)" % (len(ray_inconclusive), tidy_list(ray_inconclusive, 10)))
+        else:
+            info("UNVERIFIED_CUT", "the cut of %d opening(s) could not be confirmed by a ray (ids %s)" % (len(ray_inconclusive), tidy_list(ray_inconclusive, 10)))
+    if swing_unverified:
+        info("UNVERIFIED_SWING", "no plan view or symbolic swing arc for %d door(s): swing not measured (ids %s)" % (len(swing_unverified), tidy_list(swing_unverified, 10)))
+    if partial:
+        meta("partial", "1")
+        info("PARTIAL", "stopped after %d ms (time_budget_s=%s); narrow the selection and run again" % (budget.ms(), ARGS.get("time_budget_s") or 15))
+    if openings and cut_verified == 0 and not partial:
+        meta("verified", "0")
+    text = "%d openings audited (%d doors, %d windows) on %d walls, %d with problems" % (n_doors + n_windows, n_doors, n_windows, len(walls), bad)
+    if partial:
+        text = "PARTIAL: " + text
+    if openings and cut_verified == 0:
+        text = "UNVERIFIED (cut not measured): " + text
+    summary(text)
+
+
+__output__ = run_main(main)

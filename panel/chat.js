@@ -359,6 +359,10 @@
       label: "Auto",
       text: "Auto: approvals are skipped. Not recommended. Change in settings.",
     },
+    dev: {
+      label: "Dev",
+      text: "Dev is on for this workspace: assistants can make changes without approval until you switch it off in Settings. Actions are logged.",
+    },
   };
 
   /* ---------- mount ---------- */
@@ -368,7 +372,7 @@
     const postToHost = opts.postToHost || function () {};
     const onReview = opts.onReview || function () {};
     const state = {
-      approvalMode: null, // null (unknown) | look_only | ask_first | auto
+      approvalMode: null, // null (unknown) | look_only | ask_first | auto | dev
       disabled: false,
       pending: [],        // assistant shells waiting for a whole response, oldest first
       unseen: 0,
@@ -760,6 +764,8 @@
         text = "Look only: these changes cannot be approved. Change the mode in settings to approve changes.";
       } else if (mode === "auto") {
         text = "Auto mode: approvals are skipped by the hub. Not recommended.";
+      } else if (mode === "dev") {
+        text = "Dev is on: approvals are skipped until you switch it off in Settings.";
       }
       rec.lock.textContent = text;
       rec.lock.hidden = !text;
@@ -813,7 +819,7 @@
       const info = state.approvalMode ? MODE_INFO[state.approvalMode] : null;
       banner.hidden = !(info && info.text);
       banner.textContent = info ? info.text : "";
-      banner.classList.toggle("is-warning", state.approvalMode === "auto");
+      banner.classList.toggle("is-warning", state.approvalMode === "auto" || state.approvalMode === "dev");
       proposals.forEach(refreshProposalLock);
     }
 

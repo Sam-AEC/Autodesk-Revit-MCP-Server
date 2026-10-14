@@ -9,10 +9,22 @@ from typing import Any, Callable, Dict, List, Optional
 from revit_mcp_server.errors import BridgeError
 from revit_mcp_server.module_registry import ModuleRegistry, ModuleInstance, CommandSpec
 from revit_mcp_server.security.dispatch import refuse_human_only, run_gated_tool
+from revit_mcp_server.security.module_execution import capture_module_execution, module_execution_authorized
 from revit_mcp_server.security.workspace import WorkspaceMonitor
 from .base import AECProvider, ProviderTool
 
 logger = logging.getLogger(__name__)
+
+# A mutating module command runs under ONE approved plan action (claimed by the gate before the command starts). The
+# vetted scripts it builds are what that approval covers, so the command may send them to Revit without a second
+# plan action. Only this tool is reachable that way; every other tool a module calls stays gated.
+APPROVED_INNER_TOOLS = frozenset({"revit_execute_python"})
+
+
+def tool_name_of(module_id: str, cmd: CommandSpec) -> str:
+    """MCP tool name of a module command: its ``mcp_tool`` when it declares one, else ``<module id>_<command id>``."""
+    return cmd.mcp_tool or f"{module_id}_{cmd.id}"
+
 
 def validate_json_schema(data: Any, schema: Dict[str, Any], path: str = "root") -> None:
     if not schema:
@@ -82,7 +94,7 @@ class ModuleProvider(AECProvider):
             for cmd in m.manifest.commands:
                 # Carry over all metadata
                 tools.append(ProviderTool(
-                    name=f"{m.manifest.id}_{cmd.id}",
+                    name=tool_name_of(m.manifest.id, cmd),
                     description=cmd.title,
                     inputSchema=cmd.input_schema or {"type": "object", "properties": {}, "required": []},
                     is_mutating=cmd.is_mutating,
@@ -111,7 +123,7 @@ class ModuleProvider(AECProvider):
         
         for m in self.registry.get_all_modules():
             for cmd in m.manifest.commands:
-                if f"{m.manifest.id}_{cmd.id}" == name:
+                if tool_name_of(m.manifest.id, cmd) == name:
                     module_inst = m
                     command_spec = cmd
                     break
@@ -162,7 +174,8 @@ class ModuleProvider(AECProvider):
             
         # Run execution
         try:
-            result = await self._run_callable(cmd_fn, arguments)
+            authorized_name = name if command_spec.is_mutating and module_execution_authorized(name) else None
+            result = await self._run_callable(cmd_fn, arguments, authorized_name=authorized_name)
         except Exception as e:
             raise BridgeError(f"Command execution failed: {e}") from e
             
@@ -210,7 +223,7 @@ class ModuleProvider(AECProvider):
             })
         return {"modules": module_list}
 
-    async def _run_callable(self, func: Callable[..., Any], arguments: Dict[str, Any]) -> Any:
+    async def _run_callable(self, func: Callable[..., Any], arguments: Dict[str, Any], authorized_name: Optional[str] = None) -> Any:
         loop = asyncio.get_running_loop()
         sig = inspect.signature(func)
         kwargs = {}
@@ -221,6 +234,11 @@ class ModuleProvider(AECProvider):
                 kwargs[param_name] = self.workspace
             elif param_name == "tool_executor" and self.tool_registry:
                 kwargs[param_name] = self._sync_tool_executor(loop)
+            elif param_name == "approved_executor" and authorized_name and self.tool_registry:
+                kwargs[param_name] = self._approved_tool_executor(loop, authorized_name)
+            elif param_name == "approved_executor":
+                # Never let a caller inject an executor through unvalidated extra arguments.
+                kwargs[param_name] = None
             elif param_name in arguments:
                 kwargs[param_name] = arguments[param_name]
                 
@@ -244,6 +262,38 @@ class ModuleProvider(AECProvider):
             return future.result()
 
         return execute
+
+    def _approved_tool_executor(self, loop: asyncio.AbstractEventLoop, outer_name: str) -> Callable[[str, Dict[str, Any]], Dict[str, Any]]:
+        """Executor for a mutating command that already holds an approved plan action (see APPROVED_INNER_TOOLS)."""
+        scope = capture_module_execution(outer_name)
+        def execute(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+            if scope is None or not module_execution_authorized(outer_name, scope):
+                raise BridgeError("Nested module execution requires an active authorized outer call.")
+            future = asyncio.run_coroutine_threadsafe(
+                self._execute_approved_tool(tool_name, arguments, outer_name, scope),
+                loop,
+            )
+            return future.result()
+
+        return execute
+
+    async def _execute_approved_tool(self, tool_name: str, arguments: Dict[str, Any], outer_name: Optional[str] = None, scope: Any = None) -> Dict[str, Any]:
+        refuse_human_only(tool_name)
+        if outer_name is None or not module_execution_authorized(outer_name, scope):
+            raise BridgeError("Nested module execution requires an active authorized outer call.")
+        if tool_name not in APPROVED_INNER_TOOLS:
+            raise BridgeError(f"A mutating module command may only call {sorted(APPROVED_INNER_TOOLS)} under its own approval, not '{tool_name}'.")
+        provider = self.tool_registry.lookup_tool_provider(tool_name) if self.tool_registry else None
+        if not provider:
+            raise BridgeError(f"Tool '{tool_name}' not found in registry")
+        gate = getattr(self.tool_registry.get_provider("approval"), "gate", None)
+        if gate is None:
+            raise BridgeError("Nested module execution requires the live approval gate.")
+        gate.refuse_if_look_only()
+        # The outer approval covers this vetted script, but Dev's audit must
+        # still record the actual script before it reaches Revit.
+        gate.audit_dev_call(tool_name, arguments, mutating=True)
+        return await provider.execute_tool(tool_name, arguments)
 
     async def _execute_registered_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Run a tool for a module (recipe steps, audits) through the shared gated dispatch:

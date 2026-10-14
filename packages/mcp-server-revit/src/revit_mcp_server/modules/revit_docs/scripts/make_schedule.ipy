@@ -1,0 +1,229 @@
+# revit_make_schedule (write mode, one schedule per call).
+# ARGS = {name, tag, category, fields[], filters[{field, op, value}], sort[{field, order, header, footer, blank_line}],
+#         totals[], grand_total, itemize, template, sheet{number, x_mm, y_mm, allow_foreign}, on_error}
+# The schedule is made in its own transaction; placing it on a sheet is a second one. A schedule of the same name made earlier
+# under the same tag is replaced; one this tool did not make is never touched. An unknown field name is a refusal that lists
+# the names Revit offers for the category. A field that is only filtered or sorted on is added hidden.
+
+FILTER_TYPES = {
+    "equals": "Equal", "not_equals": "NotEqual", "greater": "GreaterThan", "greater_or_equal": "GreaterThanOrEqual",
+    "less": "LessThan", "less_or_equal": "LessThanOrEqual", "contains": "Contains", "not_contains": "NotContains",
+    "begins_with": "BeginsWith", "not_begins_with": "NotBeginsWith", "ends_with": "EndsWith", "not_ends_with": "NotEndsWith",
+    "has_value": "HasValue", "has_no_value": "HasNoValue",
+}
+UNARY = ("has_value", "has_no_value")
+
+
+def schedulable_by_name(definition):
+    out = {}
+    for sf in definition.GetSchedulableFields():
+        try:
+            n = sf.GetName(doc)
+        except Exception:
+            continue
+        if n and n.lower() not in out:
+            out[n.lower()] = sf
+    return out
+
+
+def field_in_definition(definition, name):
+    for i in range(definition.GetFieldCount()):
+        f = definition.GetField(i)
+        try:
+            if f.GetName().lower() == name.lower():
+                return f
+        except Exception:
+            pass
+    return None
+
+
+def ensure_field(definition, available, name, hidden_ok):
+    f = field_in_definition(definition, name)
+    if f is not None:
+        return f
+    sf = available.get(name.lower())
+    if sf is None:
+        raise StepError("field '%s' is not available for this category" % name)
+    f = definition.AddField(sf)
+    if hidden_ok:
+        f.IsHidden = True
+    return f
+
+
+def sheet_by_number(number):
+    for s in FilteredElementCollector(doc).OfClass(ViewSheet):
+        if s.SheetNumber == number:
+            return s
+    return None
+
+
+def title_block_box(sheet):
+    for tb in FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_TitleBlocks).WhereElementIsNotElementType():
+        if eid(tb.OwnerViewId) == eid(sheet):
+            return tb.get_BoundingBox(sheet)
+    return None
+
+
+def main():
+    doc_meta()
+    name = ARGS["name"]
+    tag = ARGS["tag"]
+    fields = ARGS["fields"]
+    filters = ARGS.get("filters") or []
+    sorts = ARGS.get("sort") or []
+    totals = ARGS.get("totals") or []
+    levels_before = level_names()
+
+    bics, bad = parse_categories([ARGS["category"]])
+    if bics is None:
+        refuse("category_not_found", "unknown category '%s'; use a Revit category name such as Doors or Rooms, or an OST_ name" % bad)
+        return
+    bic = bics[0]
+
+    tpl = None
+    if ARGS.get("template"):
+        tpl = find_view_template(ARGS["template"])
+        if tpl is None:
+            refuse("template_not_found", "no view template named '%s'; templates in the document: %s" % (ARGS["template"], ", ".join(template_names(15)) or "(none)"))
+            return
+
+    sheet = None
+    sheet_spec = ARGS.get("sheet") or None
+    if sheet_spec:
+        sheet = sheet_by_number(sheet_spec["number"])
+        if sheet is None:
+            refuse("sheet_not_found", "no sheet numbered '%s'; make it first with revit_make_sheet" % sheet_spec["number"])
+            return
+        sheet_tag = read_tag(sheet)
+        if sheet_tag is None and not sheet_spec.get("allow_foreign"):
+            refuse("sheet_not_owned", "sheet %s was not made by this tool, so the schedule is not added to it (allow_foreign=true overrides)" % sheet_spec["number"], [eid(sheet)])
+            return
+
+    mine = owned_elements("schedule", tag, name)
+    mine_ids = set([eid(e) for e in mine])
+    for v in FilteredElementCollector(doc).OfClass(ViewSchedule):
+        if v.Name == name and eid(v) not in mine_ids:
+            refuse("name_conflict", "a schedule named '%s' already exists (id %d) and was not made by this tool; it was left untouched" % (name, eid(v)), [eid(v)])
+            return
+    for v in FilteredElementCollector(doc).OfClass(View):
+        if v.Name == name and eid(v) not in mine_ids and not isinstance(v, ViewSchedule) and not v.IsTemplate:
+            refuse("name_conflict", "a view named '%s' already exists (id %d); a schedule cannot share its name" % (name, eid(v)), [eid(v)])
+            return
+
+    run = Runner("AEC make schedule", ARGS.get("on_error"))
+    state = {"replaced": 0, "wanted_fields": 0, "hidden": 0}
+
+    def work():
+        state["replaced"] = len(delete_owned(mine))
+        sched = ViewSchedule.CreateSchedule(doc, ElementId(bic))
+        sched.Name = name
+        definition = sched.Definition
+        available = schedulable_by_name(definition)
+        unknown = [f for f in fields if f.lower() not in available]
+        if unknown:
+            raise StepError("unknown field(s) %s for category %s; Revit offers: %s" % (", ".join(unknown), ARGS["category"], ", ".join(sorted([sf.GetName(doc) for sf in definition.GetSchedulableFields()])[:40])))
+        for f in fields:
+            ensure_field(definition, available, f, False)
+        for flt in filters:
+            fld = ensure_field(definition, available, flt["field"], True)
+            ftype = getattr(ScheduleFilterType, FILTER_TYPES[flt["op"]])
+            if flt["op"] in UNARY:
+                definition.AddFilter(ScheduleFilter(fld.FieldId, ftype))
+            else:
+                v = flt.get("value")
+                if isinstance(v, bool):
+                    v = 1 if v else 0
+                definition.AddFilter(ScheduleFilter(fld.FieldId, ftype, v))
+        for s in sorts:
+            fld = ensure_field(definition, available, s["field"], True)
+            order = ScheduleSortOrder.Descending if s.get("order") == "descending" else ScheduleSortOrder.Ascending
+            sg = ScheduleSortGroupField(fld.FieldId, order)
+            sg.ShowHeader = bool(s.get("header"))
+            sg.ShowFooter = bool(s.get("footer"))
+            sg.ShowBlankLine = bool(s.get("blank_line"))
+            definition.AddSortGroupField(sg)
+        for t in totals:
+            fld = field_in_definition(definition, t)
+            if fld is None:
+                raise StepError("totals field '%s' is not one of the schedule's fields" % t)
+            fld.DisplayType = ScheduleFieldDisplayType.Totals
+        if ARGS.get("grand_total"):
+            definition.ShowGrandTotal = True
+            definition.ShowGrandTotalCount = True
+        definition.IsItemized = bool(ARGS.get("itemize", True))
+        if tpl is not None:
+            if not sched.IsValidViewTemplate(tpl.Id):
+                raise StepError("view template '%s' cannot be applied to a schedule" % tpl.Name, [eid(sched)])
+            sched.ViewTemplateId = tpl.Id
+        set_tag(sched, tag, name, "schedule")
+        return sched
+
+    sched = run.step("Make schedule '%s'" % name, work, ids=[eid(e) for e in mine])
+    if sched is None:
+        return
+    schid = eid(sched)
+    run.changed.append(schid)
+
+    placed_at = None
+    if sheet is not None:
+        def place():
+            sp = ARGS["sheet"]
+            if sp.get("x_mm") is not None and sp.get("y_mm") is not None:
+                x, y = sp["x_mm"] * MM_TO_FT, sp["y_mm"] * MM_TO_FT
+            else:
+                bb = title_block_box(sheet)
+                if bb is None:
+                    raise StepError("sheet %s has no title block to measure; give x_mm and y_mm" % sp["number"], [eid(sheet)])
+                x, y = bb.Min.X + 20.0 * MM_TO_FT, bb.Max.Y - 20.0 * MM_TO_FT
+            inst = ScheduleSheetInstance.Create(doc, sheet.Id, sched.Id, XYZ(x, y, 0.0))
+            set_tag(inst, tag, name, "schedule_instance")
+            return (inst, x, y)
+
+        res = run.step("Place schedule '%s' on sheet %s" % (name, ARGS["sheet"]["number"]), place, ids=[schid, eid(sheet)])
+        if res is not None:
+            placed_at = res
+            run.changed.append(eid(res[0]))
+
+    got = get_by_id(schid)
+    post("schedule_exists", got is not None and isinstance(got, ViewSchedule), "schedule id %d" % schid)
+    if got is not None and isinstance(got, ViewSchedule):
+        post("schedule_name", got.Name == name, "'%s'" % got.Name)
+        t = read_tag(got)
+        post("tag_readback", t is not None and t[0] == tag and t[1] == name, "tag %s" % (t,))
+        d = got.Definition
+        post("category", eid(d.CategoryId) == int(bic), "category %s" % ARGS["category"])
+        visible = 0
+        hidden = 0
+        for i in range(d.GetFieldCount()):
+            if d.GetField(i).IsHidden:
+                hidden += 1
+            else:
+                visible += 1
+        post("fields", visible == len(fields), "%d visible fields (%d hidden helper fields), %d requested" % (visible, hidden, len(fields)))
+        post("filters", d.GetFilterCount() == len(filters), "%d filters, %d requested" % (d.GetFilterCount(), len(filters)))
+        post("sort", d.GetSortGroupFieldCount() == len(sorts), "%d sort/group fields, %d requested" % (d.GetSortGroupFieldCount(), len(sorts)))
+        if tpl is not None:
+            post("template_applied", eid(got.ViewTemplateId) == eid(tpl), "template '%s'" % tpl.Name)
+        if sheet is not None:
+            found = False
+            for si in FilteredElementCollector(doc).OfClass(ScheduleSheetInstance):
+                if eid(si.ScheduleId) == schid and eid(si.OwnerViewId) == eid(sheet):
+                    found = True
+            post("on_sheet", found, "schedule instance on sheet %s" % ARGS["sheet"]["number"])
+        rows = ""
+        try:
+            rows = got.GetTableData().GetSectionData(SectionType.Body).NumberOfRows
+        except Exception:
+            pass
+        item([
+            ("kind", "schedule"), ("id", schid), ("name", got.Name), ("category", ARGS["category"]), ("fields", visible),
+            ("filters", d.GetFilterCount()), ("sort", d.GetSortGroupFieldCount()), ("body_rows", rows),
+            ("sheet", ARGS["sheet"]["number"] if sheet is not None else ""), ("status", "replaced" if state["replaced"] else "created"),
+        ])
+    check_levels_unchanged(levels_before)
+    summary("schedule '%s' %s (id %d): %d fields, %d filters, %d sort/group%s" % (
+        name, "replaced" if state["replaced"] else "created", schid, len(fields), len(filters), len(sorts),
+        (", placed on sheet %s" % ARGS["sheet"]["number"]) if placed_at is not None else ""))
+
+
+__output__ = run_write(main)

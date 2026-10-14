@@ -373,7 +373,7 @@ p {
   max-width: 60%;
 }
 
-/* Informational only: the mode is set in the hub config, not from the panel (stage 1). */
+/* The chip reflects the hub's confirmed workspace mode. */
 .top-status .status-pill {
   max-width: 100%;
 }
@@ -401,12 +401,14 @@ p {
 }
 
 /* Warning colour on a warning border and dot; the text stays ink so it keeps AA contrast. */
-.mode-chip[data-mode="auto"] {
+.mode-chip[data-mode="auto"],
+.mode-chip[data-mode="dev"] {
   border-color: var(--amb-warning);
   color: var(--amb-ink);
 }
 
-.mode-chip[data-mode="auto"]::before {
+.mode-chip[data-mode="auto"]::before,
+.mode-chip[data-mode="dev"]::before {
   content: "";
   width: 8px;
   height: 8px;
@@ -664,6 +666,10 @@ p {
   gap: 6px;
   color: var(--amb-ink-muted);
   font-size: 12px;
+}
+
+.settings [hidden] {
+  display: none;
 }
 
 .empty-tile {

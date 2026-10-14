@@ -5,8 +5,15 @@ Revit 2024.3 session. Companion documents: `docs/revit-mcp-behaviour-and-improve
 `docs/bim-agent-findings.md` (catalogue V2-01..V2-14), `docs/prompts/revit-agent-preflight-and-verify.md` (the agent-side checks this plan turns into tools),
 `docs/recipes/` (working scripts that become native tools).
 
-Status: **a plan, not shipped behaviour.** Section 12 holds the root causes verified in source on 2026-10-14 and the build order that follows from them; where it disagrees with sections 2 and 5, section 12 wins. Items marked *(verify)* are suspected from reading the source or from a single observation and must be
-reproduced before work starts. Nothing here has been built or compiled yet.
+Status: **partially implemented in source; live acceptance pending.** Commits through `8ebf005` implement durable results, context reporting,
+async jobs, read-mode Python, joins/intersections/orientation/warnings checks, deployment hygiene and in-flight approval handling.
+The running Revit 2024 add-in still lacks `revit.get_context`, so these changes are not verified in the loaded application.
+Section 13 records the current owner decisions and priorities; it overrides earlier sequencing and Dev-mode requirements.
+Section 12 holds the root causes verified in source on 2026-10-14; where it disagrees with sections 2 and 5, section 12 wins.
+Items marked *(verify)* are suspected from reading the source or from a single observation and must be reproduced before work starts.
+
+The current source checkpoint is [bridge-upgrade-handoff.md](bridge-upgrade-handoff.md): explicit Dev mode, the recovered QA tools,
+documentation tools and plan-result hardening. It records the retained worktrees, verification evidence and remaining live checks.
 
 ## 1. What "hands and eyes" means here
 

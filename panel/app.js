@@ -47,6 +47,7 @@ const approvalModeSelect = document.getElementById("approval-mode");
 const autoMinutesLabel = document.getElementById("auto-minutes-label");
 const autoMinutesSelect = document.getElementById("auto-minutes");
 const autoOffButton = document.getElementById("auto-off");
+const approvalApplyButton = settingsForm.querySelector('button[type="submit"]');
 const setupCard = document.getElementById("setup-check");
 const setupStatus = document.getElementById("setup-status");
 const setupList = document.getElementById("setup-list");
@@ -314,15 +315,21 @@ function renderSystemState() {
 }
 
 // Mode chip + chat banner. The hub reports approval_mode in /diagnostics; the panel
-// shows it, and Settings can switch it to a limited Auto window or back.
+// shows it, including the separate persistent Dev override chosen in Settings.
 const MODE_CHIP = {
   look_only: ["Look only", "Look only: the assistant reads the model and cannot change it. Change in settings."],
   ask_first: ["Ask me first", "Ask me first: changes need your approval in this panel. Change in settings."],
-  auto: ["Auto: not recommended", "Auto: approvals are skipped for a limited time. Switch back in settings."]
+  auto: ["Auto: not recommended", "Auto: approvals are skipped for a limited time. Switch back in settings."],
+  dev: ["Dev: on", "Dev: approvals are skipped across this workspace until you switch it off in Settings. Actions are logged."]
 };
 
-function renderMode() {
+function effectivePanelMode() {
   const mode = state.diagnostics && state.diagnostics.approval_mode;
+  return mode === "auto" && state.diagnostics.dev_mode === true ? "dev" : mode;
+}
+
+function renderMode() {
+  const mode = effectivePanelMode();
   const known = Object.prototype.hasOwnProperty.call(MODE_CHIP, mode) ? mode : null;
   modeChip.dataset.mode = known || "unknown";
   const left = known === "auto" ? autoMinutesLeft() : null;
@@ -691,7 +698,10 @@ approvalModeSelect.addEventListener("change", () => {
 
 settingsForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  const wantAuto = approvalModeSelect.value === "auto";
+  if (effectivePanelMode() === "look_only") return;
+  const mode = approvalModeSelect.value;
+  const wantAuto = mode === "auto";
+  const wantDev = mode === "dev";
   const minutes = Number(autoMinutesSelect.value) || 30;
   if (wantAuto && !window.confirm(
     `Turn approvals OFF for ${minutes} minutes?
@@ -701,11 +711,16 @@ While Auto is on, the assistant can change the model without ` +
   )) {
     return;
   }
-  postToHost("settings.save", { approvalMode: wantAuto ? "auto" : "ask_first", minutes });
-  addLog("Approval mode requested", wantAuto ? `Auto for ${minutes} minutes` : "Ask me first");
+  if (wantDev && !window.confirm(
+    "Turn Dev mode ON?\n\nAssistants can change models without approval across every AI session using this workspace. " +
+    "Dev has no timer and stays on across documents and restarts until you switch it off in Settings. Actions are logged."
+  )) return;
+  postToHost("settings.save", { approvalMode: mode, minutes, confirm: wantAuto || wantDev });
+  addLog("Approval mode requested", wantDev ? "Dev until switched off" : wantAuto ? `Auto for ${minutes} minutes` : "Ask me first");
 });
 
 autoOffButton.addEventListener("click", () => {
+  if (effectivePanelMode() === "look_only") return;
   approvalModeSelect.value = "ask_first";
   autoMinutesLabel.hidden = true;
   postToHost("settings.save", { approvalMode: "ask_first" });
@@ -720,10 +735,16 @@ function autoMinutesLeft() {
   return at ? Math.max(0, Math.ceil((at * 1000 - Date.now()) / 60000)) : null;
 }
 function syncAutoControls() {
-  const mode = state.diagnostics && state.diagnostics.approval_mode;
+  const mode = effectivePanelMode();
   const isAuto = mode === "auto";
-  autoOffButton.hidden = !isAuto;
-  if (mode === "auto" || mode === "ask_first") {
+  const isDev = mode === "dev";
+  const locked = !mode || mode === "look_only";
+  approvalModeSelect.disabled = locked;
+  approvalApplyButton.disabled = locked;
+  autoMinutesSelect.disabled = locked;
+  autoOffButton.hidden = !(isAuto || isDev);
+  autoOffButton.textContent = isDev ? "Turn Dev off" : "Back to Ask me first";
+  if (isAuto || isDev || mode === "ask_first") {
     approvalModeSelect.value = mode;
     autoMinutesLabel.hidden = mode !== "auto";
   }
@@ -1146,6 +1167,7 @@ if (window.chrome && window.chrome.webview) {
 }
 
 renderMode();
+syncAutoControls();
 renderPlans();
 renderFindings();
 renderReports();

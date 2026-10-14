@@ -15,6 +15,7 @@ from ..config import APPROVAL_MODES, config, normalize_approval_mode  # noqa: F4
 from ..errors import BridgeError
 from . import proof as proof_mod
 from .approval_override import active_override
+from .dev_mode import active_dev, audit_dev_event
 
 logger = logging.getLogger(__name__)
 
@@ -178,8 +179,10 @@ class ApprovalGate:
     @property
     def approval_mode(self) -> str:
         """The mode in force right now: the mode this process started with, unless the panel has
-        switched approvals to 'auto' for a limited time (see approval_override.py). The window
-        never relaxes look_only and ends by itself."""
+        switched approvals to timed Auto or explicit Dev mode. Neither override
+        relaxes configured look_only."""
+        if self.dev_mode:
+            return "auto"
         if self._approval_mode == "ask_first" and active_override(self.workspace_dir, token=self.override_token):
             return "auto"
         return self._approval_mode
@@ -193,9 +196,17 @@ class ApprovalGate:
         """The mode this process started with, ignoring any temporary 'auto' window."""
         return self._approval_mode
 
+    @property
+    def dev_mode(self) -> bool:
+        return self._approval_mode != "look_only" and active_dev(self.workspace_dir, token=self.override_token)
+
+    def audit_dev_call(self, tool_name: str, arguments: Any, *, mutating: bool) -> None:
+        if self.dev_mode:
+            audit_dev_event(self.workspace_dir, "call", tool=tool_name, mutating=mutating, arguments=arguments)
+
     def auto_window(self) -> Optional[Dict[str, int]]:
         """{"set_at", "expires_at"} while a temporary 'auto' window is in force, else None."""
-        if self._approval_mode == "ask_first":
+        if self._approval_mode == "ask_first" and not self.dev_mode:
             return active_override(self.workspace_dir, token=self.override_token)
         return None
 
@@ -207,6 +218,7 @@ class ApprovalGate:
         return {
             "mode": mode,
             "configured_mode": self.baseline_approval_mode,
+            "dev_mode": self.dev_mode,
             "auto_window": dict(window) if isinstance(window, dict) else None,
             "auto_expires_at": window.get("expires_at") if isinstance(window, dict) and mode == "auto" else None,
         }
@@ -518,11 +530,29 @@ class ApprovalGate:
         """
         if tool_name in HUMAN_ONLY_TOOLS:
             raise BridgeError(f"'{tool_name}' is run by a person, not through a tool call.")
-        self.refuse_if_look_only()
+        # One authorization snapshot governs this call. Re-reading panel state
+        # after an audit or before plan handling could silently allow an unaudited
+        # write (Off -> Dev) or downgrade strict Dev plan checks (Dev -> Off).
+        baseline = self._approval_mode
+        dev_authorized = baseline != "look_only" and active_dev(self.workspace_dir, token=self.override_token)
+        timed_auto = baseline == "ask_first" and not dev_authorized and bool(
+            active_override(self.workspace_dir, token=self.override_token)
+        )
+        mode = "auto" if dev_authorized or timed_auto else baseline
+        if mode == "look_only":
+            raise BridgeError(LOOK_ONLY_MESSAGE)
+        if dev_authorized:
+            # Persist before permitting execution, even if the person turns Dev
+            # off after the snapshot. Failure to audit refuses the call.
+            audit_dev_event(self.workspace_dir, "call", tool=tool_name, mutating=True, arguments=arguments)
         plan_id = arguments.get("plan_id") if isinstance(arguments, dict) else None
-        if self.approval_mode == "auto":
+        if mode == "auto":
             if not plan_id:
                 return None
+            if dev_authorized:
+                # Dev permits unplanned calls; a supplied plan must still be
+                # approved, unchanged and consumed at most once.
+                return self._claim(plan_id, tool_name, arguments)
             try:  # gate off: keep the plan bookkeeping when we can, never block
                 return self._claim(plan_id, tool_name, arguments)
             except BridgeError:

@@ -1,0 +1,170 @@
+# revit_export (write mode: it writes files, the model is not changed).
+# ARGS = {format: pdf|dwg|ifc|nwc, folder, name, ext, sheets[], view_ids[], all_sheets, view_id, ifc_version, combine, overwrite}
+# folder was checked against the workspace sandbox on the server before this script was built. The model is not changed: an IFC
+# export runs inside a transaction that is always rolled back, because Revit requires one. The script lists every file that is
+# new or changed under folder\name* afterwards, with its size.
+from System import Guid
+from System.IO import Directory, File, FileInfo, Path as IoPath, SearchOption
+from System.Collections.Generic import List
+
+
+def snapshot(folder, name):
+    out = {}
+    if not Directory.Exists(folder):
+        return out
+    for p in Directory.GetFiles(folder, name + "*"):
+        fi = FileInfo(p)
+        out[p] = (fi.Length, fi.LastWriteTimeUtc.Ticks)
+    return out
+
+
+def cleanup_staging(staging):
+    try:
+        Directory.Delete(staging, True)
+    except Exception as ex:
+        info("STAGING_CLEANUP", "could not remove temporary export folder %s: %s" % (staging, ex))
+
+
+def publish_staged(staging, folder, overwrite):
+    planned = []
+    for source in Directory.GetFiles(staging, "*", SearchOption.AllDirectories):
+        # All sources came from the private staging directory. Preserve exporter
+        # subfolders and include auxiliary files in the same collision check.
+        relative = source[len(staging.rstrip("\\/")) + 1:]
+        target = IoPath.Combine(folder, relative)
+        if not overwrite and (File.Exists(target) or Directory.Exists(target)):
+            raise StepError("%s already exists; pass overwrite=true to replace it" % target)
+        planned.append((source, target))
+    # Preflight the full set before copying the first file. File.Copy(false)
+    # also prevents overwriting a file created between the check and publish.
+    for source, target in planned:
+        Directory.CreateDirectory(IoPath.GetDirectoryName(target))
+        File.Copy(source, target, overwrite)
+    return [target for source, target in planned]
+
+
+def collect_ids():
+    ids = List[ElementId]()
+    seen = {}
+    for n in ARGS.get("sheets") or []:
+        found = None
+        for s in FilteredElementCollector(doc).OfClass(ViewSheet):
+            if s.SheetNumber == n:
+                found = s
+        if found is None:
+            return None, "no sheet numbered '%s'" % n
+        if eid(found) not in seen:
+            seen[eid(found)] = 1
+            ids.Add(found.Id)
+    if ARGS.get("all_sheets"):
+        for s in FilteredElementCollector(doc).OfClass(ViewSheet):
+            if eid(s) not in seen:
+                seen[eid(s)] = 1
+                ids.Add(s.Id)
+    for i in ARGS.get("view_ids") or []:
+        v = get_by_id(i)
+        if v is None or not isinstance(v, View):
+            return None, "view id %s does not exist" % i
+        if eid(v) not in seen:
+            seen[eid(v)] = 1
+            ids.Add(v.Id)
+    return ids, None
+
+
+def main():
+    doc_meta()
+    fmt = ARGS["format"]
+    folder = ARGS["folder"]
+    name = ARGS["name"]
+    ext = ARGS["ext"]
+    target = IoPath.Combine(folder, name + "." + ext)
+    if File.Exists(target) and not ARGS.get("overwrite"):
+        refuse("file_exists", "%s already exists; pass overwrite=true to replace it" % target)
+        return
+    ids = None
+    if fmt in ("pdf", "dwg"):
+        ids, why = collect_ids()
+        if ids is None:
+            refuse("view_not_found", why)
+            return
+        if ids.Count == 0:
+            refuse("nothing_to_export", "give sheets, all_sheets or view_ids for a %s export" % fmt)
+            return
+    Directory.CreateDirectory(folder)
+    # Revit may name split PDFs after sheets and DWGs may add view suffixes and
+    # sidecars. Export into a fresh private folder, then guard EVERY actual name
+    # before publishing anything, rather than guessing the exporter's namespace.
+    staging = IoPath.Combine(folder, ".aec-export-" + str(Guid.NewGuid()))
+    Directory.CreateDirectory(staging)
+    returned = True
+    try:
+        if fmt == "pdf":
+            opts = PDFExportOptions()
+            opts.FileName = name
+            opts.Combine = bool(ARGS.get("combine", True))
+            returned = doc.Export(staging, ids, opts)
+        elif fmt == "dwg":
+            returned = doc.Export(staging, name, ids, DWGExportOptions())
+        elif fmt == "ifc":
+            opts = IFCExportOptions()
+            ver = ARGS.get("ifc_version")
+            if ver:
+                opts.FileVersion = getattr(IFCVersion, ver)
+            if ARGS.get("view_id") is not None:
+                opts.FilterViewId = ElementId(int(ARGS["view_id"]))
+            txn = Transaction(doc, "AEC export IFC")
+            txn.Start()
+            try:
+                returned = doc.Export(staging, name, opts)
+            finally:
+                txn.RollBack()
+        else:
+            opts = NavisworksExportOptions()
+            if ARGS.get("view_id") is not None:
+                opts.ExportScope = NavisworksExportScope.View
+                opts.ViewId = ElementId(int(ARGS["view_id"]))
+            else:
+                opts.ExportScope = NavisworksExportScope.Model
+            returned = doc.Export(staging, name, opts)
+    except Exception as ex:
+        text = "%s: %s" % (ex.__class__.__name__, ex)
+        if fmt == "nwc":
+            refuse("exporter_unavailable", "the NWC export failed (the Navisworks exporter add-in must be installed in this Revit): %s" % text)
+        else:
+            refuse("export_failed", text)
+        cleanup_staging(staging)
+        return
+    if not returned:
+        refuse("export_failed", "Revit's Export returned false; no staged files were published")
+        cleanup_staging(staging)
+        return
+    try:
+        published = publish_staged(staging, folder, bool(ARGS.get("overwrite")))
+    except Exception as ex:
+        refuse("file_exists" if isinstance(ex, StepError) else "export_failed", str(ex))
+        cleanup_staging(staging)
+        return
+    cleanup_staging(staging)
+    files = []
+    after = {}
+    for p in published:
+        fi = FileInfo(p)
+        after[p] = (fi.Length, fi.LastWriteTimeUtc.Ticks)
+        if p.lower().endswith("." + ext):
+            files.append(p)
+    files.sort()
+    total = 0
+    for p in files:
+        size = after[p][0]
+        total += size
+        item([("kind", "file"), ("path", p), ("bytes", size), ("exists", 1 if File.Exists(p) else 0)])
+    meta("changed_ids", "")
+    meta("failed_ids", "")
+    post("export_returned", bool(returned), "Revit's Export returned %s" % returned)
+    post("file_written", len(files) > 0, "%d new or changed .%s file(s) under %s" % (len(files), ext, folder))
+    post("file_not_empty", len(files) > 0 and min([after[p][0] for p in files]) > 0, "%d bytes in total" % total)
+    meta("outcome", "post_check_failed" if COUNTS["fail"] > 0 else "ok")
+    summary("%s export wrote %d file(s), %d bytes, under %s" % (fmt, len(files), total, folder))
+
+
+__output__ = run_write(main)

@@ -1,0 +1,132 @@
+# revit_list_views_sheets_schedules (read only).
+# ARGS = {kinds: [views, sheets, schedules, templates], name_contains, only_unplaced}
+# One ROW per view / sheet / schedule / view template: kind, id, name, type, level, template, sheet (the sheet number it is
+# placed on), placed, tag (set when a revit_docs tool made it). Counts go into the summary.
+
+SKIP_VIEW_TYPES = ("ProjectBrowser", "SystemBrowser", "Internal", "Undefined")
+
+
+def safe(fn, default):
+    try:
+        v = fn()
+        return default if v is None else v
+    except Exception:
+        return default
+
+
+def template_of(v):
+    try:
+        tid = v.ViewTemplateId
+        if tid is None or eid(tid) < 0:
+            return ""
+        t = doc.GetElement(tid)
+        return t.Name if t is not None else ""
+    except Exception:
+        return ""
+
+
+def tag_text(e):
+    t = read_tag(e)
+    if t is None:
+        return ""
+    return "%s/%s" % (t[0], t[1])
+
+
+def main():
+    doc_meta()
+    kinds = ARGS.get("kinds") or ["views", "sheets", "schedules", "templates"]
+    needle = (ARGS.get("name_contains") or "").lower()
+    only_unplaced = bool(ARGS.get("only_unplaced"))
+
+    sheet_of_view = {}
+    viewports_on = {}
+    for vp in FilteredElementCollector(doc).OfClass(Viewport):
+        sh = doc.GetElement(vp.SheetId)
+        if sh is None:
+            continue
+        sheet_of_view[eid(vp.ViewId)] = sh.SheetNumber
+        sid = eid(sh)
+        viewports_on[sid] = viewports_on.get(sid, 0) + 1
+    sheet_of_schedule = {}
+    for si in FilteredElementCollector(doc).OfClass(ScheduleSheetInstance):
+        sh = doc.GetElement(si.OwnerViewId)
+        if sh is not None:
+            sheet_of_schedule[eid(si.ScheduleId)] = sh.SheetNumber
+    titleblock_of = {}
+    for tb in FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_TitleBlocks).WhereElementIsNotElementType():
+        try:
+            sym = tb.Symbol
+            titleblock_of[eid(tb.OwnerViewId)] = "%s : %s" % (sym.FamilyName, sym.Name)
+        except Exception:
+            pass
+
+    n_views = n_unplaced = n_sheets = n_schedules = n_templates = 0
+    shown = 0
+    for v in FilteredElementCollector(doc).OfClass(View):
+        vid = eid(v)
+        name = safe(lambda: v.Name, "")
+        if isinstance(v, ViewSheet):
+            n_sheets += 1
+            if "sheets" in kinds and (not needle or needle in name.lower() or needle in v.SheetNumber.lower()) and not only_unplaced:
+                shown += 1
+                row([
+                    ("kind", "sheet"), ("id", vid), ("name", name), ("number", v.SheetNumber),
+                    ("titleblock", titleblock_of.get(vid, "")), ("views", viewports_on.get(vid, 0)), ("tag", tag_text(v)),
+                ])
+            continue
+        if isinstance(v, ViewSchedule):
+            if safe(lambda: v.IsTitleblockRevisionSchedule, False) or safe(lambda: v.IsInternalKeynoteSchedule, False):
+                continue
+            n_schedules += 1
+            placed_on = sheet_of_schedule.get(vid, "")
+            if "schedules" in kinds and (not needle or needle in name.lower()) and (not only_unplaced or not placed_on):
+                category = ""
+                try:
+                    c = Category.GetCategory(doc, v.Definition.CategoryId)
+                    category = c.Name if c is not None else ""
+                except Exception:
+                    pass
+                shown += 1
+                row([
+                    ("kind", "schedule"), ("id", vid), ("name", name), ("type", category), ("template", template_of(v)),
+                    ("sheet", placed_on), ("placed", 1 if placed_on else 0), ("tag", tag_text(v)),
+                ])
+            continue
+        vt = str(safe(lambda: v.ViewType, ""))
+        if vt in SKIP_VIEW_TYPES:
+            continue
+        if v.IsTemplate:
+            n_templates += 1
+            if "templates" in kinds and (not needle or needle in name.lower()) and not only_unplaced:
+                shown += 1
+                row([("kind", "template"), ("id", vid), ("name", name), ("type", vt)])
+            continue
+        n_views += 1
+        placed_on = sheet_of_view.get(vid, "")
+        if not placed_on:
+            n_unplaced += 1
+        if "views" in kinds and (not needle or needle in name.lower()) and (not only_unplaced or not placed_on):
+            level = ""
+            try:
+                gl = v.GenLevel
+                level = gl.Name if gl is not None else ""
+            except Exception:
+                pass
+            shown += 1
+            row([
+                ("kind", "view"), ("id", vid), ("name", name), ("type", vt), ("level", level), ("template", template_of(v)),
+                ("sheet", placed_on), ("placed", 1 if placed_on else 0), ("tag", tag_text(v)),
+            ])
+
+    meta("n_views", n_views)
+    meta("n_unplaced", n_unplaced)
+    meta("n_sheets", n_sheets)
+    meta("n_schedules", n_schedules)
+    meta("n_templates", n_templates)
+    if n_unplaced:
+        info("UNPLACED_VIEWS", "%d of %d views are not on any sheet (only_unplaced=true lists them)" % (n_unplaced, n_views))
+    summary("%d views (%d not on a sheet), %d sheets, %d schedules, %d view templates in the document; %d rows match" % (
+        n_views, n_unplaced, n_sheets, n_schedules, n_templates, shown))
+
+
+__output__ = run_main(main)

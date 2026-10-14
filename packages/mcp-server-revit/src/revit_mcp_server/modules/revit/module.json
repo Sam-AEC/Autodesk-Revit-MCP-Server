@@ -1,10 +1,10 @@
 {
   "id": "revit",
   "name": "Revit Checks (read-only eyes)",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "schema_version": 1,
   "min_hub_version": "1.2.0",
-  "description": "Read-only measuring tools for a live Revit session: wall joins, solid intersections, warnings baseline and delta, wall orientation. Each runs a vetted embedded script, never opens a transaction, and returns a short summary, FAIL lines, and a detail file for long lists.",
+  "description": "Read-only measuring tools for a live Revit session: wall joins, solid intersections, warnings baseline and delta, wall orientation, openings, roofs, family probe, MEP system report, naming and parameter checks, levels and grids, and a one-call phase review. Each runs a vetted embedded script, never opens a transaction, and returns a short summary, FAIL lines, and a detail file for long lists.",
   "author": "AEC Model Bridge",
   "license": "GPL-3.0-or-later",
   "requires_providers": [
@@ -274,6 +274,605 @@
               "type": "string"
             },
             "description": "Row fields to keep (for example [\"wall_id\",\"status\"]); omit for all fields. Only affects rows."
+          }
+        },
+        "required": []
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "audit_openings",
+      "title": "Audit Doors and Windows (host, cut, sill, swing)",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Revit ElementIds (integers) to check. Takes precedence over tag and categories."
+          },
+          "tag": {
+            "type": "string",
+            "description": "Prefix of the Comments parameter that marks the elements of one build phase (for example AMB_V2:p3_walls). Elements whose Comments start with it are checked."
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Category names to scan, for example [\"Walls\",\"Floors\"] (OST_ names also work). Used together with tag, or alone to scan one category."
+          },
+          "data": {
+            "type": "object",
+            "description": "Optional drawing data: {\"openings\": [{mark or id, wall, x_m, y_m, w_mm, h_mm, sill_mm, hinge: start|end, swing: exterior|interior, shape}]}. Adds host, position, size, sill and swing comparisons; without it the checks need no data."
+          },
+          "pos_tol_m": {
+            "type": "number",
+            "description": "Allowed distance between an opening and its data position in metres (default 0.08).",
+            "default": 0.08
+          },
+          "ray_test": {
+            "type": "boolean",
+            "description": "Shoot a ray through each opening centre to prove it cuts the wall (needs a 3D view; default true). The wall volume drop is the fallback.",
+            "default": true
+          },
+          "swing": {
+            "type": "boolean",
+            "description": "Read the symbolic swing arc of each door in its floor plan and compare it with the hinge (default true).",
+            "default": true
+          },
+          "max_elements": {
+            "type": "integer",
+            "description": "Safety cap on the number of elements selected; the tool refuses larger selections instead of running long.",
+            "default": 3000
+          },
+          "time_budget_s": {
+            "type": "number",
+            "description": "Stop after this many seconds (default 15, maximum 25) and report a partial result; the bridge itself waits only 30 s.",
+            "default": 15
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum rows, FAIL lines and INFO lines returned per list (default 50, maximum 500). The full lists go to detail_file when anything is cut.",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Skip this many rows and lines first, to read the next page of a truncated list.",
+            "default": 0
+          },
+          "count_only": {
+            "type": "boolean",
+            "description": "Return only the summary and the counts (no fails, info or rows). Use for a cheap yes/no after a phase.",
+            "default": false
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Row fields to keep (for example [\"id\",\"status\"]); omit for all fields. Only affects rows."
+          }
+        },
+        "required": []
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "audit_roofs",
+      "title": "Audit Roofs (top, slope, coverage, edges, stair openings)",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Revit ElementIds (integers) to check. Takes precedence over tag and categories."
+          },
+          "tag": {
+            "type": "string",
+            "description": "Prefix of the Comments parameter that marks the elements of one build phase (for example AMB_V2:p3_walls). Elements whose Comments start with it are checked."
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Category names to scan, for example [\"Walls\",\"Floors\"] (OST_ names also work). Used together with tag, or alone to scan one category."
+          },
+          "data": {
+            "type": "object",
+            "description": "Optional drawing data: {\"roofs\": [{id, mark or name, top_m: [lo, hi], slope_deg: [lo, hi], poly: [[x, y], ...], open_edges_near: [[x0, y0, x1, y1]], need_parapet}]} in metres."
+          },
+          "cover_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Ids of walls or floors whose footprint the roof must cover."
+          },
+          "cover_tag": {
+            "type": "string",
+            "description": "Comments prefix of the walls and floors the roof must cover (alternative to cover_ids)."
+          },
+          "top_on_level": {
+            "type": "boolean",
+            "description": "Require a flat roof top to sit on its base level elevation (default false).",
+            "default": false
+          },
+          "top_tol_m": {
+            "type": "number",
+            "description": "Tolerance for top_on_level in metres (default 0.05).",
+            "default": 0.05
+          },
+          "parapet_min_height_m": {
+            "type": "number",
+            "description": "A parapet must stand this far above the roof top, in metres (default 0.6).",
+            "default": 0.6
+          },
+          "parapet_dist_m": {
+            "type": "number",
+            "description": "A parapet wall must lie within this distance of the roof edge, in metres (default 0.35).",
+            "default": 0.35
+          },
+          "max_slope_deg": {
+            "type": "number",
+            "description": "Steepest plausible face slope in degrees; steeper is a FAIL (default 60).",
+            "default": 60
+          },
+          "check_stairs": {
+            "type": "boolean",
+            "description": "Check that stairs reaching the roof have an opening in it (default true).",
+            "default": true
+          },
+          "max_elements": {
+            "type": "integer",
+            "description": "Safety cap on the number of elements selected; the tool refuses larger selections instead of running long.",
+            "default": 3000
+          },
+          "time_budget_s": {
+            "type": "number",
+            "description": "Stop after this many seconds (default 15, maximum 25) and report a partial result; the bridge itself waits only 30 s.",
+            "default": 15
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum rows, FAIL lines and INFO lines returned per list (default 50, maximum 500). The full lists go to detail_file when anything is cut.",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Skip this many rows and lines first, to read the next page of a truncated list.",
+            "default": 0
+          },
+          "count_only": {
+            "type": "boolean",
+            "description": "Return only the summary and the counts (no fails, info or rows). Use for a cheap yes/no after a phase.",
+            "default": false
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Row fields to keep (for example [\"id\",\"status\"]); omit for all fields. Only affects rows."
+          }
+        },
+        "required": []
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "probe_family",
+      "title": "Probe a Family (nested content, connectors, extents)",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Family name (exact first, then partial) or a type name. Give name or ids."
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Ids of a family, a family type or a placed instance."
+          },
+          "deep": {
+            "type": "boolean",
+            "description": "Open the family document in memory (closed again, never saved) to read nested instances, parameters, connector elements and geometry extents (default true).",
+            "default": true
+          },
+          "allow_nested": {
+            "type": "boolean",
+            "description": "Nested family instances are reported as INFO rows instead of FAIL (default false).",
+            "default": false
+          },
+          "expect_connectors": {
+            "type": "boolean",
+            "description": "Require at least one connector even for categories that do not need one (default false).",
+            "default": false
+          },
+          "max_families": {
+            "type": "integer",
+            "description": "Probe at most this many matching families (default 3, maximum 10).",
+            "default": 3
+          },
+          "max_symbols": {
+            "type": "integer",
+            "description": "List at most this many types per family (default 12).",
+            "default": 12
+          },
+          "time_budget_s": {
+            "type": "number",
+            "description": "Stop after this many seconds (default 18, maximum 25) and report a partial result; the bridge itself waits only 30 s.",
+            "default": 18
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum rows, FAIL lines and INFO lines returned per list (default 50, maximum 500). The full lists go to detail_file when anything is cut.",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Skip this many rows and lines first, to read the next page of a truncated list.",
+            "default": 0
+          },
+          "count_only": {
+            "type": "boolean",
+            "description": "Return only the summary and the counts (no fails, info or rows). Use for a cheap yes/no after a phase.",
+            "default": false
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Row fields to keep (for example [\"id\",\"status\"]); omit for all fields. Only affects rows."
+          }
+        },
+        "required": []
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "system_report",
+      "title": "Piping and Duct System Report (open ends, ports, sizes)",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "system": {
+            "type": "string",
+            "description": "Part of a system name or system type, for example Sanitary or Domestic Cold Water. Matches members through their connectors."
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Revit ElementIds (integers) to check. Takes precedence over tag and categories."
+          },
+          "tag": {
+            "type": "string",
+            "description": "Prefix of the Comments parameter that marks the elements of one build phase (for example AMB_V2:p3_walls). Elements whose Comments start with it are checked."
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Category names to scan, for example [\"Walls\",\"Floors\"] (OST_ names also work). Used together with tag, or alone to scan one category."
+          },
+          "allow_open_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Element ids whose open ends are intended (capped ends, spare ports); they become INFO instead of FAIL."
+          },
+          "max_elements": {
+            "type": "integer",
+            "description": "Safety cap on the number of elements scanned (default 5000).",
+            "default": 5000
+          },
+          "time_budget_s": {
+            "type": "number",
+            "description": "Stop after this many seconds (default 18, maximum 25) and report a partial result; the bridge itself waits only 30 s.",
+            "default": 18
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum rows, FAIL lines and INFO lines returned per list (default 50, maximum 500). The full lists go to detail_file when anything is cut.",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Skip this many rows and lines first, to read the next page of a truncated list.",
+            "default": 0
+          },
+          "count_only": {
+            "type": "boolean",
+            "description": "Return only the summary and the counts (no fails, info or rows). Use for a cheap yes/no after a phase.",
+            "default": false
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Row fields to keep (for example [\"id\",\"status\"]); omit for all fields. Only affects rows."
+          }
+        },
+        "required": []
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "check_naming_and_params",
+      "title": "Check Required Parameters, Duplicate Marks and Names",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Revit ElementIds (integers) to check. Takes precedence over tag and categories."
+          },
+          "tag": {
+            "type": "string",
+            "description": "Prefix of the Comments parameter that marks the elements of one build phase (for example AMB_V2:p3_walls). Elements whose Comments start with it are checked."
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Category names to scan, for example [\"Walls\",\"Floors\"] (OST_ names also work). Used together with tag, or alone to scan one category."
+          },
+          "required": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Parameter names that may not be empty, for example [\"Mark\",\"Fire Rating\"]. Instance parameter first, then the type."
+          },
+          "unique": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Parameter names whose values may not repeat within one category (default [\"Mark\"])."
+          },
+          "name_pattern": {
+            "type": "string",
+            "description": "Regular expression the name must match, for example ^[A-Z]{2}_ (printable ASCII)."
+          },
+          "name_target": {
+            "type": "string",
+            "description": "type (default): test the type name. element: test the element name (levels, rooms, views).",
+            "default": "type"
+          },
+          "max_elements": {
+            "type": "integer",
+            "description": "Safety cap on the number of elements selected; the tool refuses larger selections instead of running long.",
+            "default": 3000
+          },
+          "time_budget_s": {
+            "type": "number",
+            "description": "Stop after this many seconds (default 15, maximum 25) and report a partial result; the bridge itself waits only 30 s.",
+            "default": 15
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum rows, FAIL lines and INFO lines returned per list (default 50, maximum 500). The full lists go to detail_file when anything is cut.",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Skip this many rows and lines first, to read the next page of a truncated list.",
+            "default": 0
+          },
+          "count_only": {
+            "type": "boolean",
+            "description": "Return only the summary and the counts (no fails, info or rows). Use for a cheap yes/no after a phase.",
+            "default": false
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Row fields to keep (for example [\"id\",\"status\"]); omit for all fields. Only affects rows."
+          }
+        },
+        "required": []
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "check_levels_grids",
+      "title": "Check Level Plan Views, Duplicate Elevations and Overlapping Grids (Read-only)",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "tolerance_mm": {
+            "type": "number",
+            "description": "Elevations and grid ends closer than this count as the same (millimetres, default 5).",
+            "default": 5
+          },
+          "require_ceiling_plan": {
+            "type": "boolean",
+            "description": "Also require a ceiling plan view for every level (default false).",
+            "default": false
+          },
+          "max_elements": {
+            "type": "integer",
+            "description": "Safety cap on the number of elements selected; the tool refuses larger selections instead of running long.",
+            "default": 3000
+          },
+          "time_budget_s": {
+            "type": "number",
+            "description": "Stop after this many seconds (default 15, maximum 25) and report a partial result; the bridge itself waits only 30 s.",
+            "default": 15
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum rows, FAIL lines and INFO lines returned per list (default 50, maximum 500). The full lists go to detail_file when anything is cut.",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Skip this many rows and lines first, to read the next page of a truncated list.",
+            "default": 0
+          },
+          "count_only": {
+            "type": "boolean",
+            "description": "Return only the summary and the counts (no fails, info or rows). Use for a cheap yes/no after a phase.",
+            "default": false
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Row fields to keep (for example [\"id\",\"status\"]); omit for all fields. Only affects rows."
+          }
+        },
+        "required": []
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "review",
+      "title": "Review a Build Phase (all audits in one call)",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "tag": {
+            "type": "string",
+            "description": "Prefix of the Comments parameter that marks the elements of one build phase (for example AMB_V2:p3_walls). Elements whose Comments start with it are checked."
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Revit ElementIds (integers) to check. Takes precedence over tag and categories."
+          },
+          "baseline_id": {
+            "type": "string",
+            "description": "Baseline id from revit_warnings_delta (taken before the phase). Without it new warnings are listed as not verified."
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Which checks to run: levels_grids, joins, orientation, openings, roofs, naming_params, systems, intersections, warnings (default all)."
+          },
+          "cover_tag": {
+            "type": "string",
+            "description": "Comments prefix of the walls the roofs must cover (roof coverage is skipped without it)."
+          },
+          "system": {
+            "type": "string",
+            "description": "Restrict the system report to systems whose name contains this text."
+          },
+          "required": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Parameters that may not be empty on doors, windows and rooms (duplicate marks are always checked)."
+          },
+          "unique": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Parameters that must be unique per category (default [\"Mark\"])."
+          },
+          "openings_data": {
+            "type": "object",
+            "description": "Drawing data for revit_audit_openings."
+          },
+          "roofs_data": {
+            "type": "object",
+            "description": "Drawing data for revit_audit_roofs."
+          },
+          "allow_free_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Wall ids whose free ends are intended (for revit_check_joins)."
+          },
+          "time_budget_s": {
+            "type": "number",
+            "description": "Total seconds for all checks (default 90). Checks not started in time are listed as not verified.",
+            "default": 90
+          },
+          "max_fails_per_check": {
+            "type": "integer",
+            "description": "FAIL lines shown per check (default 10); all lines go to detail_file.",
+            "default": 10
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum rows, FAIL lines and INFO lines returned per list (default 50, maximum 500). The full lists go to detail_file when anything is cut.",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Skip this many rows and lines first, to read the next page of a truncated list.",
+            "default": 0
+          },
+          "count_only": {
+            "type": "boolean",
+            "description": "Return only the summary and the counts (no fails, info or rows). Use for a cheap yes/no after a phase.",
+            "default": false
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Row fields to keep (for example [\"id\",\"status\"]); omit for all fields. Only affects rows."
           }
         },
         "required": []

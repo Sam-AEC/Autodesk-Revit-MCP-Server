@@ -1,0 +1,355 @@
+# revit_probe_family: what is really inside a loaded family (read only). Needs ARGS = {name, ids, deep,
+# allow_nested, expect_connectors, max_families, max_symbols, time_budget_s}.
+# Project side: category, types, instance counts, one sample instance (size, level, live connectors, sub-components).
+# deep=true also opens the family document in memory (EditFamily, closed again without saving; the project is not
+# touched) to list nested FamilyInstances and nested families, family parameters, connector elements (domain,
+# system, size, direction) and the extents of the solid geometry with the sill datum. Rows carry a `kind` column:
+# family, type, nested, nested_family, connector, extent, param.
+
+MEP_DOMAINS = {
+    "OST_PlumbingFixtures": ["Piping"],
+    "OST_DuctTerminal": ["Hvac"],
+    "OST_MechanicalEquipment": ["Piping", "Hvac"],
+    "OST_ElectricalEquipment": ["Electrical"],
+    "OST_ElectricalFixtures": ["Electrical"],
+    "OST_LightingFixtures": ["Electrical"],
+}
+CONNECTOR_REQUIRED = ["OST_PlumbingFixtures", "OST_DuctTerminal", "OST_MechanicalEquipment"]
+
+
+def cat_key(cat):
+    if cat is None:
+        return ""
+    for name in MEP_DOMAINS:
+        bic = getattr(BuiltInCategory, name, None)
+        try:
+            if bic is not None and eid(cat) == int(bic):
+                return name
+        except Exception:
+            pass
+    for name in ("OST_Doors", "OST_Windows"):
+        bic = getattr(BuiltInCategory, name, None)
+        try:
+            if bic is not None and eid(cat) == int(bic):
+                return name
+        except Exception:
+            pass
+    return ""
+
+
+def resolve_families():
+    """[(family, why)] from ids or name; None after an ERROR line."""
+    found = []
+    seen = set()
+
+    def add(f, why):
+        if f is not None and eid(f) not in seen:
+            seen.add(eid(f))
+            found.append((f, why))
+
+    for i in ARGS.get("ids") or []:
+        e = doc.GetElement(ElementId(int(i)))
+        if e is None:
+            info("ID_NOT_FOUND", "id %d is not in the document" % int(i))
+        elif isinstance(e, Family):
+            add(e, "id")
+        elif isinstance(e, FamilySymbol):
+            add(e.Family, "id")
+        elif isinstance(e, FamilyInstance):
+            add(e.Symbol.Family, "id")
+        else:
+            info("NOT_A_FAMILY", "id %d is a %s, not a family or family instance" % (int(i), cat_name(e)))
+    name = str(ARGS.get("name") or "").strip()
+    if name:
+        low = name.lower()
+        fams = [f for f in FilteredElementCollector(doc).OfClass(Family)]
+        exact = [f for f in fams if str(f.Name).lower() == low]
+        part = [f for f in fams if low in str(f.Name).lower()]
+        for f in (exact or part):
+            add(f, "name")
+        if not found:
+            for s in FilteredElementCollector(doc).OfClass(FamilySymbol):
+                if low in str(s.Name).lower():
+                    add(s.Family, "type name")
+    if not found:
+        error("empty_selection", "probe_family: no family matched name='%s' ids=%s" % (name, ARGS.get("ids") or []))
+        return None
+    return found
+
+
+def size_text(shape, radius, width, height):
+    s = str(shape or "")
+    try:
+        if "Round" in s and radius:
+            return "dia %s mm" % int(round(radius * 2.0 * FT_TO_M * 1000.0))
+        if width or height:
+            return "%s x %s mm" % (int(round((width or 0.0) * FT_TO_M * 1000.0)), int(round((height or 0.0) * FT_TO_M * 1000.0)))
+        if radius:
+            return "dia %s mm" % int(round(radius * 2.0 * FT_TO_M * 1000.0))
+    except Exception:
+        pass
+    return ""
+
+
+def vec_text(v):
+    try:
+        return "%.2f,%.2f,%.2f" % (v.X, v.Y, v.Z)
+    except Exception:
+        return str(v)
+
+
+def live_connectors(inst):
+    """Connectors of a placed instance: dicts with domain, system, size, direction, connected."""
+    out = []
+    mm = attr(inst, "MEPModel")
+    cm = attr(mm, "ConnectorManager") if mm is not None else None
+    if cm is None:
+        return out
+    for c in cm.Connectors:
+        system = ""
+        for prop in ("PipeSystemType", "DuctSystemType", "ElectricalSystemType"):
+            v = attr(c, prop)
+            if v is not None:
+                system = str(v)
+                break
+        cs = attr(c, "CoordinateSystem")
+        out.append({
+            "domain": str(attr(c, "Domain", "")), "system": system,
+            "size": size_text(attr(c, "Shape"), attr(c, "Radius", 0.0), attr(c, "Width", 0.0), attr(c, "Height", 0.0)),
+            "flow": str(attr(c, "Direction", "")),
+            "dir": vec_text(cs.BasisZ) if cs is not None else "",
+            "origin": vec_text(c.Origin), "connected": bool(attr(c, "IsConnected", False)),
+        })
+    return out
+
+
+def probe_family_doc(fam, fam_label, cat, allow_nested, state):
+    """Open the family document read-only, collect rows and findings, close it again."""
+    famdoc = None
+    try:
+        famdoc = doc.EditFamily(fam)
+        if famdoc is None:
+            info("UNVERIFIED_FAMILY_DOC", "%s: the family document could not be opened" % fam_label)
+            return
+        fm = famdoc.FamilyManager
+        n = 0
+        for p in fm.Parameters:
+            n += 1
+            if n <= 60:
+                row([("kind", "param"), ("family", fam_label), ("name", p.Definition.Name), ("scope", "instance" if attr(p, "IsInstance", False) else "type"),
+                     ("storage", str(attr(p, "StorageType", ""))), ("formula", attr(p, "Formula", "") or ""), ("shared", "1" if attr(p, "IsShared", False) else "0")])
+        state["params"] = n
+        nested = [f for f in FilteredElementCollector(famdoc).OfClass(FamilyInstance)]
+        state["nested"] = len(nested)
+        for f in nested:
+            try:
+                sym = f.Symbol
+                fname = str(sym.Family.Name)
+                sname = str(sym.Name)
+                ccat = cat_name(f)
+            except Exception:
+                fname, sname, ccat = "?", "?", "?"
+            bb = f.get_BoundingBox(None)
+            where = ("(%s, %s, %s) m" % (to_m((bb.Min.X + bb.Max.X) / 2.0), to_m((bb.Min.Y + bb.Max.Y) / 2.0), to_m((bb.Min.Z + bb.Max.Z) / 2.0))) if bb is not None else "(no box)"
+            row([("kind", "nested"), ("family", fam_label), ("name", "%s : %s" % (fname, sname)), ("category", ccat), ("where", where)])
+            if not allow_nested:
+                fail("FAMILY_NESTED", "%s contains a nested instance %s : %s (%s) at %s; a nested instance is rescaled with its parent and hides content (delete it, or pass allow_nested=true)" % (fam_label, fname, sname, ccat, where))
+        for nf in FilteredElementCollector(famdoc).OfClass(Family):
+            row([("kind", "nested_family"), ("family", fam_label), ("name", str(nf.Name)), ("category", cat_name(nf) if attr(nf, "Category") is not None else "")])
+
+        conns = []
+        try:
+            for ce in FilteredElementCollector(famdoc).OfClass(ConnectorElement):
+                cs = attr(ce, "CoordinateSystem")
+                dom = str(attr(ce, "Domain", ""))
+                sysc = str(attr(ce, "SystemClassification", ""))
+                size = size_text(attr(ce, "Shape"), attr(ce, "Radius", 0.0), attr(ce, "Width", 0.0), attr(ce, "Height", 0.0))
+                origin = attr(ce, "Origin")
+                conns.append({"domain": dom, "system": sysc, "size": size})
+                row([("kind", "connector"), ("family", fam_label), ("scope", "family"), ("domain", dom), ("system", sysc), ("size", size),
+                     ("flow", str(attr(ce, "Direction", ""))), ("dir", vec_text(cs.BasisZ) if cs is not None else ""),
+                     ("origin", vec_text(origin) if origin is not None else "")])
+        except Exception as ex:
+            info("UNVERIFIED_CONNECTORS", "%s: connector elements could not be read (%s)" % (fam_label, ex))
+        state["conns"] = conns
+
+        lo = [None, None, None]
+        hi = [None, None, None]
+        forms = 0
+        for g in FilteredElementCollector(famdoc).OfClass(GenericForm):
+            if attr(g, "IsSolid", True) is False:
+                continue
+            gb = g.get_BoundingBox(None)
+            if gb is None:
+                continue
+            forms += 1
+            for k, (a, b) in enumerate(((gb.Min.X, gb.Max.X), (gb.Min.Y, gb.Max.Y), (gb.Min.Z, gb.Max.Z))):
+                lo[k] = a if lo[k] is None or a < lo[k] else lo[k]
+                hi[k] = b if hi[k] is None or b > hi[k] else hi[k]
+        if forms:
+            state["extent"] = (lo, hi)
+            row([("kind", "extent"), ("family", fam_label), ("x_m", "%s..%s" % (to_m(lo[0]), to_m(hi[0]))), ("y_m", "%s..%s" % (to_m(lo[1]), to_m(hi[1]))),
+                 ("z_m", "%s..%s" % (to_m(lo[2]), to_m(hi[2]))), ("solids", forms)])
+        else:
+            info("UNVERIFIED_EXTENTS", "%s: no solid forms in the family document; geometry extents and sill datum not measured" % fam_label)
+    except Exception as ex:
+        info("UNVERIFIED_FAMILY_DOC", "%s: the family document could not be read (%s: %s)" % (fam_label, ex.__class__.__name__, ex))
+    finally:
+        if famdoc is not None:
+            try:
+                famdoc.Close(False)
+            except Exception as ex:
+                info("UNVERIFIED_FAMILY_CLOSE", "%s: the family document could not be closed (%s)" % (fam_label, ex))
+
+
+def main():
+    doc_meta()
+    budget = Budget(ARGS.get("time_budget_s") or 18)
+    found = resolve_families()
+    if found is None:
+        return
+    deep = ARGS.get("deep", True)
+    allow_nested = bool(ARGS.get("allow_nested"))
+    expect_conn = bool(ARGS.get("expect_connectors"))
+    max_fam = int(ARGS.get("max_families") or 3)
+    max_sym = int(ARGS.get("max_symbols") or 12)
+    if len(found) > max_fam:
+        meta("partial", "1")
+        info("MORE_FAMILIES", "%d families matched; probing the first %d: others are %s" % (len(found), max_fam, ", ".join([str(f[0].Name) for f in found[max_fam:max_fam + 10]])))
+        found = found[:max_fam]
+    problems_total = 0
+    partial = False
+    parts = []
+    for fam, why in found:
+        if budget.expired():
+            partial = True
+            break
+        fam_label = "Family '%s'" % fam.Name
+        cat = attr(fam, "FamilyCategory")
+        ckey = cat_key(cat)
+        cname = str(cat.Name) if cat is not None else "?"
+        problems = 0
+        symbols = []
+        for sid in fam.GetFamilySymbolIds():
+            s = doc.GetElement(sid)
+            if s is not None:
+                symbols.append(s)
+        instances = []
+        total_inst = 0
+        for s in symbols[:max_sym]:
+            cnt = 0
+            try:
+                cnt = FilteredElementCollector(doc).WherePasses(FamilyInstanceFilter(doc, s.Id)).GetElementCount()
+            except Exception:
+                cnt = 0
+            total_inst += cnt
+            row([("kind", "type"), ("family", fam_label), ("name", str(s.Name)), ("id", eid(s)), ("instances", cnt)])
+            if cnt and len(instances) < 1:
+                for inst in FilteredElementCollector(doc).WherePasses(FamilyInstanceFilter(doc, s.Id)):
+                    instances.append(inst)
+                    break
+        if len(symbols) > max_sym:
+            meta("partial", "1")
+            info("MORE_TYPES", "%s has %d types; the first %d are listed" % (fam_label, len(symbols), max_sym))
+        row([("kind", "family"), ("family", fam_label), ("name", str(fam.Name)), ("category", cname), ("id", eid(fam)),
+             ("types", len(symbols)), ("instances", total_inst), ("in_place", "1" if attr(fam, "IsInPlace", False) else "0"),
+             ("editable", "1" if attr(fam, "IsEditable", False) else "0")])
+
+        sample = instances[0] if instances else None
+        live = []
+        inst_sill = None
+        inst_dims = None
+        if sample is not None:
+            live = live_connectors(sample)
+            for c in live:
+                row([("kind", "connector"), ("family", fam_label), ("scope", "instance"), ("domain", c["domain"]), ("system", c["system"]), ("size", c["size"]),
+                     ("flow", c["flow"]), ("dir", c["dir"]), ("origin", c["origin"]), ("connected", "1" if c["connected"] else "0")])
+            try:
+                subs = list(sample.GetSubComponentIds())
+            except Exception:
+                subs = []
+            for sid in subs:
+                sub = doc.GetElement(sid)
+                row([("kind", "nested"), ("family", fam_label), ("name", "shared nested instance %d" % eid(sid)), ("category", cat_name(sub) if sub is not None else "?"), ("where", "in the placed instance %d" % eid(sample))])
+                if not allow_nested:
+                    fail("FAMILY_NESTED", "%s: placed instance %d carries nested shared instance %d (%s); pass allow_nested=true if intended" % (fam_label, eid(sample), eid(sid), cat_name(sub) if sub is not None else "?"))
+                    problems += 1
+            sb = sample.get_BoundingBox(None)
+            if sb is not None:
+                inst_dims = sorted([sb.Max.X - sb.Min.X, sb.Max.Y - sb.Min.Y, sb.Max.Z - sb.Min.Z])
+            inst_sill = first_double(sample, ["INSTANCE_SILL_HEIGHT_PARAM"])
+        else:
+            info("NO_INSTANCE", "%s has no placed instance: only the family document can be probed" % fam_label)
+
+        state = {"params": 0, "nested": 0, "conns": None, "extent": None}
+        if deep:
+            if attr(fam, "IsInPlace", False) or not attr(fam, "IsEditable", True):
+                info("UNVERIFIED_FAMILY_DOC", "%s is in-place or not editable: nested content, parameters, connectors and extents not read" % fam_label)
+            else:
+                before = COUNTS["fail"]
+                probe_family_doc(fam, fam_label, cat, allow_nested, state)
+                problems += COUNTS["fail"] - before
+        else:
+            info("UNVERIFIED_FAMILY_DOC", "%s: deep=false, nested content, connectors and extents of the family document not read" % fam_label)
+
+        conns = state["conns"] if state["conns"] is not None else None
+        if conns is None and live:
+            conns = live
+        if conns is not None and state["conns"] is not None and live and len(live) != len(conns):
+            info("CONNECTOR_COUNT", "%s: the family document has %d connectors, the placed instance %d" % (fam_label, len(conns), len(live)))
+        if conns is not None:
+            if not conns and (ckey in CONNECTOR_REQUIRED or expect_conn):
+                fail("FAMILY_NO_CONNECTORS", "%s (%s) has no connectors, so nothing can be routed to it" % (fam_label, cname))
+                problems += 1
+            expected = MEP_DOMAINS.get(ckey)
+            if conns and expected and not [c for c in conns if [d for d in expected if d in c["domain"]]]:
+                fail("FAMILY_DOMAIN", "%s (%s) has connectors in %s but the category expects %s" % (fam_label, cname, sorted(set([c["domain"] for c in conns])), "/".join(expected)))
+                problems += 1
+            for c in conns:
+                dom = c["domain"]
+                if ("Piping" in dom or "Hvac" in dom) and ("Undefined" in c["system"] or not c["system"]):
+                    fail("FAMILY_CONNECTOR_SYSTEM", "%s: a %s connector has no system classification (%s)" % (fam_label, dom, c["system"] or "empty"))
+                    problems += 1
+                    break
+            for c in conns:
+                if ("Piping" in c["domain"] or "Hvac" in c["domain"]) and (not c["size"] or c["size"].startswith("dia 0 ") or c["size"].startswith("0 x 0")):
+                    fail("FAMILY_CONNECTOR_SIZE", "%s: a %s connector has size 0 (%s)" % (fam_label, c["domain"], c["size"] or "empty"))
+                    problems += 1
+                    break
+        elif ckey in CONNECTOR_REQUIRED or expect_conn:
+            info("UNVERIFIED_CONNECTORS", "%s: connectors not read (no placed instance and no family document access)" % fam_label)
+
+        ext = state["extent"]
+        if ext is not None:
+            zmin = ext[0][2]
+            if ckey == "OST_Doors" and abs(zmin) > 0.02 / FT_TO_M:
+                fail("FAMILY_SILL_DATUM", "%s: door geometry starts %s m from the family origin; the door would not sit on the level" % (fam_label, to_m(zmin)))
+                problems += 1
+            elif ckey == "OST_Windows" and zmin > 0.02 / FT_TO_M:
+                if inst_sill is not None and inst_sill > 0.02 / FT_TO_M:
+                    fail("FAMILY_SILL_DOUBLE", "%s: geometry starts %s m above the family origin and the placed instance has sill %s m, so the window sits %s m up" % (fam_label, to_m(zmin), to_m(inst_sill), to_m(zmin + inst_sill)))
+                    problems += 1
+                else:
+                    info("SILL_DATUM", "%s: geometry starts %s m above the family origin; do not add the same height again as sill height" % (fam_label, to_m(zmin)))
+            if inst_dims is not None:
+                fd = sorted([ext[1][0] - ext[0][0], ext[1][1] - ext[0][1], ext[1][2] - ext[0][2]])
+                ratios = []
+                for a, b in zip(inst_dims, fd):
+                    if b > 1e-6:
+                        ratios.append(a / b)
+                if ratios and (max(ratios) > 1.05 or min(ratios) < 0.95):
+                    info("FAMILY_SIZE_DIFFERS", "%s: the placed instance measures %s of the family document geometry (sorted extents); fine if a type or instance parameter resizes it, a sign of rescaling if not" % (fam_label, ", ".join([str(round(r, 2)) for r in ratios])))
+        problems_total += problems
+        parts.append("%s: %s, %d types, %d instances, %d nested, %s connectors, %d problems" % (
+            fam.Name, cname, len(symbols), total_inst, state["nested"],
+            "?" if conns is None else str(len(conns)), problems))
+    if partial:
+        meta("partial", "1")
+        info("PARTIAL", "stopped after %d ms (time_budget_s=%s)" % (budget.ms(), ARGS.get("time_budget_s") or 18))
+    text = "; ".join(parts) if parts else "no family probed"
+    if partial:
+        text = "PARTIAL: " + text
+    summary(text)
+
+
+__output__ = run_main(main)

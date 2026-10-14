@@ -1,0 +1,299 @@
+# revit_audit_roofs: measured audit of roofs (read only). Ported from the roofs half of docs/recipes/toolkit/audit_villa.py.
+# Needs ARGS = {ids, tag, categories, max_elements, data, cover_ids, cover_tag, top_on_level, top_tol_m,
+# parapet_min_height_m, parapet_dist_m, max_slope_deg, check_stairs, time_budget_s}.
+# Per roof: top / bottom z against its base level, slope of the upward faces (from the face normals), whether the
+# roof footprint covers the walls named by cover_ids / cover_tag (or data.poly), open edges of a flat roof without a
+# parapet, and whether a stair that reaches the roof has an opening in it.
+# data = {"roofs": [{id|mark|name, top_m: [lo, hi], slope_deg: [lo, hi], poly: [[x, y], ...], open_edges_near:
+# [[x0, y0, x1, y1]], need_parapet}]} (metres).
+
+
+def dist_to_wall(w, x, y):
+    crv = w.Location.Curve
+    if isinstance(crv, Line):
+        a = crv.GetEndPoint(0)
+        b = crv.GetEndPoint(1)
+        return seg_dist(x, y, a.X, a.Y, b.X, b.Y)
+    res = crv.Project(XYZ(x, y, crv.GetEndPoint(0).Z))
+    return res.Distance if res is not None else None
+
+
+def covered(x, y, faces, tol):
+    for f in faces:
+        if in_region(x, y, f[2]):
+            return True
+    best = None
+    for f in faces:
+        d = dist_to_loops(x, y, f[2])
+        if d is not None and (best is None or d < best):
+            best = d
+    return best is not None and best <= tol
+
+
+def data_for_roof(rows, roof, mark):
+    rid = eid(roof)
+    name = ""
+    try:
+        name = str(roof.Name)
+    except Exception:
+        pass
+    for d in rows:
+        if d.get("id") is not None and int(d["id"]) == rid:
+            return d
+        if d.get("mark") is not None and str(d["mark"]) == mark and mark:
+            return d
+        if d.get("name") is not None and str(d["name"]) in (mark, name):
+            return d
+    return None
+
+
+def main():
+    doc_meta()
+    budget = Budget(ARGS.get("time_budget_s") or 15)
+    spec = {"ids": ARGS.get("ids"), "tag": ARGS.get("tag"), "max_elements": ARGS.get("max_elements")}
+    cats = ARGS.get("categories") or []
+    if not cats and ARGS.get("tag"):
+        cats = ["Roofs"]
+    spec["categories"] = cats
+    elems = select_elements(spec, "audit_roofs")
+    if elems is None:
+        return
+    roofs = [e for e in elems if isinstance(e, RoofBase)]
+    if len(elems) != len(roofs):
+        info("NOT_A_ROOF", "%d selected element(s) are not roofs and were skipped" % (len(elems) - len(roofs)))
+    if not roofs:
+        error("empty_selection", "audit_roofs: the selection contains no roofs")
+        return
+
+    data = ARGS.get("data") or {}
+    drows = list(data.get("roofs") or [])
+    top_on_level = bool(ARGS.get("top_on_level"))
+    top_tol = float(ARGS.get("top_tol_m") or 0.05) / FT_TO_M
+    par_h = float(ARGS.get("parapet_min_height_m") or 0.6) / FT_TO_M
+    par_d = float(ARGS.get("parapet_dist_m") or 0.35) / FT_TO_M
+    max_slope = float(ARGS.get("max_slope_deg") or 60.0)
+    cover_tol = 0.2 / FT_TO_M
+
+    cover_elems = []
+    cover_spec = {"ids": ARGS.get("cover_ids"), "tag": ARGS.get("cover_tag"), "max_elements": ARGS.get("max_elements")}
+    if cover_spec["ids"] or cover_spec["tag"]:
+        cover_spec["categories"] = [] if cover_spec["ids"] else ["Walls", "Floors"]
+        cover_elems = select_elements(cover_spec, "audit_roofs cover")
+        if cover_elems is None:
+            return
+
+    walls = []
+    for w in FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_Walls).WhereElementIsNotElementType():
+        if isinstance(w, Wall) and isinstance(w.Location, LocationCurve):
+            walls.append((w, w.get_BoundingBox(None)))
+        if len(walls) >= 5000:
+            break
+    stairs = []
+    if ARGS.get("check_stairs", True):
+        for s in FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_Stairs).WhereElementIsNotElementType():
+            sb = s.get_BoundingBox(None)
+            if sb is not None:
+                stairs.append((s, sb))
+            if len(stairs) >= 200:
+                break
+
+    bad = 0
+    partial = False
+    unverified_cover = 0
+    for rf in roofs:
+        if budget.expired():
+            partial = True
+            break
+        rid = eid(rf)
+        mark = ""
+        p, where = find_param(rf, "Mark")
+        mark = param_text(p)
+        label = "Roof %d%s" % (rid, (" (mark %s)" % mark) if mark else "")
+        problems = 0
+        bb = rf.get_BoundingBox(None)
+        if bb is None:
+            info("UNVERIFIED_ROOF", "%s has no bounding box and was skipped" % label)
+            continue
+        top = bb.Max.Z
+        bot = bb.Min.Z
+        lvl_z = None
+        lvl_name = ""
+        try:
+            lp = rf.get_Parameter(BuiltInParameter.ROOF_BASE_LEVEL_PARAM)
+            lvl = doc.GetElement(lp.AsElementId()) if lp is not None else None
+            if lvl is not None:
+                lvl_z = lvl.Elevation
+                lvl_name = str(lvl.Name)
+        except Exception:
+            lvl = None
+        d = data_for_roof(drows, rf, mark)
+
+        faces = upward_faces(rf, 0.02)
+        max_deg = None
+        min_deg = None
+        area = 0.0
+        for f in faces:
+            deg = System.Math.Acos(min(1.0, f[0])) * 180.0 / System.Math.PI
+            max_deg = deg if max_deg is None or deg > max_deg else max_deg
+            min_deg = deg if min_deg is None or deg < min_deg else min_deg
+            area += f[1] * f[0]
+        if not faces:
+            info("UNVERIFIED_ROOF_FACES", "%s: no upward planar faces found; slope, coverage and edges not measured" % label)
+
+        # top against the level
+        if lvl_z is not None and top < lvl_z - 0.03:
+            fail("ROOF_BELOW_LEVEL", "%s: top at %s m is below its base level %s (%s m)" % (label, to_m(top), lvl_name, to_m(lvl_z)))
+            problems += 1
+        flat = max_deg is not None and max_deg < 2.0
+        if top_on_level and lvl_z is not None and flat and abs(top - lvl_z) > top_tol:
+            fail("ROOF_TOP_LEVEL", "%s: flat roof top at %s m, level %s is at %s m (tolerance %s m)" % (label, to_m(top), lvl_name, to_m(lvl_z), round(top_tol * FT_TO_M, 3)))
+            problems += 1
+        if d is not None and d.get("top_m"):
+            lo = float(d["top_m"][0])
+            hi = float(d["top_m"][1])
+            if not (lo <= top * FT_TO_M <= hi):
+                fail("ROOF_TOP", "%s: top at %s m, allowed %s..%s m" % (label, to_m(top), lo, hi))
+                problems += 1
+
+        # slope
+        if max_deg is not None and max_deg > max_slope:
+            fail("ROOF_SLOPE_STEEP", "%s: steepest face is %s deg, more than %s deg: check the slope definition" % (label, round(max_deg, 1), max_slope))
+            problems += 1
+        if d is not None and d.get("slope_deg") and max_deg is not None:
+            lo = float(d["slope_deg"][0])
+            hi = float(d["slope_deg"][1])
+            if not (lo - 0.5 <= max_deg <= hi + 0.5):
+                fail("ROOF_SLOPE", "%s: steepest face %s deg, allowed %s..%s deg" % (label, round(max_deg, 1), lo, hi))
+                problems += 1
+
+        # footprint coverage
+        pts = []
+        for e in cover_elems:
+            if isinstance(e, Wall) and isinstance(e.Location, LocationCurve):
+                c = e.Location.Curve
+                for t in (0.0, 0.5, 1.0):
+                    q = c.Evaluate(t, True)
+                    pts.append((q.X, q.Y, e))
+            else:
+                eb = e.get_BoundingBox(None)
+                if eb is not None:
+                    for qx in (eb.Min.X + 0.15, eb.Max.X - 0.15):
+                        for qy in (eb.Min.Y + 0.15, eb.Max.Y - 0.15):
+                            pts.append((qx, qy, e))
+        if d is not None and d.get("poly"):
+            for xy in d["poly"]:
+                pts.append((float(xy[0]) / FT_TO_M, float(xy[1]) / FT_TO_M, None))
+        if faces and pts:
+            outside = []
+            for q in pts:
+                if not covered(q[0], q[1], faces, cover_tol):
+                    outside.append(q)
+            if outside:
+                first = outside[0]
+                who = (" of %s %d" % (cat_name(first[2]), eid(first[2]))) if first[2] is not None else ""
+                fail("ROOF_UNCOVERED", "%s: %d of %d footprint points lie outside the roof, first at (%s, %s) m%s" % (label, len(outside), len(pts), to_m(first[0]), to_m(first[1]), who))
+                problems += 1
+        elif not pts:
+            unverified_cover += 1
+
+        # open edges without a parapet (flat roofs, or need_parapet)
+        need = bool(d.get("need_parapet")) if (d is not None and "need_parapet" in d) else flat
+        if need and faces:
+            near_boxes = (d.get("open_edges_near") if d is not None else None) or []
+            cand = []
+            for pair in walls:
+                wb = pair[1]
+                if wb is None:
+                    continue
+                if wb.Max.Z < top + par_h:
+                    continue
+                if wb.Max.X < bb.Min.X - 1 or wb.Min.X > bb.Max.X + 1 or wb.Max.Y < bb.Min.Y - 1 or wb.Min.Y > bb.Max.Y + 1:
+                    continue
+                cand.append(pair[0])
+            samples = 0
+            missing = []
+            for f in faces:
+                if not f[2]:
+                    continue
+                outer = f[2][0]
+                for loop in f[2]:
+                    if loop_area(loop) > loop_area(outer):
+                        outer = loop
+                for i in range(len(outer) - 1):
+                    a = outer[i]
+                    b = outer[i + 1]
+                    seg = ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5
+                    if seg < 0.01:
+                        continue
+                    n = max(1, int(seg * FT_TO_M / 2.0 + 0.999))
+                    for k in range(n):
+                        t = (k + 0.5) / n
+                        x = a[0] + (b[0] - a[0]) * t
+                        y = a[1] + (b[1] - a[1]) * t
+                        mx = x * FT_TO_M
+                        my = y * FT_TO_M
+                        skip = False
+                        for box in near_boxes:
+                            if float(box[0]) <= mx <= float(box[2]) and float(box[1]) <= my <= float(box[3]):
+                                skip = True
+                        if skip:
+                            continue
+                        samples += 1
+                        ok = False
+                        for w in cand:
+                            dd = dist_to_wall(w, x, y)
+                            if dd is not None and dd <= par_d:
+                                ok = True
+                                break
+                        if not ok:
+                            missing.append((mx, my))
+                        if samples >= 400:
+                            break
+                    if samples >= 400:
+                        break
+            if missing:
+                fail("ROOF_OPEN_EDGE", "%s: %d of %d edge points have no wall standing %s m above the roof within %s m, first at (%s, %s) m" % (label, len(missing), samples, round(par_h * FT_TO_M, 2), round(par_d * FT_TO_M, 2), round(missing[0][0], 2), round(missing[0][1], 2)))
+                problems += 1
+
+        # stairs that reach this roof need an opening in it
+        for pair in stairs:
+            s = pair[0]
+            sb = pair[1]
+            if sb.Max.X < bb.Min.X or sb.Min.X > bb.Max.X or sb.Max.Y < bb.Min.Y or sb.Min.Y > bb.Max.Y:
+                continue
+            ref = lvl_z if lvl_z is not None else bot
+            if sb.Max.Z < ref - 0.3 / FT_TO_M or sb.Max.Z > top + 0.5 / FT_TO_M:
+                continue
+            if not faces:
+                continue
+            cx = (sb.Min.X + sb.Max.X) / 2.0
+            cy = (sb.Min.Y + sb.Max.Y) / 2.0
+            inside = False
+            for f in faces:
+                if in_region(cx, cy, f[2]):
+                    inside = True
+            if inside:
+                fail("ROOF_NO_STAIR_OPENING", "%s: stair %d reaches the roof (top %s m) but the roof is closed above it at (%s, %s) m" % (label, eid(s), to_m(sb.Max.Z), to_m(cx), to_m(cy)))
+                problems += 1
+
+        if problems:
+            bad += 1
+        row([
+            ("id", rid), ("mark", mark), ("level", lvl_name), ("level_z_m", "" if lvl_z is None else to_m(lvl_z)),
+            ("top_m", to_m(top)), ("bottom_m", to_m(bot)),
+            ("max_slope_deg", "" if max_deg is None else round(max_deg, 1)), ("min_slope_deg", "" if min_deg is None else round(min_deg, 1)),
+            ("plan_area_m2", round(area * FT_TO_M * FT_TO_M, 2)), ("flat", "1" if flat else "0"),
+            ("status", "fail" if problems else "ok"),
+        ])
+    if unverified_cover:
+        info("UNVERIFIED_COVER", "footprint coverage not checked for %d roof(s): give cover_tag / cover_ids or data.poly" % unverified_cover)
+    if partial:
+        meta("partial", "1")
+        info("PARTIAL", "stopped after %d ms (time_budget_s=%s); narrow the selection and run again" % (budget.ms(), ARGS.get("time_budget_s") or 15))
+    text = "%d roofs audited, %d with problems" % (len(roofs), bad)
+    if partial:
+        text = "PARTIAL: " + text
+    summary(text)
+
+
+__output__ = run_main(main)

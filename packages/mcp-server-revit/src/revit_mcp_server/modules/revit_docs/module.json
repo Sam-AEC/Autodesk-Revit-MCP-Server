@@ -1,0 +1,620 @@
+{
+  "id": "revit_docs",
+  "name": "Revit Documentation (views, sheets, schedules, export)",
+  "version": "0.1.0",
+  "schema_version": 1,
+  "min_hub_version": "1.2.0",
+  "description": "Documentation automation for a live Revit session: list views, sheets and schedules, check a rendered picture, and make views, sheets and schedules or export PDF, DWG, IFC and NWC. The list and render tools are read-only. The make and export tools are write tools: they need an approved plan, replace only what they made under the same tag, use one transaction per element, and roll back on failure unless on_error is skip.",
+  "author": "AEC Model Bridge",
+  "license": "GPL-3.0-or-later",
+  "requires_providers": [
+    "revit"
+  ],
+  "permissions": [
+    "model.read",
+    "model.write",
+    "workspace.write"
+  ],
+  "commands": [
+    {
+      "id": "list_views_sheets_schedules",
+      "title": "List Views, Sheets, Schedules and View Templates",
+      "mcp_tool": "revit_list_views_sheets_schedules",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "kinds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "views",
+                "sheets",
+                "schedules",
+                "templates"
+              ]
+            },
+            "description": "Which kinds to list: views, sheets, schedules, templates. Default all four."
+          },
+          "name_contains": {
+            "type": "string",
+            "description": "Only rows whose name (or sheet number) contains this text, case-insensitive."
+          },
+          "only_unplaced": {
+            "type": "boolean",
+            "description": "List only views and schedules that are not on any sheet.",
+            "default": false
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Most rows to return (default 50, at most 500). The full list is written to a detail file when it is longer.",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Skip this many rows first, to read the next page of a truncated list.",
+            "default": 0
+          },
+          "count_only": {
+            "type": "boolean",
+            "description": "Return only the summary and the counts (no rows). Use for a cheap overview.",
+            "default": false
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Row fields to keep (for example [\"id\",\"name\"]); omit for all fields."
+          }
+        },
+        "required": []
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "render_check",
+      "title": "Render a Revit View and Verify the PNG Contains Visible Content",
+      "mcp_tool": "revit_render_check",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "view_id": {
+            "type": "integer",
+            "description": "ElementId (integer) of the view to export."
+          },
+          "output_path": {
+            "type": "string",
+            "description": "PNG file to write; must end in .png and lie inside the allowed workspace directories."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Pixel size of the longer side (200 to 4000, default 1000). Small is enough to detect a blank view.",
+            "default": 1000
+          }
+        },
+        "required": [
+          "view_id",
+          "output_path"
+        ]
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "make_view",
+      "title": "Make a View (3D, Plan, Section or Elevation)",
+      "mcp_tool": "revit_make_view",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "3d",
+              "plan",
+              "section",
+              "elevation"
+            ],
+            "description": "3d: isometric view fitted to scope. plan: floor or ceiling plan of a level. section: section along a line. elevation: elevation marker in a level's floor plan."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name of the new view. Must not be used by a view this tool did not make."
+          },
+          "tag": {
+            "type": "string",
+            "description": "Your own label for this build phase (for example DOC1). Elements made under the same tag and name are replaced when you run the call again; elements this tool did not make are never touched."
+          },
+          "template": {
+            "type": "string",
+            "description": "Name of a view template to apply (see revit_list_views_sheets_schedules with kinds ['templates'])."
+          },
+          "level": {
+            "type": "string",
+            "description": "Level name, for kind plan and elevation."
+          },
+          "plan_type": {
+            "type": "string",
+            "enum": [
+              "floor",
+              "ceiling"
+            ],
+            "default": "floor",
+            "description": "For kind plan: floor plan or reflected ceiling plan."
+          },
+          "scope": {
+            "type": "object",
+            "description": "Elements the view should frame: give ids, or a Comments tag prefix, or categories.",
+            "properties": {
+              "ids": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "description": "Revit ElementIds (integers)."
+              },
+              "tag": {
+                "type": "string",
+                "description": "Prefix of the Comments parameter that marks the elements of one build phase."
+              },
+              "categories": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Category names, for example [\"Walls\",\"Floors\"]."
+              }
+            }
+          },
+          "margin_m": {
+            "type": "number",
+            "default": 0.5,
+            "description": "Metres added around the scope for the section box (3d) or crop (plan)."
+          },
+          "direction": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "3d only: [x, y, z] the camera looks along (default [-1, 1, -1], looking north-west and down)."
+          },
+          "display_style": {
+            "type": "string",
+            "enum": [
+              "shaded_with_edges",
+              "shaded",
+              "hidden_line",
+              "wireframe",
+              "realistic",
+              "consistent_colors",
+              "keep"
+            ],
+            "description": "3d only. Default shaded_with_edges unless a template is given; keep leaves the style alone."
+          },
+          "p0": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "section only: [x, y] start of the section line in metres."
+          },
+          "p1": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "section only: [x, y] end of the section line in metres. The view looks to the right of p0 to p1."
+          },
+          "z_bottom_m": {
+            "type": "number",
+            "description": "section only: lowest level shown, metres."
+          },
+          "z_top_m": {
+            "type": "number",
+            "description": "section only: highest level shown, metres."
+          },
+          "depth_m": {
+            "type": "number",
+            "default": 10,
+            "description": "section only: how far the section looks past its line, metres."
+          },
+          "flip": {
+            "type": "boolean",
+            "default": false,
+            "description": "section only: look the other way."
+          },
+          "point": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "elevation only: [x, y] of the elevation marker in metres."
+          },
+          "facing": {
+            "type": "string",
+            "enum": [
+              "north",
+              "south",
+              "east",
+              "west"
+            ],
+            "description": "elevation only: the direction the elevation looks."
+          },
+          "on_error": {
+            "type": "string",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort",
+            "description": "abort (default): the first failure rolls the whole call back and nothing is kept. skip: keep what worked and list the failures."
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "tag"
+        ]
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    },
+    {
+      "id": "make_sheet",
+      "title": "Make a Sheet and Place Views on a Grid",
+      "mcp_tool": "revit_make_sheet",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "number": {
+            "type": "string",
+            "description": "Sheet number, for example A101. Must not be used by a sheet this tool did not make."
+          },
+          "name": {
+            "type": "string",
+            "description": "Sheet name."
+          },
+          "tag": {
+            "type": "string",
+            "description": "Your own label for this build phase (for example DOC1). Elements made under the same tag and number are replaced when you run the call again; elements this tool did not make are never touched."
+          },
+          "title_block": {
+            "type": "string",
+            "description": "Title block type by name: the type name, the family name, or 'Family : Type'. Omit for a sheet without a title block."
+          },
+          "views": {
+            "type": "array",
+            "description": "Views to place, in reading order. Each has view_id or view_name, and optionally x_mm and y_mm (centre on the sheet, in millimetres) to skip the grid.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "view_id": {
+                  "type": "integer",
+                  "description": "ElementId (integer) of the view."
+                },
+                "view_name": {
+                  "type": "string",
+                  "description": "Exact name of the view, when view_id is not given."
+                },
+                "x_mm": {
+                  "type": "number",
+                  "description": "Centre X on the sheet in millimetres."
+                },
+                "y_mm": {
+                  "type": "number",
+                  "description": "Centre Y on the sheet in millimetres."
+                }
+              }
+            }
+          },
+          "columns": {
+            "type": "integer",
+            "description": "Grid columns (default: about the square root of the number of views)."
+          },
+          "margin_mm": {
+            "type": "number",
+            "default": 15,
+            "description": "Space kept free inside the title block outline, millimetres."
+          },
+          "gutter_mm": {
+            "type": "number",
+            "default": 10,
+            "description": "Space between grid cells, millimetres."
+          },
+          "area_mm": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "[x0, y0, x1, y1] sheet area for the grid, millimetres; overrides the title block outline (use it to keep clear of the title strip)."
+          },
+          "on_error": {
+            "type": "string",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort",
+            "description": "abort (default): the first failure rolls the whole call back and nothing is kept. skip: keep what worked and list the failures."
+          }
+        },
+        "required": [
+          "number",
+          "name",
+          "tag"
+        ]
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    },
+    {
+      "id": "make_schedule",
+      "title": "Make a Revit Schedule with Fields, Filters, Sorting and Totals",
+      "mcp_tool": "revit_make_schedule",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Schedule name. Must not be used by a view or schedule this tool did not make."
+          },
+          "tag": {
+            "type": "string",
+            "description": "Your own label for this build phase (for example DOC1). Elements made under the same tag and name are replaced when you run the call again; elements this tool did not make are never touched."
+          },
+          "category": {
+            "type": "string",
+            "description": "Category to schedule, for example Doors, Rooms, Walls or OST_Windows."
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Column names in order, as Revit names the schedulable fields (for example Mark, Level, Width)."
+          },
+          "filters": {
+            "type": "array",
+            "description": "Row filters, all of which must match.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "description": "Field name to filter on (added hidden when it is not a column)."
+                },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "equals",
+                    "not_equals",
+                    "greater",
+                    "greater_or_equal",
+                    "less",
+                    "less_or_equal",
+                    "contains",
+                    "not_contains",
+                    "begins_with",
+                    "not_begins_with",
+                    "ends_with",
+                    "not_ends_with",
+                    "has_value",
+                    "has_no_value"
+                  ],
+                  "description": "Comparison."
+                },
+                "value": {
+                  "description": "Text or number to compare with (numbers in Revit internal units, feet for lengths). Not needed for has_value and has_no_value."
+                }
+              },
+              "required": [
+                "field",
+                "op"
+              ]
+            }
+          },
+          "sort": {
+            "type": "array",
+            "description": "Sort and group fields, in order.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "description": "Field name to sort by (added hidden when it is not a column)."
+                },
+                "order": {
+                  "type": "string",
+                  "enum": [
+                    "ascending",
+                    "descending"
+                  ],
+                  "description": "Sort order, default ascending."
+                },
+                "header": {
+                  "type": "boolean",
+                  "description": "Show a group header."
+                },
+                "footer": {
+                  "type": "boolean",
+                  "description": "Show a group footer."
+                },
+                "blank_line": {
+                  "type": "boolean",
+                  "description": "Add a blank line between groups."
+                }
+              },
+              "required": [
+                "field"
+              ]
+            }
+          },
+          "totals": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Numeric column names to total."
+          },
+          "grand_total": {
+            "type": "boolean",
+            "default": false,
+            "description": "Show a grand total row."
+          },
+          "itemize": {
+            "type": "boolean",
+            "default": true,
+            "description": "One row per element (true) or grouped identical rows (false)."
+          },
+          "template": {
+            "type": "string",
+            "description": "Name of a view template to apply to the schedule."
+          },
+          "sheet": {
+            "type": "object",
+            "description": "Also place the schedule on a sheet.",
+            "properties": {
+              "number": {
+                "type": "string",
+                "description": "Number of the sheet. It must be a sheet made by revit_make_sheet unless allow_foreign is true."
+              },
+              "x_mm": {
+                "type": "number",
+                "description": "Left edge on the sheet in millimetres (default: top left of the title block)."
+              },
+              "y_mm": {
+                "type": "number",
+                "description": "Top edge on the sheet in millimetres."
+              },
+              "allow_foreign": {
+                "type": "boolean",
+                "description": "Allow a sheet that this tool did not make (only the schedule instance is added)."
+              }
+            },
+            "required": [
+              "number"
+            ]
+          },
+          "on_error": {
+            "type": "string",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort",
+            "description": "abort (default): the first failure rolls the whole call back and nothing is kept. skip: keep what worked and list the failures."
+          }
+        },
+        "required": [
+          "name",
+          "tag",
+          "category",
+          "fields"
+        ]
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    },
+    {
+      "id": "export",
+      "title": "Export Sheets or the Model (PDF, DWG, IFC, NWC)",
+      "mcp_tool": "revit_export",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": [
+              "pdf",
+              "dwg",
+              "ifc",
+              "nwc"
+            ],
+            "description": "pdf and dwg export sheets or views; ifc and nwc export the model (or one view)."
+          },
+          "path": {
+            "type": "string",
+            "description": "Output file; its extension must match the format and it must lie inside the allowed workspace directories."
+          },
+          "sheets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "pdf and dwg: sheet numbers to export."
+          },
+          "all_sheets": {
+            "type": "boolean",
+            "default": false,
+            "description": "pdf and dwg: export every sheet in the document."
+          },
+          "view_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "pdf and dwg: ElementIds (integers) of extra views to export."
+          },
+          "view_id": {
+            "type": "integer",
+            "description": "ifc and nwc: export only what this view shows."
+          },
+          "ifc_version": {
+            "type": "string",
+            "enum": [
+              "IFC2x3",
+              "IFC4",
+              "IFC4RV",
+              "IFC4DTV"
+            ],
+            "description": "ifc only: schema version (default: Revit's current setting)."
+          },
+          "combine": {
+            "type": "boolean",
+            "default": true,
+            "description": "pdf only: one PDF for all sheets (true) or one file per sheet."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "default": false,
+            "description": "Replace the file when it already exists. Without it an existing file stops the export."
+          }
+        },
+        "required": [
+          "format",
+          "path"
+        ]
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    }
+  ]
+}

@@ -1,0 +1,229 @@
+# revit_make_sheet (write mode, one sheet per call).
+# ARGS = {number, name, tag, title_block, views: [{view_id | view_name, x_mm, y_mm}], columns, margin_mm, gutter_mm, area_mm, on_error}
+# The sheet is made in its own transaction, every viewport in its own transaction. A sheet with the same number made earlier
+# under the same tag is replaced (its viewports go with it; the views stay). A sheet of that number that this tool did not
+# make is never touched. A view that is already on another sheet is reported with that sheet's number, never moved.
+# Sheet positions are millimetres in sheet space (the origin is the title block's own origin).
+
+
+def find_title_block(name):
+    hits = []
+    for sym in FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_TitleBlocks).WhereElementIsElementType():
+        full = "%s : %s" % (sym.FamilyName, sym.Name)
+        if name in (sym.Name, full, sym.FamilyName):
+            hits.append(sym)
+    return hits
+
+
+def title_block_names(limit):
+    names = []
+    for sym in FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_TitleBlocks).WhereElementIsElementType():
+        names.append("%s : %s" % (sym.FamilyName, sym.Name))
+    names.sort()
+    return names[:limit]
+
+
+def resolve_view(spec):
+    """(view, None) or (None, reason)."""
+    if spec.get("view_id") is not None:
+        v = get_by_id(spec["view_id"])
+        if v is None or not isinstance(v, View):
+            return None, "view id %s does not exist" % spec["view_id"]
+    else:
+        hits = views_named(spec.get("view_name") or "")
+        if len(hits) != 1:
+            return None, "%d views are named '%s'" % (len(hits), spec.get("view_name"))
+        v = hits[0]
+    if v.IsTemplate or isinstance(v, ViewSheet):
+        return None, "'%s' is a %s and cannot be placed on a sheet" % (v.Name, "view template" if v.IsTemplate else "sheet")
+    return v, None
+
+
+def sheet_number_of_view(view_id):
+    for vp in FilteredElementCollector(doc).OfClass(Viewport):
+        if eid(vp.ViewId) == view_id:
+            sh = doc.GetElement(vp.SheetId)
+            if sh is not None:
+                return sh.SheetNumber
+    return None
+
+
+def title_block_instance(sheet):
+    for tb in FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_TitleBlocks).WhereElementIsNotElementType():
+        if eid(tb.OwnerViewId) == eid(sheet):
+            return tb
+    return None
+
+
+def layout_area(sheet):
+    """(x0, y0, x1, y1) in feet: the explicit area_mm, else the title block's bounding box shrunk by the margin."""
+    if ARGS.get("area_mm"):
+        a = ARGS["area_mm"]
+        return (a[0] * MM_TO_FT, a[1] * MM_TO_FT, a[2] * MM_TO_FT, a[3] * MM_TO_FT)
+    tb = title_block_instance(sheet)
+    if tb is None:
+        return None
+    bb = tb.get_BoundingBox(sheet)
+    if bb is None:
+        return None
+    m = ARGS["margin_mm"] * MM_TO_FT
+    return (bb.Min.X + m, bb.Min.Y + m, bb.Max.X - m, bb.Max.Y - m)
+
+
+def cell_centres(area, count):
+    cols = ARGS.get("columns") or int(count ** 0.5 + 0.999)
+    cols = max(1, min(cols, count))
+    rows = int((count + cols - 1) / cols)
+    gut = ARGS["gutter_mm"] * MM_TO_FT
+    cw = (area[2] - area[0] - gut * (cols - 1)) / cols
+    ch = (area[3] - area[1] - gut * (rows - 1)) / rows
+    out = []
+    for i in range(count):
+        r = int(i / cols)
+        c = i % cols
+        out.append((area[0] + c * (cw + gut) + cw / 2.0, area[3] - r * (ch + gut) - ch / 2.0, cw, ch))
+    return out
+
+
+def main():
+    doc_meta()
+    number = ARGS["number"]
+    name = ARGS["name"]
+    tag = ARGS["tag"]
+    specs = ARGS.get("views") or []
+
+    tb_symbol = None
+    if ARGS.get("title_block"):
+        hits = find_title_block(ARGS["title_block"])
+        if len(hits) != 1:
+            why = "no title block type" if not hits else "%d title block types" % len(hits)
+            refuse("title_block_not_found", "%s matches '%s'; available: %s" % (why, ARGS["title_block"], "; ".join(title_block_names(12)) or "(none)"))
+            return
+        tb_symbol = hits[0]
+
+    views = []
+    for spec in specs:
+        v, why = resolve_view(spec)
+        if v is None:
+            refuse("view_not_found", why)
+            return
+        views.append((v, spec))
+    seen = {}
+    for v, spec in views:
+        if eid(v) in seen:
+            refuse("duplicate_view", "view '%s' (id %d) is listed twice; a view can be on a sheet once" % (v.Name, eid(v)), [eid(v)])
+            return
+        seen[eid(v)] = 1
+
+    mine = owned_elements("sheet", tag, number)
+    mine_ids = set([eid(e) for e in mine])
+    for s in FilteredElementCollector(doc).OfClass(ViewSheet):
+        if s.SheetNumber == number and eid(s) not in mine_ids:
+            refuse("number_conflict", "sheet number '%s' is already used by sheet id %d, which this tool did not make; it was left untouched" % (number, eid(s)), [eid(s)])
+            return
+    for v, spec in views:
+        sh = sheet_number_of_view(eid(v))
+        if sh is not None and not (sh == number and mine):
+            refuse("view_already_placed", "view '%s' (id %d) is already on sheet %s; a view can be on one sheet only and this tool never moves it" % (v.Name, eid(v), sh), [eid(v)])
+            return
+
+    levels_before = level_names()
+    run = Runner("AEC make sheet", ARGS.get("on_error"))
+    state = {"replaced": 0}
+
+    def make_sheet():
+        state["replaced"] = len(delete_owned(mine))
+        tid = ElementId.InvalidElementId
+        if tb_symbol is not None:
+            if not tb_symbol.IsActive:
+                tb_symbol.Activate()
+                doc.Regenerate()
+            tid = tb_symbol.Id
+        sheet = ViewSheet.Create(doc, tid)
+        sheet.SheetNumber = number
+        sheet.Name = name
+        set_tag(sheet, tag, number, "sheet")
+        tbi = title_block_instance(sheet)
+        if tbi is not None:
+            set_tag(tbi, tag, number, "title_block")
+        return sheet
+
+    sheet = run.step("Make sheet %s" % number, make_sheet, ids=[eid(e) for e in mine])
+    if sheet is None:
+        return
+    sid = eid(sheet)
+    run.changed.append(sid)
+
+    area = layout_area(sheet) if views else None
+    auto = [s for v, s in views if s.get("x_mm") is None or s.get("y_mm") is None]
+    if auto and area is None:
+        refuse_msg = "sheet %s has no title block to measure; give area_mm or x_mm and y_mm for every view" % number
+        fail("NO_LAYOUT_AREA", refuse_msg)
+        run.failed_steps.append("layout")
+        run.failed_ids.append(sid)
+        raise Abort()
+    cells = cell_centres(area, len(views)) if area is not None and views else []
+
+    placed = []
+    for idx, (v, spec) in enumerate(views):
+        if spec.get("x_mm") is not None and spec.get("y_mm") is not None:
+            cx, cy = spec["x_mm"] * MM_TO_FT, spec["y_mm"] * MM_TO_FT
+            cw = ch = None
+        else:
+            cx, cy, cw, ch = cells[idx]
+
+        def place(v=v, cx=cx, cy=cy):
+            if not Viewport.CanAddViewToSheet(doc, sheet.Id, v.Id):
+                raise StepError("Revit says view '%s' cannot be added to sheet %s" % (v.Name, number), [eid(v)])
+            vp = Viewport.Create(doc, sheet.Id, v.Id, XYZ(cx, cy, 0.0))
+            set_tag(vp, tag, number, "viewport")
+            return vp
+
+        vp = run.step("Place view '%s' on sheet %s" % (v.Name, number), place, ids=[eid(v), sid])
+        if vp is None:
+            continue
+        placed.append((v, vp, cx, cy, cw, ch))
+
+    got = get_by_id(sid)
+    post("sheet_exists", got is not None, "sheet id %d" % sid)
+    if got is not None:
+        post("sheet_number", got.SheetNumber == number, "'%s'" % got.SheetNumber)
+        post("sheet_name", got.Name == name, "'%s'" % got.Name)
+        t = read_tag(got)
+        post("tag_readback", t is not None and t[0] == tag and t[1] == number, "tag %s" % (t,))
+        if tb_symbol is not None:
+            tbi = title_block_instance(got)
+            post("title_block", tbi is not None and eid(tbi.Symbol) == eid(tb_symbol), "title block '%s'" % ARGS["title_block"])
+        on_sheet = dict([(eid(vp.ViewId), vp) for vp in FilteredElementCollector(doc).OfClass(Viewport) if eid(vp.SheetId) == sid])
+        post("viewport_count", len(on_sheet) == len(placed) and (len(placed) == len(views) or ARGS.get("on_error") == "skip"), "%d viewports on the sheet, %d views placed, %d requested" % (len(on_sheet), len(placed), len(views)))
+        for v, vp, cx, cy, cw, ch in placed:
+            real = on_sheet.get(eid(v))
+            if real is None:
+                post("viewport_for_view", False, "view '%s' (id %d) has no viewport on sheet %s" % (v.Name, eid(v), number))
+                continue
+            c = real.GetBoxCenter()
+            off_mm = ((c.X - cx) ** 2 + (c.Y - cy) ** 2) ** 0.5 * 304.8
+            post("viewport_position", off_mm < 1.0, "view '%s' centre is %.2f mm from the requested position" % (v.Name, off_mm))
+            run.changed.append(eid(real))
+            w = h = None
+            try:
+                ol = real.GetBoxOutline()
+                w = (ol.MaximumPoint.X - ol.MinimumPoint.X) * 304.8
+                h = (ol.MaximumPoint.Y - ol.MinimumPoint.Y) * 304.8
+            except Exception:
+                pass
+            fit = ""
+            if cw is not None and w is not None and (w > cw * 304.8 + 1.0 or h > ch * 304.8 + 1.0):
+                fit = "larger than its grid cell"
+                info("VIEWPORT_OVERSIZE", "view '%s' is %.0f x %.0f mm, its grid cell is %.0f x %.0f mm" % (v.Name, w, h, cw * 304.8, ch * 304.8))
+            item([
+                ("kind", "viewport"), ("id", eid(real)), ("view_id", eid(v)), ("name", v.Name), ("sheet", number),
+                ("x_mm", round(c.X * 304.8, 1)), ("y_mm", round(c.Y * 304.8, 1)),
+                ("width_mm", round(w, 1) if w is not None else ""), ("height_mm", round(h, 1) if h is not None else ""), ("note", fit),
+            ])
+        item([("kind", "sheet"), ("id", sid), ("name", got.Name), ("sheet", got.SheetNumber), ("status", "replaced" if state["replaced"] else "created")])
+    check_levels_unchanged(levels_before)
+    summary("sheet %s '%s' %s (id %d) with %d of %d views placed" % (number, name, "replaced" if state["replaced"] else "created", sid, len(placed), len(views)))
+
+
+__output__ = run_write(main)

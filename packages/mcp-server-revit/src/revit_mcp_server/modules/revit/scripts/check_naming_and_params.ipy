@@ -1,0 +1,112 @@
+# revit_check_naming_and_params: required parameters and naming (read only). Needs ARGS = {ids, tag, categories,
+# max_elements, required, unique, name_pattern, name_target, time_budget_s}.
+# required: parameter names that may not be empty (instance parameter first, then the type). unique: parameter names
+# whose values may not repeat within one category (default Mark). name_pattern: a .NET regular expression the name
+# must match (name_target "type" = the type name, "element" = the element name). Findings are grouped per category
+# and parameter so a big model yields a few FAIL lines; every offending element is a ROW.
+from System.Text.RegularExpressions import Regex
+
+
+def element_name(e, target):
+    el = e
+    if target == "type":
+        t = type_of(e)
+        if t is not None:
+            el = t
+    try:
+        return str(el.Name)
+    except Exception:
+        return ""
+
+
+def main():
+    doc_meta()
+    budget = Budget(ARGS.get("time_budget_s") or 15)
+    spec = {"ids": ARGS.get("ids"), "tag": ARGS.get("tag"), "categories": ARGS.get("categories"), "max_elements": ARGS.get("max_elements")}
+    elems = select_elements(spec, "check_naming_and_params")
+    if elems is None:
+        return
+    required = [str(x) for x in (ARGS.get("required") or [])]
+    unique = [str(x) for x in (ARGS.get("unique") or [])]
+    pattern = str(ARGS.get("name_pattern") or "")
+    target = ARGS.get("name_target") or "type"
+    if pattern:
+        try:
+            Regex.IsMatch("x", pattern)
+        except Exception as ex:
+            error("invalid_input", "name_pattern is not a valid regular expression: %s" % ex)
+            return
+    if not required and not unique and not pattern:
+        error("invalid_input", "check_naming_and_params: give required, unique and/or name_pattern")
+        return
+
+    missing = {}
+    empty = {}
+    values = {}
+    bad_names = {}
+    checked = {}
+    partial = False
+    seen = 0
+    for e in elems:
+        if budget.expired():
+            partial = True
+            break
+        seen += 1
+        eidv = eid(e)
+        cat = cat_name(e)
+        checked[cat] = checked.get(cat, 0) + 1
+        mark_p, w = find_param(e, "Mark")
+        mark = param_text(mark_p)
+        for name in required:
+            p, where = find_param(e, name)
+            if p is None:
+                missing.setdefault((cat, name), []).append(eidv)
+                row([("id", eidv), ("category", cat), ("mark", mark), ("problem", "param_missing"), ("param", name), ("value", "")])
+            elif not param_text(p).strip():
+                empty.setdefault((cat, name), []).append(eidv)
+                row([("id", eidv), ("category", cat), ("mark", mark), ("problem", "param_empty"), ("param", name), ("value", "")])
+        for name in unique:
+            p, where = find_param(e, name)
+            text = param_text(p).strip() if p is not None else ""
+            if text:
+                values.setdefault((cat, name), {}).setdefault(text, []).append(eidv)
+        if pattern:
+            nm = element_name(e, target)
+            if not Regex.IsMatch(nm, pattern):
+                bad_names.setdefault(cat, []).append((eidv, nm))
+                row([("id", eidv), ("category", cat), ("mark", mark), ("problem", "name_pattern"), ("param", "Name"), ("value", nm)])
+
+    n_missing = 0
+    n_empty = 0
+    n_dup = 0
+    n_names = 0
+    for key in sorted(missing.keys()):
+        ids = missing[key]
+        n_missing += len(ids)
+        fail("PARAM_MISSING", "%s: parameter '%s' does not exist on %d of %d elements (ids %s)" % (key[0], key[1], len(ids), checked.get(key[0], 0), tidy_list(ids, 12)))
+    for key in sorted(empty.keys()):
+        ids = empty[key]
+        n_empty += len(ids)
+        fail("PARAM_EMPTY", "%s: '%s' is empty on %d of %d elements (ids %s)" % (key[0], key[1], len(ids), checked.get(key[0], 0), tidy_list(ids, 12)))
+    for key in sorted(values.keys()):
+        for text in sorted(values[key].keys()):
+            ids = values[key][text]
+            if len(ids) > 1:
+                n_dup += len(ids)
+                fail("PARAM_DUPLICATE", "%s: %s '%s' is used by %d elements (ids %s)" % (key[0], key[1], text, len(ids), tidy_list(ids, 12)))
+                for i in ids:
+                    row([("id", i), ("category", key[0]), ("mark", ""), ("problem", "param_duplicate"), ("param", key[1]), ("value", text)])
+    for cat in sorted(bad_names.keys()):
+        items = bad_names[cat]
+        n_names += len(items)
+        fail("NAME_PATTERN", "%s: %d of %d names do not match %s, for example '%s' (id %d)" % (cat, len(items), checked.get(cat, 0), pattern, items[0][1], items[0][0]))
+    if partial:
+        meta("partial", "1")
+        info("PARTIAL", "stopped after %d of %d elements (time_budget_s=%s)" % (seen, len(elems), ARGS.get("time_budget_s") or 15))
+    text = "%d elements in %d categories: %d missing, %d empty, %d duplicate values, %d names off pattern" % (seen, len(checked), n_missing, n_empty, n_dup, n_names)
+    if partial:
+        text = "PARTIAL: " + text
+    summary(text)
+
+
+__output__ = run_main(main)

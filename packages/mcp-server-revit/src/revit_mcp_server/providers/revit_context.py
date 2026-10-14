@@ -68,7 +68,7 @@ def get_context(
     /health is answered on the HTTP thread, so it still works while Revit is busy with a long script;
     the command needs the Revit thread and may only report 'running' in that case.
     """
-    server = {"version": _server_version(), "approval_mode": approval_mode}
+    server = {"version": _server_version(), "approval_mode": approval_mode, "dev_mode": False}
     if approval:
         # The mode in force right now (a signed, time-limited 'auto' window from the panel counts),
         # not just the one the process started with.
@@ -76,6 +76,7 @@ def get_context(
         server["configured_approval_mode"] = approval.get("configured_mode") or approval_mode
         server["auto_window"] = approval.get("auto_window")
         server["auto_expires_at"] = approval.get("auto_expires_at")
+        server["dev_mode"] = bool(approval.get("dev_mode"))
     if not live:
         return {
             "ok": True,
