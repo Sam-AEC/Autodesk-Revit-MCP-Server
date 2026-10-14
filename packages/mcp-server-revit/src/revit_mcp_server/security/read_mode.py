@@ -32,6 +32,10 @@ FORBIDDEN_IN_READ_MODE: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("eval", re.compile(r"\beval\b")),
     ("exec", re.compile(r"\bexec(?:file)?\b")),
     ("__import__", re.compile(r"\b__import__\b")),
+    # A read-mode script runs without approval, so it must not reach the file system, processes or the network.
+    ("os_modules", re.compile(r"\b(?:import|from)\s+(?:os|subprocess|shutil|socket|ctypes|urllib\w*|http|ftplib|smtplib|pickle|marshal|webbrowser|tempfile|glob|io)\b")),
+    ("System.IO", re.compile(r"\bSystem\s*\.\s*(?:IO|Net|Reflection)\b|\bProcess(?:StartInfo)?\s*[.(]")),
+    ("open", re.compile(r"(?<![\w.])(?:open|file)\s*\(")),
 )
 
 

@@ -37,6 +37,9 @@ internal static class PythonScriptRunner
         ("eval", new Regex(@"\beval\b", RegexOptions.CultureInvariant)),
         ("exec", new Regex(@"\bexec(?:file)?\b", RegexOptions.CultureInvariant)),
         ("__import__", new Regex(@"\b__import__\b", RegexOptions.CultureInvariant)),
+        ("os_modules", new Regex(@"\b(?:import|from)\s+(?:os|subprocess|shutil|socket|ctypes|urllib\w*|http|ftplib|smtplib|pickle|marshal|webbrowser|tempfile|glob|io)\b", RegexOptions.CultureInvariant)),
+        ("System.IO", new Regex(@"\bSystem\s*\.\s*(?:IO|Net|Reflection)\b|\bProcess(?:StartInfo)?\s*[.(]", RegexOptions.CultureInvariant)),
+        ("open", new Regex(@"(?<![\w.])(?:open|file)\s*\(", RegexOptions.CultureInvariant)),
     };
 
     /// <summary>Progress lines of the script that is running now, for a future live status endpoint.</summary>

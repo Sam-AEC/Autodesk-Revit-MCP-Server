@@ -67,6 +67,12 @@ def _call(name, arguments):
         "doc.Save()",
         "doc.SaveAs(path)",
         "app.SynchronizeWithCentral",
+        "import os\nprint(os.listdir('C:/'))",
+        "import subprocess",
+        "from shutil import rmtree",
+        "from System.IO import File",
+        "x = System.Diagnostics.Process.Start('cmd')",
+        "fh = open('C:/x.txt', 'w')",
     ],
 )
 def test_read_mode_rejects_transaction_text_and_writers(snippet):
