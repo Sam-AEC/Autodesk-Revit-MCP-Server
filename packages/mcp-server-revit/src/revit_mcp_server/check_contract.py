@@ -396,3 +396,51 @@ def new_baseline_id() -> str:
 
 def is_safe_name(name: str) -> bool:
     return bool(_SAFE_NAME.match(name or ""))
+
+
+# --------------------------------------------------------------------------- #
+# Dry run of the write tools (revit_docs, revit_family, revit_mep, revit_params)
+# --------------------------------------------------------------------------- #
+COMMITTED_OUTCOMES = ("ok", "partial_failure", "post_check_failed")
+DRY_RUN_HINT = (
+    "Dry run: nothing was changed and nothing was written. To apply it, plan the same call with dry_run false "
+    "and have that plan approved."
+)
+
+
+def _id_list(text: Optional[str]) -> List[int]:
+    return [int(p) for p in (text or "").split(",") if p.strip().lstrip("-").isdigit()]
+
+
+def write_run_fields(
+    parsed: ScriptOutput, outcome: str, items: List[Dict[str, Any]], *, dry_run: bool
+) -> Tuple[Dict[str, Any], Optional[str]]:
+    """``dry_run`` / ``committed`` (and for a dry run ``would_change`` with ``changed_ids: []``) of a write result.
+
+    Returns ``(fields, violation)``. ``violation`` is a FAIL text when a dry run was asked for but the script reports a
+    commit or changed ids without confirming the dry run: such a result must never be ok.
+    """
+    if not dry_run:
+        return {"dry_run": False, "committed": outcome in COMMITTED_OUTCOMES}, None
+    violation: Optional[str] = None
+    honoured = parsed.meta.get("dry_run") == "1"
+    if parsed.meta.get("committed") == "1" or (not honoured and _id_list(parsed.meta.get("changed_ids"))):
+        violation = "DRY_RUN_NOT_HONOURED: a dry run was asked for but the script reports committed changes; check the model"
+    statuses: Dict[str, int] = {}
+    for it in items:
+        status = str(it.get("status") or "")
+        if status:
+            statuses[status] = statuses.get(status, 0) + 1
+    would_ids = _id_list(parsed.meta.get("would_change_ids"))
+    would: Dict[str, Any] = {
+        "outcome": outcome,
+        "element_count": len(would_ids),
+        "element_ids_in_trial": would_ids[:200],
+        "items": len(items),
+        "by_status": statuses,
+        "names": [str(it.get("name")) for it in items if it.get("name")][:50],
+        "files": [str(it.get("would_write")) for it in items if it.get("would_write")][:50],
+        "note": "ids are from the rolled-back trial run; they do not exist in the model and a real run gets new ids",
+    }
+    fields: Dict[str, Any] = {"dry_run": True, "committed": False, "changed_ids": [], "would_change": would}
+    return fields, violation

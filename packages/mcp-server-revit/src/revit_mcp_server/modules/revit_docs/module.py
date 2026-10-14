@@ -24,7 +24,11 @@ Safety of the write commands:
     the whole group back on the first failure, 'skip' keeps what worked;
   * the tools replace only elements that carry their own Extensible Storage tag (tag + key + kind) and never rename,
     modify or delete anything else; a level's own plan view is never renamed;
-  * the result always carries ``changed_ids`` and a ``post_check`` section, and is never ``ok: true`` when a post-check failed.
+  * the result always carries ``changed_ids`` and a ``post_check`` section, and is never ``ok: true`` when a post-check failed;
+  * ``dry_run`` (every write command): the script does the whole call inside the group as normal, post-checks included,
+    then always rolls the group back. The result says ``dry_run: true``, ``committed: false``, ``changed_ids: []`` and
+    ``would_change``. revit_export in a dry run only checks its inputs and reports the target path; nothing is exported.
+    A dry run is approval-gated exactly like a real one (same plan_id path).
 
 Everything that needs a running Revit is UNVERIFIED here: the scripts are syntax-checked and exercised against a
 stub of the Revit API in the tests (tests/test_revit_docs.py), not against Revit.
@@ -38,12 +42,14 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from revit_mcp_server.check_contract import (
+    DRY_RUN_HINT,
     PageSpec,
     ScriptOutput,
     assemble_result,
     error_result,
     mock_result,
     parse_script_output,
+    write_run_fields,
 )
 from revit_mcp_server.image_check import analyze_png
 
@@ -83,6 +89,7 @@ _HINTS = {
     "export_failed": "Revit refused the export. Check the options (sheet numbers, view ids) and that the folder is writable.",
     "script_exception": "The embedded script failed inside Revit; any open transaction group was rolled back, so the model should be unchanged (verify with revit_warnings_delta).",
     "timeout_running": "Revit may still be running the script. Call revit_get_result with the request_id, and do not repeat a write until it has finished.",
+    "dry_run_not_honoured": "A dry run reported committed changes. Check the model (revit_warnings_delta, revit_list_views_sheets_schedules) before doing anything else.",
 }
 
 
@@ -340,6 +347,15 @@ def _scope(value: Any) -> Dict[str, Any]:
     return {"ids": _int_list(value.get("ids"), "scope.ids"), "tag": tag, "categories": [str(c) for c in cats]}
 
 
+def _flag(value: Any, what: str) -> bool:
+    """A strict boolean (None means false): the string 'false' must never turn into a real write or a dry run."""
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ValueError(f"{what} must be true or false")
+    return value
+
+
 def _bad_input(tool: str, exc: Exception) -> Dict[str, Any]:
     return error_result(tool, "invalid_input", str(exc), hint=_HINTS["invalid_input"])
 
@@ -360,6 +376,7 @@ def _finish_write(
     workspace: Any,
     *,
     extra: Optional[Dict[str, Any]] = None,
+    dry_run: bool = False,
 ) -> Dict[str, Any]:
     outcome = parsed.meta.get("outcome", "ok")
     changed = _ints(parsed.meta.get("changed_ids"))
@@ -388,13 +405,21 @@ def _finish_write(
     }
     if extra:
         fields.update(extra)
-    ok = outcome == "ok" and post_check["ok"] and not parsed.fails and parsed.counts.get("fail", 0) == 0
+    run_fields, violation = write_run_fields(parsed, outcome, items, dry_run=dry_run)
+    fields.update(run_fields)
+    if violation:
+        synthetic.fails.insert(0, violation)
+        outcome = "dry_run_not_honoured"
+        fields["outcome"] = outcome
+    ok = outcome == "ok" and post_check["ok"] and not synthetic.fails and parsed.counts.get("fail", 0) == 0
     summary = parsed.summary
     if not ok:
-        first = parsed.fails[0] if parsed.fails else outcome
+        first = synthetic.fails[0] if synthetic.fails else outcome
         summary = f"FAILED ({outcome}): {first}"
         if outcome == "rolled_back":
             summary += " The whole call was rolled back; the model is unchanged."
+    if dry_run:
+        summary = "DRY RUN, nothing was changed: " + (summary or "") + (" A real run would roll back." if outcome == "rolled_back" else "")
     result = assemble_result(
         tool,
         synthetic,
@@ -408,9 +433,11 @@ def _finish_write(
     if not ok:
         result["ok"] = False
         result["kind"] = outcome if outcome != "ok" else "post_check_failed"
-        result["message"] = parsed.fails[0] if parsed.fails else f"outcome: {outcome}"
+        result["message"] = synthetic.fails[0] if synthetic.fails else f"outcome: {outcome}"
         result["element_ids"] = failed_ids
         result["hint"] = _HINTS.get(result["kind"], "")
+    if dry_run and not violation:
+        result["hint"] = (DRY_RUN_HINT + " " + result.get("hint", "")).strip()
     return result
 
 
@@ -596,6 +623,7 @@ class RevitDocsModule:
         point: Any = None,
         facing: Any = None,
         on_error: Any = None,
+        dry_run: Any = False,
         workspace: Any = None,
         approved_executor: Optional[ToolExecutor] = None,
         **_: Any,
@@ -614,6 +642,7 @@ class RevitDocsModule:
                 "margin_m": max(0.0, _num(margin_m if margin_m is not None else 0.5, "margin_m")),
                 "display_style": _choice(display_style, ("shaded_with_edges", "shaded", "hidden_line", "wireframe", "realistic", "consistent_colors", "keep"), "display_style", "") or None,
                 "on_error": _choice(on_error, ("abort", "skip"), "on_error", "abort"),
+                "dry_run": _flag(dry_run, "dry_run"),
             }
             if k in ("plan", "elevation") and not args["level"]:
                 raise ValueError(f"level is required for kind {k}")
@@ -654,6 +683,7 @@ class RevitDocsModule:
         gutter_mm: Any = 10.0,
         area_mm: Any = None,
         on_error: Any = None,
+        dry_run: Any = False,
         workspace: Any = None,
         approved_executor: Optional[ToolExecutor] = None,
         **_: Any,
@@ -692,6 +722,7 @@ class RevitDocsModule:
                 "gutter_mm": _num(gutter_mm if gutter_mm is not None else 10.0, "gutter_mm"),
                 "area_mm": None,
                 "on_error": _choice(on_error, ("abort", "skip"), "on_error", "abort"),
+                "dry_run": _flag(dry_run, "dry_run"),
             }
             if args["columns"] is not None and not 1 <= args["columns"] <= 12:
                 raise ValueError("columns must be between 1 and 12")
@@ -720,6 +751,7 @@ class RevitDocsModule:
         template: Any = None,
         sheet: Any = None,
         on_error: Any = None,
+        dry_run: Any = False,
         workspace: Any = None,
         approved_executor: Optional[ToolExecutor] = None,
         **_: Any,
@@ -773,6 +805,7 @@ class RevitDocsModule:
                 "template": _opt_name(template, "template"),
                 "sheet": None,
                 "on_error": _choice(on_error, ("abort", "skip"), "on_error", "abort"),
+                "dry_run": _flag(dry_run, "dry_run"),
             }
             if sheet:
                 if not isinstance(sheet, dict):
@@ -799,6 +832,7 @@ class RevitDocsModule:
         ifc_version: Any = None,
         combine: Any = True,
         overwrite: Any = False,
+        dry_run: Any = False,
         workspace: Any = None,
         approved_executor: Optional[ToolExecutor] = None,
         **_: Any,
@@ -832,6 +866,7 @@ class RevitDocsModule:
                 "ifc_version": _choice(ifc_version, ("IFC2x3", "IFC4", "IFC4RV", "IFC4DTV"), "ifc_version", "") or None,
                 "combine": True if combine is None else bool(combine),
                 "overwrite": bool(overwrite),
+                "dry_run": _flag(dry_run, "dry_run"),
             }
         except _OutsideWorkspace as exc:
             return error_result(tool, "path_outside_workspace", str(exc), hint=_HINTS["path_outside_workspace"])
@@ -852,8 +887,13 @@ class RevitDocsModule:
         parsed, elapsed, early = _run(tool, script_name, args, write=True, tool_executor=None, approved_executor=approved_executor)
         if early is not None or parsed is None:
             return early or {}
+        dry = bool(args.get("dry_run"))
         if export_target is None:
-            return _finish_write(tool, parsed, elapsed, workspace)
+            return _finish_write(tool, parsed, elapsed, workspace, dry_run=dry)
+        if dry:
+            # Nothing was exported: report the target only, never a file list.
+            return _finish_write(tool, parsed, elapsed, workspace, dry_run=True,
+                                 extra={"path": str(export_target), "exists": False, "bytes": 0, "files": []})
         return _finish_export(tool, parsed, elapsed, workspace, export_target)
 
 

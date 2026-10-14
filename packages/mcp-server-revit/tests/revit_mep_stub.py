@@ -44,7 +44,11 @@ BuiltInParameter = types.SimpleNamespace(
     RBS_PIPE_DIAMETER_PARAM="rbs_pipe_d", RBS_CURVE_DIAMETER_PARAM="rbs_duct_d", RBS_CURVE_WIDTH_PARAM="rbs_duct_w",
     RBS_CURVE_HEIGHT_PARAM="rbs_duct_h", RBS_PIPING_SYSTEM_TYPE_PARAM="rbs_pipe_sys", RBS_DUCT_SYSTEM_TYPE_PARAM="rbs_duct_sys",
     RBS_ELEC_CIRCUIT_NAME="rbs_circuit_name",
+    ELEM_PARTITION_PARAM="elem_partition", ELEM_TYPE_PARAM="elem_type", WALL_BASE_CONSTRAINT="wall_base",
 )
+StorageType = _Names("None", "Integer", "Double", "String", "ElementId")
+SpecTypeId = types.SimpleNamespace(Length="spec:length", Angle="spec:angle", Number="spec:number", String="spec:text",
+                                   Reference="spec:ref", Boolean=types.SimpleNamespace(YesNo="spec:yesno"))
 BuiltInCategory = types.SimpleNamespace(**stub.BuiltInCategory.__dict__, OST_ElectricalCircuits=-2001010)
 
 
@@ -181,6 +185,76 @@ class Taggable:
         return self.parameters.get(which)
 
     def apply_param(self, key: str, value: Any) -> None:  # overridden by pipes (size -> connector radius)
+        pass
+
+
+class ParamDef:
+    """Definition of a named parameter: its name, data type (SpecTypeId) and built-in id (None for a project parameter)."""
+
+    def __init__(self, name: str, spec: str, bip: Any = None) -> None:
+        self.Name, self.spec, self.BuiltInParameter = name, spec, bip
+
+    def GetDataType(self) -> str:
+        return self.spec
+
+
+class NamedParam(Param):
+    """A parameter found by name (revit_params). Set is journaled like Param; ``refuse`` makes Set return False."""
+
+    def __init__(self, owner: Any, name: str, value: Any, kind: str, spec: str, read_only: bool = False, bip: Any = None) -> None:
+        super().__init__(owner, name, value, kind, read_only)
+        self.Definition = ParamDef(name, spec, bip)
+        self.refuse = False
+
+    def Set(self, value: Any) -> bool:
+        if self.refuse:
+            return False
+        if self.StorageType == "ElementId":
+            value = value.Value
+        return super().Set(value)
+
+    def AsInteger(self) -> int:
+        return int(self.value)
+
+    def AsElementId(self) -> ElementId:
+        return ElementId(int(self.value) if self.value is not None else -1)
+
+    def AsValueString(self) -> str:
+        return "" if self.value is None else str(self.value)
+
+
+class ParamElement(Taggable, stub.Element):
+    """An element (or element type) with parameters by name, for the revit_params scripts."""
+
+    def __init__(self, eid: int, category: Optional[Category], name: str = "", comments: str = "", level_id: int = -1, is_type: bool = False) -> None:
+        stub.Element.__init__(self, eid, category, comments)
+        self._init_taggable()
+        self.Name, self.is_type, self.LevelId = name, is_type, ElementId(level_id)
+        self.by_name: Dict[str, List[NamedParam]] = {}
+
+    def add(self, name: str, value: Any, kind: str = "String", spec: str = "spec:text", read_only: bool = False, bip: Any = None) -> NamedParam:
+        p = NamedParam(self, name, value, kind, spec, read_only, bip)
+        self.by_name.setdefault(name, []).append(p)
+        return p
+
+    def GetParameters(self, name: str) -> List[NamedParam]:
+        return list(self.by_name.get(name, []))
+
+    def LookupParameter(self, name: str) -> Optional[NamedParam]:
+        found = self.by_name.get(name)
+        return found[0] if found else None
+
+    @property
+    def Parameters(self) -> List[NamedParam]:
+        return [p for ps in self.by_name.values() for p in ps]
+
+    def get_Parameter(self, which: Any) -> Any:
+        for p in self.Parameters:
+            if p.Definition.BuiltInParameter == which:
+                return p
+        return stub.Element.get_Parameter(self, which)
+
+    def apply_param(self, key: str, value: Any) -> None:
         pass
 
 
@@ -799,6 +873,7 @@ def installed_mep(monkeypatch: Any) -> Iterator[World]:
     db.TransactionStatus, db.FailureSeverity, db.FailureProcessingResult = TransactionStatus, FailureSeverity, FailureProcessingResult
     db.IFailuresPreprocessor = IFailuresPreprocessor
     db.Domain = _Names("DomainPiping", "DomainHvac", "DomainElectrical")
+    db.StorageType, db.SpecTypeId = StorageType, SpecTypeId
     plumbing = types.ModuleType("Autodesk.Revit.DB.Plumbing")
     plumbing.Pipe, plumbing.PipeType, plumbing.PipingSystemType = StubPipe, PipeType, PipingSystemType
     plumbing.PipeSystemType = PipeSystemType

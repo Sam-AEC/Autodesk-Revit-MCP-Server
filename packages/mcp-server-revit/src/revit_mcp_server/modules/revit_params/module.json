@@ -1,0 +1,241 @@
+{
+  "id": "revit_params",
+  "name": "Revit Parameters (read and batch-set instance or type parameters)",
+  "version": "0.1.0",
+  "schema_version": 1,
+  "min_hub_version": "1.2.0",
+  "description": "Read and batch-set instance or type parameters of placed elements from data. revit_get_parameters is read-only: use it first to see names, units and which parameters are writable. revit_set_parameters is a write tool: it needs an approved plan, never creates parameters, refuses read-only and critical built-in ones per element, writes one transaction per element, reads every value back and returns old and new values plus a revert list. dry_run tries it and rolls it all back.",
+  "author": "AEC Model Bridge",
+  "license": "GPL-3.0-or-later",
+  "requires_providers": [
+    "revit"
+  ],
+  "permissions": [
+    "model.read",
+    "model.write"
+  ],
+  "commands": [
+    {
+      "id": "get_parameters",
+      "title": "Read parameter values of elements picked by id, ids or a selector (category, name, level, tag): one row per element and parameter with the value in the unit revit_set_parameters expects, Revit's display text, read-only, and whether revit_set_parameters would write it and why not. Leave params empty to list every parameter. Read-only; use it before revit_set_parameters. Capped by max_elements and a time budget; truncated says the list is not complete. For one element's raw record revit_get_element_parameters also works.",
+      "mcp_tool": "revit_get_parameters",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "description": "What to read (1 to 50 items): each item picks elements with exactly one of id, ids or selector, and names the parameters.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "description": "ElementId (integer) of one element."
+                },
+                "ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  },
+                  "description": "ElementIds (integers) of up to 2000 elements."
+                },
+                "selector": {
+                  "type": "object",
+                  "description": "Pick elements by properties instead of ids. Needs category or tag, so the whole model is never scanned; name and level narrow it.",
+                  "properties": {
+                    "category": {
+                      "type": "string",
+                      "description": "Category name, for example Walls, Doors, Windows, Pipes or OST_GenericModel."
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "Exact element name (for a family instance this is its type name)."
+                    },
+                    "level": {
+                      "type": "string",
+                      "description": "Exact name of the level the element is on."
+                    },
+                    "tag": {
+                      "type": "string",
+                      "description": "Prefix of the Comments parameter that marks the elements of one build phase."
+                    }
+                  }
+                },
+                "scope": {
+                  "type": "string",
+                  "enum": [
+                    "instance",
+                    "type"
+                  ],
+                  "default": "instance",
+                  "description": "instance (default): the selected element itself (a type id also means that type). type: the element type of each selected element; instances that share a type count once."
+                },
+                "params": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Parameter names to read (at most 100). Empty or left out: every parameter of the element."
+                }
+              }
+            }
+          },
+          "max_elements": {
+            "type": "integer",
+            "default": 200,
+            "description": "Read at most this many elements (1 to 2000, default 200); more matches make the result partial."
+          },
+          "time_budget_s": {
+            "type": "number",
+            "default": 10,
+            "description": "Stop reading after this many seconds (1 to 25, default 10) and return a partial result."
+          },
+          "limit": {
+            "type": "integer",
+            "default": 100,
+            "description": "Most rows to return (default 100, at most 500). The full list is written to a detail file when it is longer."
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0,
+            "description": "Skip this many rows first, to read the next page of a truncated list."
+          },
+          "count_only": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return only the summary and the counts (no rows)."
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Row fields to keep (for example [\"id\",\"param\",\"value\"]); omit for all fields."
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "set_parameters",
+      "title": "Batch-set instance or type parameters of up to 500 elements from data: items pick elements by id, ids or a selector (category, name, level, tag) and give params {name: value} with explicit units (mm, m, deg, number, int, bool, text, elementid by name). Never creates parameters; refuses read-only and critical built-in ones (type, workset, phase, level, host) with a reason per element. Run revit_get_parameters first to see names, units and what is writable. Write tool: needs an approved plan; one transaction per element; every value is read back; returns old and new values and a revert list; rolls back on failure unless on_error is skip.",
+      "mcp_tool": "revit_set_parameters",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "description": "What to write (500 elements per call in total): each item picks elements with exactly one of id, ids or selector and gives the values.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "description": "ElementId (integer) of one element."
+                },
+                "ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  },
+                  "description": "ElementIds (integers) of up to 500 elements."
+                },
+                "selector": {
+                  "type": "object",
+                  "description": "Pick elements by properties instead of ids. Needs category or tag, so the whole model is never scanned; name and level narrow it.",
+                  "properties": {
+                    "category": {
+                      "type": "string",
+                      "description": "Category name, for example Walls, Doors, Windows, Pipes or OST_GenericModel."
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "Exact element name (for a family instance this is its type name)."
+                    },
+                    "level": {
+                      "type": "string",
+                      "description": "Exact name of the level the element is on."
+                    },
+                    "tag": {
+                      "type": "string",
+                      "description": "Prefix of the Comments parameter that marks the elements of one build phase."
+                    }
+                  }
+                },
+                "scope": {
+                  "type": "string",
+                  "enum": [
+                    "instance",
+                    "type"
+                  ],
+                  "default": "instance",
+                  "description": "instance (default): the selected element itself (a type id also means that type). type: the element type of each selected element; instances that share a type count once."
+                },
+                "params": {
+                  "type": "object",
+                  "description": "Parameter name -> new value (1 to 50 per item). Each value is either a plain value (true/false = Yes/No, text = text, a whole number = integer) or an object {value, unit}. unit is mm or m (length), deg (angle), number (any other number parameter, in Revit internal units), int, bool, text, or elementid (value is the name or integer id of an element, for example a material). A number parameter always needs a unit.",
+                  "additionalProperties": {
+                    "description": "The new value. Each value is either a plain value (true/false = Yes/No, text = text, a whole number = integer) or an object {value, unit}. unit is mm or m (length), deg (angle), number (any other number parameter, in Revit internal units), int, bool, text, or elementid (value is the name or integer id of an element, for example a material). A number parameter always needs a unit.",
+                    "properties": {
+                      "value": {
+                        "description": "The value itself: number, true/false or text."
+                      },
+                      "unit": {
+                        "type": "string",
+                        "enum": [
+                          "mm",
+                          "m",
+                          "deg",
+                          "number",
+                          "int",
+                          "bool",
+                          "text",
+                          "elementid"
+                        ],
+                        "description": "How to read value: mm, m, deg, number, int, bool, text or elementid."
+                      }
+                    }
+                  }
+                }
+              },
+              "required": [
+                "params"
+              ]
+            }
+          },
+          "on_error": {
+            "type": "string",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort",
+            "description": "abort (default): any refused element or failed write changes nothing at all. skip: refused and failed elements are left alone and listed; the others are written."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: do the whole call inside Revit exactly as normal (same checks, same read-back), then roll everything back. The result says dry_run true, committed false and what would change; changed_ids stays empty. Still needs an approved plan like any write."
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    }
+  ]
+}
