@@ -16,6 +16,9 @@ Start with the [installation guide](install.md). The main [README](../README.md)
 - Client setup guides (snippets not yet tested on live installs): [Visual Studio](clients/visual-studio.md), [JetBrains](clients/jetbrains.md), [Codex](clients/codex.md), [Gemini CLI](clients/gemini-cli.md), [Windsurf](clients/windsurf.md), [Cline](clients/cline.md).
 - [versioning.md](versioning.md): version numbers, release tags and release assets.
 - [clash-triage.md](clash-triage.md): read-only matching of Navisworks clashes to Revit elements, with a confidence label (unverified on live projects).
+- [revit-mcp-behaviour-and-improvements.md](revit-mcp-behaviour-and-improvements.md): measured behaviour of Revit through the bridge, Revit traps with their rules, and ranked improvements.
+- [upgrade-plan-hands-and-eyes.md](upgrade-plan-hands-and-eyes.md): phased upgrade and bug-fix plan to make the bridge the hands and eyes of an AI in Revit (plan only, nothing shipped).
+- [prompts/revit-agent-preflight-and-verify.md](prompts/revit-agent-preflight-and-verify.md): copy-paste prompt with the pre-flight and verification checks an AI runs while building in live Revit.
 - [roadmap.md](roadmap.md): coordinator workflows, demo scope and the next fixes.
 - [demo-runbook.md](demo-runbook.md): step-by-step script for the missing-door-Mark demo, with expected counts and a rejected-plan run.
 
@@ -26,7 +29,6 @@ Start with the [installation guide](install.md). The main [README](../README.md)
 - [target-frameworks-and-dependencies.md](target-frameworks-and-dependencies.md): Python and .NET targets per component.
 - [revit-addin-lifecycle.md](revit-addin-lifecycle.md): how the Revit add-in starts up and runs commands.
 - [design/tokens.md](design/tokens.md): design tokens for the add-in and panel UI ([design/review.html](design/review.html) is the visual review page).
-- [design/readme-visual-brief.md](design/readme-visual-brief.md): Claude Design prompt for README images and a demo cover.
 - [release-checklist.md](release-checklist.md): ordered ship-ready checklist, what CI proves and what still needs a live Revit.
 - [release-retirement.md](release-retirement.md): reviewed release inventory and future cleanup procedure.
 - [examples/hermes-desktop.json](examples/hermes-desktop.json): sample client config for Hermes Desktop.

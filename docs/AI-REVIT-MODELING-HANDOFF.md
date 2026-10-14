@@ -6,7 +6,7 @@ Take over the existing villa, correct its geometry and spatial placement, refine
 
 The user reports that elements still overlap and the architecture remains visually unfinished. Treat that as an unresolved requirement. Do not declare completion from the narrow placement checks below.
 
-**First read:** [machine-readable live state](villa-coding-agent-state-2026-10-13.json), [session findings](villa-bridge-limitations-2026-10-13.md), [review workflow](workflows/villa-refinement-review.md), and the earlier [builder/reviewer findings](bim-agent-findings.md). Historical “done” labels in earlier notes are not proof that the current model passes.
+**First read:** [machine-readable live state](villa-coding-agent-state-2026-10-13.json), [session findings](bim-agent-findings.md#g-villa-takeover-audit-2026-10-13-revit-2024-3-bridge-and-assistant-limits), [review workflow](workflows/villa-refinement-review.md), and the earlier builder/reviewer findings in the same file. Historical “done” labels in earlier notes are not proof that the current model passes.
 
 ## Authoritative takeover state
 

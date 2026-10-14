@@ -104,3 +104,26 @@ error impossible to ship. The reviewer in `scripts/revit/bim_review` is the firs
 | V2-12 | Door/window family editing: (a) setting Width/Height type parameters on a generated family from the project **rescales its geometry** (4.1 m window became 7.3 m); (b) window geometry must start at the family's Sill reference plane or the instance sits 0.9 m low; (c) a family `Opening` or a void form with an arch profile does **not** cut the host wall (rectangular cuts work) | Set Width/Height inside the family before building geometry, start at the sill plane, and cut arches with a void family instance (`InstanceVoidCutUtils.AddInstanceVoidCut`) or Cut Geometry | fixed (a)(b); (c) in progress |
 | V2-13 | A `revit_execute_python` call that runs longer than 30 s returns a bridge timeout while Revit keeps working; the result is lost | Split family generation (one family per call) from placement; verify state with a read-only audit afterwards | process rule |
 | V2-14 | Measured audit needed: openings were rebuilt several times and the first 3D look showed errors the placement log did not (arch windows uncut, roof pit, missing tower cap) | `docs/recipes/toolkit/audit_villa.py` is a mandatory stage after openings and roofs: host, DWG position, true geometry z/width, cut volume, roof heights and parapet edges | added |
+
+## G. Villa takeover audit (2026-10-13, Revit 2024.3): bridge and assistant limits
+
+Measured on the live model (194 selected elements) before any change. Source fixes are in the add-in and MCP server; a fix is only
+**live-verified** once the rebuilt add-in is loaded (see upgrade-plan section 8). Spatial evidence lives in the
+[takeover handoff](AI-REVIT-MODELING-HANDOFF.md) and its JSON state file.
+
+| ID | Observation | Remedy / status |
+|---|---|---|
+| S3-01 | `revit_get_element_parameters` aborted on the first non-shared parameter (`Parameter.GUID` throws) | `IsShared` guard, null GUID for ordinary parameters. Fixed in source; live check pending |
+| S3-02 | Parameter errors, workspace rejections and approval blocks returned readable text with MCP `isError: false`, so automation read failure as success | Error branches return `isError=True` with a structured kind. Fixed, tested |
+| S3-03 | `revit_export_image` asked for 1800 px PNG, produced a 150 px JPEG in the parent folder and reported `file_exists:false` | Filename prefix, sizing, format and artifact detection fixed in source; live export pending (plan 0.5, 1.10) |
+| S3-04 | Read-only Python is blocked by the approval gate; 194 per-element geometry calls were needed | `revit_inspect_elements` batches bounded reads; real fix is read-mode Python (plan 0.6) |
+| S3-05 | Export outside the configured bridge workspace is rejected (correct), but the diagnostic does not name the allowed folder | Do not widen permissions; clearer workspace diagnostics still open |
+| S3-06 | Basin envelopes sat 138-182 mm below the level though the insertion point matched it; a level/origin-only check misses this | Level-relative geometry checks, family origin/host evidence (plan 1.6, 2.8) |
+| S3-07 | Some bed instances report zero area/volume although their envelope is non-zero; AABB overlaps with walls are not clashes | Mesh-aware solid intersection (plan 1.3); zero quantity is not proof of no geometry |
+| S3-08 | No Ducts, Pipes, Mechanical, Air Terminal or Electrical Equipment in the villa; connectivity and circuits unverified | Require connector and system evidence before accepting MEP (plan 1.7, 3.x) |
+| S3-09 | Dedicated readers expose position and box but not family host, orientation, transform or connector topology; `create_duct/pipe` do not connect or size | Capability gap (plan 1.6, 3.4) |
+| S3-10 | A tiny exterior image cannot show facade quality, clearances or construction detail | Review framed elevations, plans and sections (plan 1.10) |
+
+Reusable review steps: [workflows/villa-refinement-review.md](workflows/villa-refinement-review.md). Autodesk references:
+[Parameter.IsShared / GUID](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/333ff41b-e6a7-d959-60bf-c3bfae495581.htm),
+[ExportImage](https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/b98a3e71-39fa-bf7a-cb3d-591d8b1fcd93.htm).
