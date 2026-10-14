@@ -118,12 +118,12 @@ def size_matches(kind, cu, sz):
 # ---- types and systems ------------------------------------------------------------------------------------------------
 def curve_type_hits(kind, name):
     cls = PipeType if kind == "pipe" else DuctType
-    return [t for t in FilteredElementCollector(doc).OfClass(cls) if t.Name == name]
+    return [t for t in FilteredElementCollector(doc).OfClass(cls) if ename(t) == name]
 
 
 def curve_type_names(kind, limit):
     cls = PipeType if kind == "pipe" else DuctType
-    names = [t.Name for t in FilteredElementCollector(doc).OfClass(cls)]
+    names = [ename(t) for t in FilteredElementCollector(doc).OfClass(cls)]
     names.sort()
     return names[:limit]
 
@@ -133,11 +133,11 @@ def system_type_hits(kind, system, name):
     hits = []
     for t in FilteredElementCollector(doc).OfClass(cls):
         if name:
-            if t.Name == name:
+            if ename(t) == name:
                 hits.append(t)
         elif str(t.SystemClassification) == system:
             hits.append(t)
-    hits.sort(key=lambda t: t.Name)
+    hits.sort(key=lambda t: ename(t))
     return hits
 
 

@@ -279,7 +279,7 @@ class LoadOptions(IFamilyLoadOptions):
 
 def find_family(name):
     for f in FilteredElementCollector(doc).OfClass(Family):
-        if f.Name == name:
+        if ename(f) == name:
             return f
     return None
 
@@ -356,7 +356,7 @@ def main():
     replace = bool(ARGS.get("replace"))
     existing = {}
     for f in FilteredElementCollector(doc).OfClass(Family):
-        existing[f.Name] = f
+        existing[ename(f)] = f
     plans = []
     cache = {}
     for spec in specs:

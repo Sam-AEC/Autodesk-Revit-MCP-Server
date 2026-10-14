@@ -938,7 +938,9 @@ public static partial class BridgeCommandFactory
         if (wall.Location is LocationCurve lc && lc.Curve != null && lc.Curve.IsBound)
         {
             var curve = lc.Curve;
-            var proj = curve.Project(location);
+            // Distance from the wall is measured in plan: a window or door sits above the wall's base line.
+            var flat = new XYZ(location.X, location.Y, curve.GetEndPoint(0).Z);
+            var proj = curve.Project(flat);
             if (proj != null)
             {
                 wallLength = curve.Length;

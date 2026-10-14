@@ -103,7 +103,7 @@ def params_named(e, name):
 
 def element_name(e):
     try:
-        return e.Name or ""
+        return ename(e) or ""
     except Exception:
         return ""
 

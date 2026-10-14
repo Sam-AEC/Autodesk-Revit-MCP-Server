@@ -9,8 +9,8 @@
 def find_title_block(name):
     hits = []
     for sym in FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_TitleBlocks).WhereElementIsElementType():
-        full = "%s : %s" % (sym.FamilyName, sym.Name)
-        if name in (sym.Name, full, sym.FamilyName):
+        full = "%s : %s" % (sym.FamilyName, ename(sym))
+        if name in (ename(sym), full, sym.FamilyName):
             hits.append(sym)
     return hits
 
@@ -18,7 +18,7 @@ def find_title_block(name):
 def title_block_names(limit):
     names = []
     for sym in FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_TitleBlocks).WhereElementIsElementType():
-        names.append("%s : %s" % (sym.FamilyName, sym.Name))
+        names.append("%s : %s" % (sym.FamilyName, ename(sym)))
     names.sort()
     return names[:limit]
 

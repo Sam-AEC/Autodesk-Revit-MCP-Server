@@ -56,7 +56,7 @@ def main():
     for tb in FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_TitleBlocks).WhereElementIsNotElementType():
         try:
             sym = tb.Symbol
-            titleblock_of[eid(tb.OwnerViewId)] = "%s : %s" % (sym.FamilyName, sym.Name)
+            titleblock_of[eid(tb.OwnerViewId)] = "%s : %s" % (sym.FamilyName, ename(sym))
         except Exception:
             pass
 

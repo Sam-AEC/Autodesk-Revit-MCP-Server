@@ -141,7 +141,7 @@ def make_sources(state):
     for li in FilteredElementCollector(doc).OfClass(RevitLinkInstance):
         name = ""
         try:
-            name = li.Name
+            name = ename(li)
         except Exception:
             name = "link %d" % eid(li)
         ld = None
@@ -270,7 +270,7 @@ def system_of(e):
     try:
         s = e.MEPSystem
         if s is not None:
-            return s.Name or ""
+            return ename(s) or ""
     except Exception:
         pass
     return pstr(e, "RBS_CTC_SERVICE_TYPE")
@@ -285,7 +285,7 @@ def level_of_mep(src, e):
         pass
     p = param_of(e, "RBS_START_LEVEL_PARAM")
     try:
-        return src["doc"].GetElement(p.AsElementId()).Name
+        return ename(src["doc"].GetElement(p.AsElementId()))
     except Exception:
         return ""
 
@@ -546,7 +546,7 @@ def collect_existing(srcs, state):
                 break
         if fam:
             for f in FilteredElementCollector(src["doc"]).OfClass(Family):
-                if f.Name != fam:
+                if ename(f) != fam:
                     continue
                 for sid in f.GetFamilySymbolIds():
                     for fi in FilteredElementCollector(src["doc"]).WherePasses(FamilyInstanceFilter(src["doc"], sid)):

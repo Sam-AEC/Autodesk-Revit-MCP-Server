@@ -219,3 +219,11 @@ def cat_name(e):
         return e.Category.Name
     except Exception:
         return "?"
+
+
+def ename(e):
+    """Element name that also works for element types: in IronPython 2.7 `type.Name` can raise AttributeError."""
+    try:
+        return Element.Name.GetValue(e)
+    except Exception:
+        return e.Name

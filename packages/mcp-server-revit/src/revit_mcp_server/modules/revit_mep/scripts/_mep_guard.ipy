@@ -184,11 +184,11 @@ def guard_element(e, kind, system, need_free, is_free=None):
 
 def family_label(e):
     try:
-        return e.Symbol.Family.Name
+        return ename(e.Symbol.Family)
     except Exception:
         pass
     try:
-        return e.Name
+        return ename(e)
     except Exception:
         return "?"
 
