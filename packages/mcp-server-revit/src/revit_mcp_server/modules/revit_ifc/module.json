@@ -1,0 +1,106 @@
+{
+  "id": "revit_ifc",
+  "name": "Revit IFC Check (exported IFC vs live model)",
+  "version": "0.1.0",
+  "schema_version": 1,
+  "min_hub_version": "1.2.0",
+  "description": "Read-only check of an IFC file written by revit_export against the live Revit model: which elements, classifications, materials, storeys and parameters the export dropped. ifc_only checks the file alone when Revit is not running. Not yet run against a live Revit.",
+  "author": "AEC Model Bridge",
+  "license": "GPL-3.0-or-later",
+  "requires_providers": [
+    "revit"
+  ],
+  "permissions": [
+    "model.read"
+  ],
+  "commands": [
+    {
+      "id": "check",
+      "title": "Compare an exported IFC with the live Revit model and list what the export dropped: elements per category, classification (NL/SfB, Assembly Code), materials, storey assignment, expected parameters, duplicates at one placement, and the origin offset against the survey point. Read-only, no plan needed. Run it after revit_export with format ifc; use the revit_check_* tools for problems inside the model itself. The verdict is PASS, FAIL or UNVERIFIED (never PASS when the model side was cut short or the file could not be read).",
+      "mcp_tool": "revit_ifc_check",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "The .ifc file to check, inside the allowed workspace directories (usually the path you gave revit_export). The plans and proofs folders are refused."
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Revit categories to compare, for example [\"Walls\",\"Doors\"] or OST_ names. Default: the usual building categories (walls, floors, roofs, doors, windows, columns, framing, ceilings, stairs, railings, generic models, curtain panels and mullions, furniture, pipes, ducts, MEP equipment)."
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Compare only these Revit ElementIds (integers). Overrides categories."
+          },
+          "tag": {
+            "type": "string",
+            "description": "Compare only elements whose Comments parameter starts with this text."
+          },
+          "level": {
+            "type": "string",
+            "description": "Compare only elements on the level with this exact name."
+          },
+          "expect_parameters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Parameter names that must reach the IFC as a property with the same name and value (any property set), for example [\"FireRating\",\"IsExternal\"]. At most 30."
+          },
+          "max_elements": {
+            "type": "integer",
+            "description": "Most Revit elements to read (default 2000, at most 20000). When there are more the result is truncated and the verdict cannot be PASS.",
+            "default": 2000
+          },
+          "time_budget_s": {
+            "type": "number",
+            "description": "Seconds the Revit side may spend reading elements (default 15, 1 to 120). When it runs out the result is partial and the verdict cannot be PASS.",
+            "default": 15
+          },
+          "ifc_only": {
+            "type": "boolean",
+            "description": "Check only the IFC file (storeys, classes, property sets, classification, materials, storey assignment, duplicates, origin) without asking Revit. Use when Revit is not running; the result lists what it could not check.",
+            "default": false
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Most problem rows to return (default 50, at most 500). The full list goes to a detail file when it is longer.",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Skip this many problem rows first, to read the next page.",
+            "default": 0
+          },
+          "count_only": {
+            "type": "boolean",
+            "description": "Return only the summary, verdict and counts (no rows).",
+            "default": false
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Row fields to keep (for example [\"id\",\"problem\"]); omit for all fields."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    }
+  ]
+}

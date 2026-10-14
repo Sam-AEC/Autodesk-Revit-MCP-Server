@@ -1,0 +1,211 @@
+# revit_ifc_check, Revit half (read only). Needs ARGS = {ids, tag, categories, default_categories, level, params,
+# max_elements, time_budget_s}. Sent after the revit module's _prelude.ipy and _helpers.ipy. It never opens a
+# transaction and never touches a file. For every selected element it prints one ROW:
+#   id, uid, category, level, assembly, materials (joined with |), ifc_guid, export_as, export_flag, p0..pN
+# (pK is the value of ARGS params[K], '' when empty, the marker <missing> when the element has no such parameter),
+# and META lines for the survey point, the project base point and the shared position of the internal origin.
+MISSING = "<missing>"
+LEVEL_PARAMS = ("WALL_BASE_CONSTRAINT", "FAMILY_LEVEL_PARAM", "SCHEDULE_LEVEL_PARAM", "LEVEL_PARAM",
+                "INSTANCE_REFERENCE_LEVEL_PARAM", "ROOF_BASE_LEVEL_PARAM", "STAIRS_BASE_LEVEL_PARAM", "RBS_START_LEVEL_PARAM")
+
+
+def resolve_categories(names, strict):
+    """Names -> list of BuiltInCategory. strict: an unknown name is an error (returns None after an ERROR line)."""
+    out = []
+    for n in names:
+        found, bad = parse_categories([n])
+        if found is None:
+            if strict:
+                error("invalid_input", "unknown category '%s'" % bad)
+                return None
+            continue
+        out.append(found[0])
+    return out
+
+
+def level_name(e):
+    lid = attr(e, "LevelId")
+    try:
+        if lid is not None and eid(lid) > 0:
+            lv = doc.GetElement(lid)
+            if lv is not None:
+                return str(lv.Name)
+    except Exception:
+        pass
+    for n in LEVEL_PARAMS:
+        b = bip(n)
+        if b is None:
+            continue
+        try:
+            p = e.get_Parameter(b)
+            if p is not None and p.HasValue:
+                lv = doc.GetElement(p.AsElementId())
+                if lv is not None:
+                    return str(lv.Name)
+        except Exception:
+            pass
+    return ""
+
+
+def material_names(e):
+    names = []
+    try:
+        mids = e.GetMaterialIds(False)
+    except Exception:
+        return ""
+    for mid in mids:
+        try:
+            m = doc.GetElement(mid)
+            if m is not None:
+                nm = clean(m.Name).replace("|", "/")
+                if nm and nm not in names:
+                    names.append(nm)
+        except Exception:
+            pass
+    return "|".join(names)
+
+
+def text_of(e, names, builtin):
+    """First non-empty value of a built-in parameter or one of the names, on the instance or its type."""
+    b = bip(builtin) if builtin else None
+    for el in (e, type_of(e)):
+        if el is None:
+            continue
+        if b is not None:
+            try:
+                p = el.get_Parameter(b)
+                t = param_text(p)
+                if t:
+                    return t
+            except Exception:
+                pass
+        for n in names:
+            try:
+                t = param_text(el.LookupParameter(n))
+                if t:
+                    return t
+            except Exception:
+                pass
+    return ""
+
+
+def xyz_m(p):
+    return "%.4f,%.4f,%.4f" % (p.X * FT_TO_M, p.Y * FT_TO_M, p.Z * FT_TO_M)
+
+
+def coordinates():
+    try:
+        sp = BasePoint.GetSurveyPoint(doc)
+        meta("survey_internal_m", xyz_m(sp.Position))
+        meta("survey_shared_m", xyz_m(sp.SharedPosition))
+    except Exception as ex:
+        info("SURVEY_POINT_UNREADABLE", "%s: %s" % (ex.__class__.__name__, ex))
+    try:
+        bp = BasePoint.GetProjectBasePoint(doc)
+        meta("base_point_internal_m", xyz_m(bp.Position))
+        meta("base_point_shared_m", xyz_m(bp.SharedPosition))
+    except Exception:
+        pass
+    try:
+        pp = doc.ActiveProjectLocation.GetProjectPosition(XYZ(0, 0, 0))
+        meta("origin_shared_m", "%.4f,%.4f,%.4f" % (pp.EastWest * FT_TO_M, pp.NorthSouth * FT_TO_M, pp.Elevation * FT_TO_M))
+        meta("origin_angle_rad", "%.6f" % pp.Angle)
+    except Exception:
+        pass
+
+
+def select(cap, budget):
+    """(elements, truncated) or (None, False) after an ERROR line."""
+    ids = ARGS.get("ids") or []
+    tag = ARGS.get("tag") or ""
+    level = ARGS.get("level") or ""
+    found = []
+    if ids:
+        missing = []
+        for i in ids:
+            e = doc.GetElement(ElementId(int(i)))
+            if e is None:
+                missing.append(int(i))
+            elif not tag or comment_of(e).startswith(tag):
+                if not level or level_name(e) == level:
+                    found.append(e)
+        if missing:
+            info("ID_NOT_FOUND", "%d id(s) not in the document: %s" % (len(missing), ",".join([str(x) for x in missing[:20]])))
+        if len(found) > cap:
+            return found[:cap], True
+        return found, False
+    if ARGS.get("categories"):
+        bics = resolve_categories(ARGS.get("categories"), True)
+        if bics is None:
+            return None, False
+    else:
+        bics = resolve_categories(ARGS.get("default_categories") or [], False)
+    if not bics:
+        error("invalid_input", "no known category to read")
+        return None, False
+    typed = List[BuiltInCategory]()
+    for b in bics:
+        typed.Add(b)
+    col = FilteredElementCollector(doc).WhereElementIsNotElementType().WherePasses(ElementMulticategoryFilter(typed))
+    for e in col:
+        if e.Category is None:
+            continue
+        if tag and not comment_of(e).startswith(tag):
+            continue
+        if level and level_name(e) != level:
+            continue
+        if len(found) >= cap:
+            return found, True
+        if budget.expired():
+            return found, True
+        found.append(e)
+    return found, False
+
+
+def main():
+    doc_meta()
+    budget = Budget(ARGS.get("time_budget_s") or 15)
+    cap = int(ARGS.get("max_elements") or 2000)
+    params = [str(x) for x in (ARGS.get("params") or [])]
+    coordinates()
+    elems, truncated = select(cap, budget)
+    if elems is None:
+        return
+    partial = False
+    seen = 0
+    for e in elems:
+        if budget.expired():
+            partial = True
+            break
+        seen += 1
+        pairs = [
+            ("id", eid(e)),
+            ("uid", attr(e, "UniqueId", "")),
+            ("category", cat_name(e)),
+            ("level", level_name(e)),
+            ("assembly", text_of(e, ["Assembly Code"], "UNIFORMAT_CODE")),
+            ("materials", material_names(e)),
+            ("ifc_guid", text_of(e, ["IfcGUID"], "IFC_GUID")),
+            ("export_as", text_of(e, ["IfcExportAs"], "IFC_EXPORT_ELEMENT_AS")),
+            ("export_flag", text_of(e, ["Export to IFC"], "IFC_EXPORT_ELEMENT")),
+        ]
+        k = 0
+        for name in params:
+            p, where = find_param(e, name)
+            pairs.append(("p%d" % k, MISSING if p is None else param_text(p)))
+            k += 1
+        row(pairs)
+    meta("selected", len(elems))
+    meta("read", seen)
+    meta("truncated", "1" if truncated else "0")
+    if partial or truncated:
+        meta("partial", "1")
+    text = "read %d element(s)" % seen
+    if truncated:
+        text += "; more matched than max_elements or the time budget allowed (TRUNCATED)"
+    if partial:
+        text += "; time budget ran out (PARTIAL)"
+    summary(text)
+
+
+__output__ = run_main(main)
