@@ -92,9 +92,13 @@ def approved(gate, tool, arguments):
     return plan["plan_id"]
 
 
+WS: List[WorkspaceMonitor] = []
+
+
 @pytest.fixture()
-def module(monkeypatch):
+def module(monkeypatch, tmp_path):
     monkeypatch.setattr(sp, "_server_in_mock_mode", lambda: False)
+    WS[:] = [WorkspaceMonitor([tmp_path])]
     return sp.RevitSparingModule()
 
 
@@ -110,11 +114,11 @@ class Canned:
 
 def place(module, ex, **changes):
     args = {**PLACE_ARGS, **changes}
-    return module.place(approved_executor=ex, workspace=WorkspaceMonitor([Path(".")]), **{k: v for k, v in args.items() if v is not None})
+    return module.place(approved_executor=ex, workspace=WS[0], **{k: v for k, v in args.items() if v is not None})
 
 
 def find(module, ex, **args):
-    return module.find(tool_executor=ex, workspace=WorkspaceMonitor([Path(".")]), **args)
+    return module.find(tool_executor=ex, workspace=WS[0], **args)
 
 
 # --------------------------------------------------------------------------- #
