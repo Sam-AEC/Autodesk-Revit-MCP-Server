@@ -305,3 +305,28 @@ B-14, B-15 and B-17 are Revit family/API behaviours and cannot be verified from 
 8. Door and window fit and cut checks (B-13).
 9. `check_clashes` budget; solid mode (B-04).
 10. Live acceptance T1, T2, T11 against a scratch document; this also settles the B-05 too-wide-window behaviour.
+
+## 13. Owner decisions (2026-10-14) and resulting priorities
+
+| Question | Decision | Effect |
+|---|---|---|
+| Automation needs to cover first | QA/QC and clash audits; MEP and families; sheets, views, schedules, export. Not DWG/PDF modelling | Phase 4.1-4.3 (DWG/PDF readers) and the stair/roof-from-drawing items are parked; documentation tooling (views, sheets, schedules, IFC/PDF/DWG export) is added to the plan |
+| Rollback or modal dialog | Fail loud and roll back by default, per-call `on_error=skip\|abort` | 0.3 and 2.10: warnings are dismissed but listed; error-level failures return `ok:false` with ids and Revit's message |
+| Strict creators | Harden the existing `create_*` commands in place (no parallel `revit_build_*` names) | Breaking change for current callers: call it out in the changelog and bump the minor version |
+| Test model | Owner opens a blank or small scratch project; nothing mutating runs on the Heijmans copy | Acceptance suite T1-T13 is written but only run on request |
+| `running` results from mutating calls | The approval claim stays consumed, the action is not marked done or failed until `revit_get_result` returns a final result | Fix in `mcp_server.py` after the jobs port |
+| Dev mode | Relaxes approval, read-mode prompts, path sandbox (optional extra folder) and path masking; no timer, no document binding, stays on until switched off; audit log always written | Panel button, ADR 0018; loopback, tokens, `look_only`, plan hash and secret redaction stay on |
+| Build stamp | Module id plus DLL file time; a git sha only if two builds cannot be told apart | |
+
+**Task list, highest return first**
+
+1. Merge the jobs and read-mode port; fix the `running` claim; make `revit_get_context` report the live approval override.
+2. Deploy hygiene: `deploy-addin.ps1` mirroring the whole output folder, Python starts without `Lib/`, engine shut down per script; install on Revit 2024.
+3. Dev mode button.
+4. `CreateTransaction` failure handling and `CommitChecked` with `on_error`.
+5. Harden the creators: forward `wall_type`/`floor_type`/`roof_type`/`slope`, non-foundation floor default, wall orientation, `create_level` makes a plan view.
+6. QA/QC tools still missing: openings and roofs audit, family probe, system report, one-call `revit_review`.
+7. Documentation tools: framed renders with blank check, views, sheets, schedules, IFC/PDF/DWG export.
+8. MEP and families: `make_family`, ports, routing, branches, circuits, category guard.
+9. Live acceptance T1, T2, T11 on a scratch model.
+10. Door and window fit and cut checks, clash budget, split `BridgeCommandFactory.cs` by domain.
