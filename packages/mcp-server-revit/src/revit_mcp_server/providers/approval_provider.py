@@ -7,6 +7,8 @@ from ..security import proof as proof_mod
 from ..security.workspace import WorkspaceMonitor
 from ..errors import BridgeError
 from ..security.approval import APPROVAL_CHANNELS, HUMAN_ONLY_TOOLS, ApprovalGate, local_user
+from ..security.dispatch import gate_after_result
+from ..security.module_execution import authorized_module_execution
 from .base import AECProvider, ProviderTool
 from ..config import config
 
@@ -245,7 +247,19 @@ class ApprovalProvider(AECProvider):
         self.gate.verify_approved(plan)
 
         results = []
-        had_failure = False
+        pending_results = []
+        for previous in plan["actions"]:
+            if previous.get("state") != "running":
+                continue
+            key = previous.get("in_flight_key")
+            if key and key.startswith("job_"):
+                resume = f'revit_job_status(job_id="{key[4:]}")'
+            elif key:
+                resume = f'revit_get_result(request_id="{key}")'
+            else:
+                resume = "Inspect the model and recover the running action through the approval CLI."
+            pending_results.append({"action_id": previous.get("action_id"), "key": key, "resume": resume})
+        had_failure = any(a.get("state") in ("failed", "abandoned") for a in plan["actions"])
         for action in plan["actions"]:
             if action.get("state") not in ("pending", None):
                 continue  # already consumed (e.g. a direct call earlier): never run an approved action twice
@@ -268,14 +282,21 @@ class ApprovalProvider(AECProvider):
                 results.append({"action_id": action["action_id"], "tool": tool, "error": error})
                 continue
             try:
-                result = await provider.execute_tool(tool, args)
+                with authorized_module_execution(tool):
+                    result = await provider.execute_tool(tool, args)
             except Exception as e:
                 had_failure = True
                 self.gate.finish_action(claim, ok=False, error=str(e))
                 results.append({"action_id": action["action_id"], "tool": tool, "error": str(e)})
                 continue
-            self.gate.finish_action(claim, ok=True)
-            results.append({"action_id": action["action_id"], "tool": tool, "result": result})
+            verdict = gate_after_result(self.gate, claim, tool, result)
+            entry = {"action_id": action["action_id"], "tool": tool, "result": result}
+            if verdict.state == "failed":
+                had_failure = True
+                entry["error"] = verdict.error
+            elif verdict.state == "running":
+                pending_results.append({"action_id": action["action_id"], "key": verdict.key, "resume": verdict.resume})
+            results.append(entry)
 
         plan = self.gate.load_plan(plan_id) or plan
         if plan.get("state") == "approved" and had_failure:
@@ -283,7 +304,8 @@ class ApprovalProvider(AECProvider):
             plan["state"] = "partial"
         elif plan.get("state") == "approved" and not plan.get("actions"):
             plan["state"] = "executed"
-        plan.setdefault("executed_at", datetime.now(timezone.utc).isoformat())
+        if not pending_results:
+            plan.setdefault("executed_at", datetime.now(timezone.utc).isoformat())
         self.gate.save_plan(plan)
         n_failed = sum(1 for r in results if "error" in r)
         # Proof outcome: "failed" when nothing was applied; "success" only if every action ran.
@@ -293,11 +315,15 @@ class ApprovalProvider(AECProvider):
             outcome = "failed"
         else:
             outcome = "partial"
-        try:
-            self.gate.record_proof(plan, results=results, outcome=outcome)
-        except Exception:
-            logger.exception("Failed to write proof bundle for plan %s", plan_id)
-        return {"plan_id": plan_id, "state": plan["state"], "results": results}
+        if not pending_results:
+            try:
+                self.gate.record_proof(plan, results=results, outcome=outcome)
+            except Exception:
+                logger.exception("Failed to write proof bundle for plan %s", plan_id)
+        reply = {"plan_id": plan_id, "state": plan["state"], "results": results, "ok": not had_failure}
+        if pending_results:
+            reply["pending_results"] = pending_results
+        return reply
 
     async def _plan_revert(self, plan_id: str, allow_conflicts: bool) -> Dict[str, Any]:
         """Draft (never execute) a plan that restores the recorded before values.

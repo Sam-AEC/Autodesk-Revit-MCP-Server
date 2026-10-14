@@ -1,0 +1,50 @@
+# Tag helpers of the revit_docs scripts, read side (IronPython 2.7). Loaded after the revit module's _prelude.ipy.
+# Every view, sheet, schedule and elevation marker made by a revit_docs tool carries an Extensible Storage entity
+# {tag, key, kind}. That is how a later run knows which elements are its own: Revit views, sheets and schedules have
+# no Comments or Mark parameter to hold a tag. Nothing in this file changes the model.
+from System import Guid, String
+from Autodesk.Revit.DB.ExtensibleStorage import Schema, ExtensibleStorageFilter
+
+SCHEMA_GUID = "c2f4a9b1-6d3e-4f57-8a10-5e7b9d2c4e13"
+SCHEMA_NAME = "AECBridgeDocsTag"
+
+
+def find_schema():
+    try:
+        return Schema.Lookup(Guid(SCHEMA_GUID))
+    except Exception:
+        return None
+
+
+def read_tag(e):
+    """(tag, key, kind) of an element made by a revit_docs tool, else None."""
+    schema = find_schema()
+    if schema is None or e is None:
+        return None
+    try:
+        ent = e.GetEntity(schema)
+        if ent is None or not ent.IsValid():
+            return None
+        return (ent.Get[String]("tag"), ent.Get[String]("key"), ent.Get[String]("kind"))
+    except Exception:
+        return None
+
+
+def owned_elements(kind, tag, key):
+    """Elements whose entity matches kind, tag and key (None matches anything)."""
+    schema = find_schema()
+    out = []
+    if schema is None:
+        return out
+    for e in FilteredElementCollector(doc).WherePasses(ExtensibleStorageFilter(schema.GUID)):
+        t = read_tag(e)
+        if t is None:
+            continue
+        if kind is not None and t[2] != kind:
+            continue
+        if tag is not None and t[0] != tag:
+            continue
+        if key is not None and t[1] != key:
+            continue
+        out.append(e)
+    return out

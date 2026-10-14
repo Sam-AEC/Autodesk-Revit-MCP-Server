@@ -1,0 +1,284 @@
+# Shared prelude of the revit_docs write scripts (make_view, make_sheet, make_schedule, export). IronPython 2.7 source.
+# Loaded after the revit module's _prelude.ipy (line protocol, select_elements, eid, ...) and _tags_read.ipy.
+# Rules every write script follows:
+#   * all work happens inside one TransactionGroup and every element is made in its own Transaction;
+#   * on_error "abort" (default): the first failure rolls the whole group back, the model is as it was;
+#     "skip": keep what worked, list what did not;
+#   * a script deletes only elements that carry its own tag (Extensible Storage), never anything else;
+#   * Revit warnings are dismissed and listed; an error-level failure rolls that transaction back;
+#   * the group is always closed (committed or rolled back) before the script returns, even after an exception.
+import clr
+from Autodesk.Revit.DB.ExtensibleStorage import SchemaBuilder, AccessLevel, Entity
+
+M_TO_FT = 1.0 / FT_TO_M
+MM_TO_FT = 1.0 / 304.8
+RUN = [None]
+
+
+class Abort(Exception):
+    pass
+
+
+class StepError(Exception):
+    def __init__(self, message, ids=None):
+        Exception.__init__(self, message)
+        self.ids = list(ids or [])
+
+
+class Collector(IFailuresPreprocessor):
+    """Dismisses warnings (and records their text); an error rolls the transaction back and is recorded."""
+
+    def __init__(self, warnings, errors):
+        self.warnings = warnings
+        self.errors = errors
+
+    def PreprocessFailures(self, accessor):
+        bad = False
+        for f in list(accessor.GetFailureMessages()):
+            text = f.GetDescriptionText()
+            if f.GetSeverity() == FailureSeverity.Warning:
+                self.warnings.append(text)
+                accessor.DeleteWarning(f)
+            else:
+                bad = True
+                self.errors.append(text)
+        if bad:
+            return FailureProcessingResult.ProceedWithRollBack
+        return FailureProcessingResult.Continue
+
+
+def ensure_schema():
+    schema = find_schema()
+    if schema is not None:
+        return schema
+    builder = SchemaBuilder(Guid(SCHEMA_GUID))
+    builder.SetSchemaName(SCHEMA_NAME)
+    builder.SetVendorId("AECModelBridge")
+    builder.SetReadAccessLevel(AccessLevel.Public)
+    builder.SetWriteAccessLevel(AccessLevel.Public)
+    for field in ("tag", "key", "kind"):
+        builder.AddSimpleField(field, clr.GetClrType(String))
+    return builder.Finish()
+
+
+def set_tag(e, tag, key, kind):
+    """Mark an element as made by this tool. Must run inside a transaction."""
+    ent = Entity(ensure_schema())
+    ent.Set[String]("tag", tag)
+    ent.Set[String]("key", key)
+    ent.Set[String]("kind", kind)
+    e.SetEntity(ent)
+
+
+class Runner(object):
+    def __init__(self, title, on_error):
+        self.on_error = on_error if on_error in ("abort", "skip") else "abort"
+        self.changed = []
+        self.failed_steps = []
+        self.failed_ids = []
+        self.post_failed = 0
+        self.warnings = []
+        self.closed = False
+        self.crashed = False
+        self.outcome = "ok"
+        self.group = TransactionGroup(doc, title)
+        self.group.Start()
+        RUN[0] = self
+
+    def step(self, label, work, ids=None):
+        """Run work() in its own transaction; returns its result, or None when the step failed (skip mode)."""
+        errors = []
+        txn = Transaction(doc, label)
+        txn.Start()
+        try:
+            opts = txn.GetFailureHandlingOptions()
+            opts.SetFailuresPreprocessor(Collector(self.warnings, errors))
+            txn.SetFailureHandlingOptions(opts)
+            result = work()
+            status = txn.Commit()
+            if status != TransactionStatus.Committed:
+                why = (": " + "; ".join(errors[:3])) if errors else ""
+                raise StepError("Revit did not commit it (%s)%s" % (status, why), ids)
+            return result
+        except Exception as ex:
+            try:
+                if txn.HasStarted():
+                    txn.RollBack()
+            except Exception:
+                pass
+            culprit = list(getattr(ex, "ids", None) or ids or [])
+            text = str(ex)
+            if errors and text.find(errors[0]) < 0:
+                text = text + " [Revit: " + "; ".join(errors[:3]) + "]"
+            self.failed_steps.append(label)
+            for i in culprit:
+                if i not in self.failed_ids:
+                    self.failed_ids.append(i)
+            suffix = ""
+            if culprit:
+                suffix = " (element ids: %s)" % ",".join([str(i) for i in culprit])
+            fail("STEP_FAILED", "%s: %s%s" % (label, text, suffix))
+            if self.on_error == "abort":
+                raise Abort()
+            return None
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        failed = bool(self.failed_steps) or self.post_failed > 0 or self.crashed
+        rollback = failed and (self.on_error == "abort" or self.crashed)
+        try:
+            if rollback:
+                if self.group.HasStarted():
+                    if self.group.RollBack() != TransactionStatus.RolledBack:
+                        raise StepError("Revit did not roll back the transaction group")
+                self.changed = []
+                self.outcome = "rolled_back"
+            else:
+                if self.group.Assimilate() != TransactionStatus.Committed:
+                    raise StepError("Revit did not commit the transaction group")
+                if failed:
+                    self.outcome = "partial_failure" if self.failed_steps else "post_check_failed"
+        except Exception as ex:
+            self.outcome = "group_close_failed"
+            fail("GROUP_CLOSE_FAILED", "%s: %s" % (ex.__class__.__name__, ex))
+        meta("outcome", self.outcome)
+        meta("on_error", self.on_error)
+        meta("changed_ids", ",".join([str(i) for i in self.changed]))
+        meta("failed_ids", ",".join([str(i) for i in self.failed_ids]))
+        seen = []
+        for w in self.warnings:
+            if w not in seen:
+                seen.append(w)
+        for w in seen[:20]:
+            info("REVIT_WARNING_DISMISSED", w)
+        meta("warnings_dismissed", len(self.warnings))
+
+
+def run_write(fn):
+    """Run main() and always close the open group. Returns the line-protocol text."""
+    try:
+        fn()
+    except Abort:
+        pass
+    except Exception as ex:
+        error("script_exception", "%s: %s" % (ex.__class__.__name__, ex))
+        if RUN[0] is not None:
+            RUN[0].crashed = True
+    finally:
+        if RUN[0] is not None:
+            RUN[0].close()
+    return finish()
+
+
+def refuse(kind, message, ids=None):
+    """Nothing was changed: the request cannot be carried out as asked."""
+    meta("outcome", kind)
+    meta("changed_ids", "")
+    meta("failed_ids", ",".join([str(i) for i in (ids or [])]))
+    fail(kind.upper(), message)
+
+
+def item(pairs):
+    row([("row_type", "item")] + pairs)
+
+
+def post(check, ok, detail):
+    row([("row_type", "post"), ("check", check), ("ok", 1 if ok else 0), ("detail", detail)])
+    if not ok:
+        if RUN[0] is not None:
+            RUN[0].post_failed += 1
+        fail("POST_CHECK_FAILED", "%s: %s" % (check, detail))
+
+
+def level_names():
+    out = {}
+    for lv in FilteredElementCollector(doc).OfClass(Level):
+        out[eid(lv)] = lv.Name
+    return out
+
+
+def check_levels_unchanged(before):
+    after = level_names()
+    bad = []
+    for i in before:
+        if after.get(i) != before[i]:
+            bad.append("%d '%s' -> '%s'" % (i, before[i], after.get(i)))
+    post("levels_unchanged", not bad, ("level renamed: " + "; ".join(bad)) if bad else "no level was renamed")
+
+
+def find_level(name):
+    for lv in FilteredElementCollector(doc).OfClass(Level):
+        if lv.Name == name:
+            return lv
+    return None
+
+
+def find_view_template(name):
+    for v in FilteredElementCollector(doc).OfClass(View):
+        if v.IsTemplate and v.Name == name:
+            return v
+    return None
+
+
+def template_names(limit):
+    names = []
+    for v in FilteredElementCollector(doc).OfClass(View):
+        if v.IsTemplate:
+            names.append(v.Name)
+    names.sort()
+    return names[:limit]
+
+
+def views_named(name):
+    out = []
+    for v in FilteredElementCollector(doc).OfClass(View):
+        if not v.IsTemplate and v.Name == name:
+            out.append(v)
+    return out
+
+
+def get_by_id(i):
+    if i is None:
+        return None
+    return doc.GetElement(ElementId(int(i)))
+
+
+def delete_owned(elems):
+    """Check the complete dependency cascade inside a rollbackable sub-transaction."""
+    ids = [eid(e) for e in elems]
+    allowed = set()
+    for e in elems:
+        owner = read_tag(e)
+        if owner is None:
+            raise StepError("refusing to delete an element without this tool's ownership tag", [eid(e)])
+        # Explicitly tagged children of this exact replacement are allowed too.
+        for child in owned_elements(None, owner[0], owner[1]):
+            allowed.add(eid(child))
+    if not ids:
+        return []
+    done = []
+    sub = SubTransaction(doc)
+    sub.Start()
+    try:
+        for i in ids:
+            e = doc.GetElement(ElementId(i))
+            if e is None:
+                continue
+            cascade = [eid(j) for j in doc.Delete(e.Id)]
+            foreign = [j for j in cascade if j not in allowed]
+            if foreign:
+                raise StepError("replacement would delete foreign dependent elements; nothing was deleted", foreign)
+            for j in cascade:
+                if j not in done:
+                    done.append(j)
+        if sub.Commit() != TransactionStatus.Committed:
+            raise StepError("Revit did not commit the checked deletion", ids)
+        return done
+    except Exception:
+        if sub.GetStatus() == TransactionStatus.Started:
+            sub.RollBack()
+        raise
+    finally:
+        sub.Dispose()

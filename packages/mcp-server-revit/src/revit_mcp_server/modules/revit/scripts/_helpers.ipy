@@ -1,0 +1,264 @@
+# Shared helpers of the newer read-only check scripts (audit_openings, audit_roofs, probe_family, system_report,
+# check_naming_and_params, check_levels_grids). Sent after _prelude.ipy. IronPython 2.7 source: no json, no time,
+# no f-strings. It never opens a transaction and never touches a file.
+from System.Diagnostics import Stopwatch
+
+
+class Budget:
+    """Wall-clock budget. expired() latches, so the caller can report a partial result."""
+
+    def __init__(self, seconds):
+        self.watch = Stopwatch.StartNew()
+        self.limit_ms = int(float(seconds) * 1000)
+        self.hit = False
+
+    def expired(self):
+        if not self.hit and self.watch.ElapsedMilliseconds > self.limit_ms:
+            self.hit = True
+        return self.hit
+
+    def ms(self):
+        return int(self.watch.ElapsedMilliseconds)
+
+
+def attr(obj, name, default=None):
+    try:
+        v = getattr(obj, name)
+    except Exception:
+        return default
+    if v is None:
+        return default
+    return v
+
+
+def bip(name):
+    return getattr(BuiltInParameter, name, None)
+
+
+def is_cat(e, bic_name):
+    bic = getattr(BuiltInCategory, bic_name, None)
+    try:
+        return bic is not None and eid(e.Category) == int(bic)
+    except Exception:
+        return False
+
+
+def type_of(e):
+    try:
+        return doc.GetElement(e.GetTypeId())
+    except Exception:
+        return None
+
+
+def param_text(p):
+    """Value of a parameter as text; '' when it has no value."""
+    if p is None:
+        return ""
+    try:
+        if not p.HasValue:
+            return ""
+    except Exception:
+        pass
+    try:
+        kind = str(p.StorageType)
+        if kind == "String":
+            return p.AsString() or ""
+        s = p.AsValueString()
+        if s:
+            return s
+        if kind == "Integer":
+            return str(p.AsInteger())
+        if kind == "Double":
+            return str(p.AsDouble())
+        if kind == "ElementId":
+            return str(eid(p.AsElementId()))
+    except Exception:
+        return ""
+    return ""
+
+
+PARAM_ALIASES = {
+    "mark": "ALL_MODEL_MARK",
+    "comments": "ALL_MODEL_INSTANCE_COMMENTS",
+    "type mark": "ALL_MODEL_TYPE_MARK",
+    "type comments": "ALL_MODEL_TYPE_COMMENTS",
+    "description": "ALL_MODEL_DESCRIPTION",
+    "manufacturer": "ALL_MODEL_MANUFACTURER",
+    "model": "ALL_MODEL_MODEL",
+    "number": "ROOM_NUMBER",
+    "room number": "ROOM_NUMBER",
+    "room name": "ROOM_NAME",
+}
+
+
+def _lookup(el, name, builtin):
+    if el is None:
+        return None
+    p = None
+    if builtin is not None:
+        try:
+            p = el.get_Parameter(builtin)
+        except Exception:
+            p = None
+    if p is None:
+        try:
+            p = el.LookupParameter(str(name))
+        except Exception:
+            p = None
+    return p
+
+
+def find_param(e, name):
+    """(parameter or None, 'instance' | 'type' | ''). Common names map to built-in parameters (language independent)."""
+    key = str(name).strip().lower()
+    alias = PARAM_ALIASES.get(key)
+    builtin = bip(alias) if alias else None
+    p = _lookup(e, name, builtin)
+    if p is not None:
+        return p, "instance"
+    p = _lookup(type_of(e), name, builtin)
+    if p is not None:
+        return p, "type"
+    return None, ""
+
+
+def first_double(e, names):
+    """First numeric built-in parameter (feet) found on the instance or its type, else None."""
+    for n in names:
+        b = bip(n)
+        if b is None:
+            continue
+        for el in (e, type_of(e)):
+            if el is None:
+                continue
+            try:
+                p = el.get_Parameter(b)
+                if p is not None and p.HasValue:
+                    return p.AsDouble()
+            except Exception:
+                pass
+    return None
+
+
+def solids_world(e):
+    """World-space solids of an element (instance geometry resolved)."""
+    out = []
+    opt = Options()
+    opt.DetailLevel = ViewDetailLevel.Fine
+    opt.ComputeReferences = False
+    ge = e.get_Geometry(opt)
+    if ge is None:
+        return out
+
+    def walk(g):
+        for o in g:
+            if isinstance(o, Solid):
+                if o.Volume > 1e-9:
+                    out.append(o)
+            elif isinstance(o, GeometryInstance):
+                walk(o.GetInstanceGeometry())
+
+    walk(ge)
+    return out
+
+
+# ---- plan geometry on (x, y, z) tuples in feet ------------------------------------------------------------
+def seg_dist(px, py, ax, ay, bx, by):
+    dx = bx - ax
+    dy = by - ay
+    l2 = dx * dx + dy * dy
+    t = 0.0
+    if l2 > 1e-12:
+        t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / l2))
+    cx = ax + t * dx
+    cy = ay + t * dy
+    return ((px - cx) * (px - cx) + (py - cy) * (py - cy)) ** 0.5
+
+
+def in_loop(x, y, pts):
+    inside = False
+    n = len(pts)
+    j = n - 1
+    for i in range(n):
+        xi = pts[i][0]
+        yi = pts[i][1]
+        xj = pts[j][0]
+        yj = pts[j][1]
+        if (yi > y) != (yj > y):
+            if x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+                inside = not inside
+        j = i
+    return inside
+
+
+def in_region(x, y, loops):
+    """Even-odd rule over the loops of one face: outer boundary and holes."""
+    count = 0
+    for pts in loops:
+        if len(pts) >= 3 and in_loop(x, y, pts):
+            count += 1
+    return count % 2 == 1
+
+
+def dist_to_loops(x, y, loops):
+    best = None
+    for pts in loops:
+        for i in range(len(pts) - 1):
+            d = seg_dist(x, y, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1])
+            if best is None or d < best:
+                best = d
+    return best
+
+
+def loop_area(pts):
+    a = 0.0
+    n = len(pts)
+    for i in range(n):
+        j = (i + 1) % n
+        a += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1]
+    return abs(a) / 2.0
+
+
+def curve_points(curve):
+    out = []
+    try:
+        for p in curve.Tessellate():
+            out.append((p.X, p.Y, p.Z))
+    except Exception:
+        pass
+    return out
+
+
+def face_loops(face):
+    """Edge loops of a planar face as lists of (x, y, z) points (feet)."""
+    loops = []
+    for cl in face.GetEdgesAsCurveLoops():
+        pts = []
+        for c in cl:
+            for p in curve_points(c):
+                if not pts or abs(pts[-1][0] - p[0]) > 1e-9 or abs(pts[-1][1] - p[1]) > 1e-9:
+                    pts.append(p)
+        if len(pts) >= 3:
+            loops.append(pts)
+    return loops
+
+
+def upward_faces(e, min_nz):
+    """[(normal z, area, [loops])] for every upward-facing planar face of the element's solids."""
+    out = []
+    for s in solids_world(e):
+        for f in s.Faces:
+            if not isinstance(f, PlanarFace):
+                continue
+            nz = f.FaceNormal.Z
+            if nz > min_nz:
+                out.append((nz, f.Area, face_loops(f)))
+    return out
+
+
+def tidy_list(values, limit):
+    shown = [str(v) for v in values[:limit]]
+    text = ",".join(shown)
+    if len(values) > limit:
+        text += ",... (%d more)" % (len(values) - limit)
+    return text

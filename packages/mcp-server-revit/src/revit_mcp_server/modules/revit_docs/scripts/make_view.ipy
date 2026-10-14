@@ -1,0 +1,302 @@
+# revit_make_view (write mode, one view per call).
+# ARGS = {kind: 3d|plan|section|elevation, name, tag, template, level, plan_type, scope{ids,tag,categories}, margin_m,
+#         direction[x,y,z], display_style, p0[x,y], p1[x,y], z_bottom_m, z_top_m, depth_m, flip, point[x,y], facing, on_error}
+# The view is made in its own transaction. A view of the same name made earlier under the same tag is replaced; a view of
+# that name that this tool did not make is never touched (the call is refused). A level's own plan view is never renamed.
+
+STYLES = {
+    "shaded_with_edges": "ShadingWithEdges",
+    "shaded": "Shading",
+    "hidden_line": "HLR",
+    "wireframe": "Wireframe",
+    "realistic": "Realistic",
+    "consistent_colors": "FlatColors",
+}
+FACINGS = {"north": (0.0, 1.0), "south": (0.0, -1.0), "east": (1.0, 0.0), "west": (-1.0, 0.0)}
+
+
+def view_family_type(family_name):
+    fam = getattr(ViewFamily, family_name)
+    for t in FilteredElementCollector(doc).OfClass(ViewFamilyType):
+        if t.ViewFamily == fam:
+            return t
+    return None
+
+
+def union_box(elems):
+    lo = None
+    hi = None
+    for e in elems:
+        try:
+            bb = e.get_BoundingBox(None)
+        except Exception:
+            bb = None
+        if bb is None:
+            continue
+        mn = (bb.Min.X, bb.Min.Y, bb.Min.Z)
+        mx = (bb.Max.X, bb.Max.Y, bb.Max.Z)
+        if lo is None:
+            lo, hi = list(mn), list(mx)
+        else:
+            for k in range(3):
+                lo[k] = min(lo[k], mn[k])
+                hi[k] = max(hi[k], mx[k])
+    if lo is None:
+        return None
+    return (lo, hi)
+
+
+def unit(x, y, z):
+    n = (x * x + y * y + z * z) ** 0.5
+    if n < 1e-9:
+        return (0.0, 0.0, 1.0)
+    return (x / n, y / n, z / n)
+
+
+def make_box(lo, hi, transform):
+    bb = BoundingBoxXYZ()
+    if transform is not None:
+        bb.Transform = transform
+    bb.Min = XYZ(lo[0], lo[1], lo[2])
+    bb.Max = XYZ(hi[0], hi[1], hi[2])
+    return bb
+
+
+def fit_3d(view, box, direction, margin):
+    lo, hi = box
+    lo = [lo[0] - margin, lo[1] - margin, lo[2] - margin]
+    hi = [hi[0] + margin, hi[1] + margin, hi[2] + margin]
+    d = unit(direction[0], direction[1], direction[2])
+    centre = [(lo[k] + hi[k]) / 2.0 for k in range(3)]
+    diag = ((hi[0] - lo[0]) ** 2 + (hi[1] - lo[1]) ** 2 + (hi[2] - lo[2]) ** 2) ** 0.5
+    dist = max(diag, 3.0)
+    eye = XYZ(centre[0] - d[0] * dist, centre[1] - d[1] * dist, centre[2] - d[2] * dist)
+    if abs(d[2]) > 0.999:
+        up = (0.0, 1.0, 0.0)
+    else:
+        up = unit(-d[0] * d[2], -d[1] * d[2], 1.0 - d[2] * d[2])
+    view.SetOrientation(ViewOrientation3D(eye, XYZ(up[0], up[1], up[2]), XYZ(d[0], d[1], d[2])))
+    view.SetSectionBox(make_box(lo, hi, None))
+    view.IsSectionBoxActive = True
+    return (lo, hi)
+
+
+def crop_plan(view, box, margin):
+    lo, hi = box
+    view.CropBoxActive = True
+    cb = view.CropBox
+    inv = cb.Transform.Inverse
+    a = inv.OfPoint(XYZ(lo[0] - margin, lo[1] - margin, lo[2]))
+    b = inv.OfPoint(XYZ(hi[0] + margin, hi[1] + margin, hi[2]))
+    nb = BoundingBoxXYZ()
+    nb.Transform = cb.Transform
+    nb.Min = XYZ(min(a.X, b.X), min(a.Y, b.Y), cb.Min.Z)
+    nb.Max = XYZ(max(a.X, b.X), max(a.Y, b.Y), cb.Max.Z)
+    view.CropBox = nb
+
+
+def build_section():
+    vft = view_family_type("Section")
+    if vft is None:
+        raise StepError("the document has no Section view family type")
+    p0 = ARGS["p0"]
+    p1 = ARGS["p1"]
+    if ARGS.get("flip"):
+        p0, p1 = p1, p0
+    x0, y0 = p0[0] * M_TO_FT, p0[1] * M_TO_FT
+    x1, y1 = p1[0] * M_TO_FT, p1[1] * M_TO_FT
+    length = ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
+    if length < 0.05:
+        raise StepError("p0 and p1 are the same point; a section needs a line")
+    zb = ARGS["z_bottom_m"] * M_TO_FT
+    zt = ARGS["z_top_m"] * M_TO_FT
+    depth = ARGS["depth_m"] * M_TO_FT
+    dx, dy = (x1 - x0) / length, (y1 - y0) / length
+    t = Transform.Identity
+    t.Origin = XYZ((x0 + x1) / 2.0, (y0 + y1) / 2.0, (zb + zt) / 2.0)
+    t.BasisX = XYZ(dx, dy, 0.0)
+    t.BasisY = XYZ(0.0, 0.0, 1.0)
+    t.BasisZ = XYZ(dy, -dx, 0.0)
+    box = make_box((-length / 2.0, -(zt - zb) / 2.0, -depth), (length / 2.0, (zt - zb) / 2.0, 0.0), t)
+    return ViewSection.CreateSection(doc, vft.Id, box)
+
+
+def build_elevation(host_plan, name):
+    vft = view_family_type("Elevation")
+    if vft is None:
+        raise StepError("the document has no Elevation view family type")
+    px, py = ARGS["point"][0] * M_TO_FT, ARGS["point"][1] * M_TO_FT
+    want = FACINGS[ARGS["facing"]]
+    marker = ElevationMarker.CreateElevationMarker(doc, vft.Id, XYZ(px, py, 0.0), 50)
+    made = None
+    for idx in range(4):
+        ev = marker.CreateElevation(doc, host_plan.Id, idx)
+        vd = ev.ViewDirection
+        if vd.X * want[0] + vd.Y * want[1] > 0.9 and made is None:
+            made = ev
+        else:
+            doc.Delete(ev.Id)
+    if made is None:
+        raise StepError("no elevation of the new marker faces %s" % ARGS["facing"], [eid(marker)])
+    return made, marker
+
+
+def host_plan_of(level):
+    for v in FilteredElementCollector(doc).OfClass(ViewPlan):
+        if v.IsTemplate:
+            continue
+        try:
+            if str(v.ViewType) == "FloorPlan" and v.GenLevel is not None and eid(v.GenLevel) == eid(level):
+                return v
+        except Exception:
+            pass
+    return None
+
+
+def plan_view_exists(level, family_name):
+    for v in FilteredElementCollector(doc).OfClass(ViewPlan):
+        try:
+            if not v.IsTemplate and v.GenLevel is not None and eid(v.GenLevel) == eid(level) and str(v.ViewType) == family_name:
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def main():
+    doc_meta()
+    kind = ARGS["kind"]
+    name = ARGS["name"]
+    tag = ARGS["tag"]
+    margin = float(ARGS.get("margin_m") or 0.0) * M_TO_FT
+    levels_before = level_names()
+
+    tpl = None
+    if ARGS.get("template"):
+        tpl = find_view_template(ARGS["template"])
+        if tpl is None:
+            refuse("template_not_found", "no view template named '%s'; templates in the document: %s" % (ARGS["template"], ", ".join(template_names(15)) or "(none)"))
+            return
+
+    lvl = None
+    if kind in ("plan", "elevation"):
+        lvl = find_level(ARGS.get("level") or "")
+        if lvl is None:
+            refuse("level_not_found", "no level named '%s'" % ARGS.get("level"))
+            return
+
+    box = None
+    scope = ARGS.get("scope") or {}
+    if scope.get("ids") or scope.get("tag") or scope.get("categories"):
+        elems = select_elements({"ids": scope.get("ids"), "tag": scope.get("tag"), "categories": scope.get("categories"), "max_elements": 5000}, "make_view scope")
+        if elems is None:
+            return
+        box = union_box(elems)
+        if box is None:
+            refuse("empty_scope", "none of the %d scope elements has a bounding box" % len(elems))
+            return
+    if kind == "3d" and box is None:
+        info("NO_SCOPE", "no scope given: the 3D view is made without a fitted section box")
+
+    host_plan = None
+    if kind == "elevation":
+        host_plan = host_plan_of(lvl)
+        if host_plan is None:
+            refuse("no_host_plan", "level '%s' has no floor plan view to hold the elevation marker" % lvl.Name)
+            return
+
+    mine = owned_elements("view", tag, name) + owned_elements("marker", tag, name)
+    mine_ids = set([eid(e) for e in mine])
+    for v in views_named(name):
+        if eid(v) not in mine_ids:
+            refuse("name_conflict", "a view named '%s' already exists (id %d) and was not made by this tool; it was left untouched" % (name, eid(v)), [eid(v)])
+            return
+    own_view_before = lvl is not None and kind == "plan" and not plan_view_exists(lvl, "CeilingPlan" if ARGS.get("plan_type") == "ceiling" else "FloorPlan")
+
+    run = Runner("AEC make view", ARGS.get("on_error"))
+    state = {"replaced": 0, "level_own": False, "marker": None, "box": None}
+
+    def work():
+        state["replaced"] = len(delete_owned(mine))
+        marker = None
+        if kind == "3d":
+            vft = view_family_type("ThreeDimensional")
+            if vft is None:
+                raise StepError("the document has no 3D view family type")
+            view = View3D.CreateIsometric(doc, vft.Id)
+        elif kind == "plan":
+            vft = view_family_type("CeilingPlan" if ARGS.get("plan_type") == "ceiling" else "FloorPlan")
+            if vft is None:
+                raise StepError("the document has no plan view family type for plan_type '%s'" % ARGS.get("plan_type"))
+            view = ViewPlan.Create(doc, vft.Id, lvl.Id)
+        elif kind == "section":
+            view = build_section()
+        else:
+            view, marker = build_elevation(host_plan, name)
+        if view.Name == (lvl.Name if lvl is not None else None) and kind == "plan":
+            state["level_own"] = True
+        elif view.Name != name:
+            view.Name = name
+        if tpl is not None:
+            if not view.IsValidViewTemplate(tpl.Id):
+                raise StepError("view template '%s' cannot be applied to a %s view" % (tpl.Name, kind), [eid(view)])
+            view.ViewTemplateId = tpl.Id
+        style = ARGS.get("display_style")
+        if kind == "3d":
+            if box is not None:
+                direction = ARGS.get("direction") or [-1.0, 1.0, -1.0]
+                state["box"] = fit_3d(view, box, direction, margin)
+            if style is None and tpl is None:
+                style = "shaded_with_edges"
+            if style and style != "keep":
+                view.DisplayStyle = getattr(DisplayStyle, STYLES[style])
+        elif kind == "plan" and box is not None:
+            crop_plan(view, box, margin)
+        set_tag(view, tag, name, "view")
+        if marker is not None:
+            set_tag(marker, tag, name, "marker")
+            state["marker"] = eid(marker)
+        return view
+
+    view = run.step("Make %s view '%s'" % (kind, name), work, ids=[eid(e) for e in mine])
+    if view is None:
+        return
+    vid = eid(view)
+    run.changed.append(vid)
+    if state["marker"] is not None:
+        run.changed.append(state["marker"])
+    if state["level_own"]:
+        info("LEVEL_OWN_VIEW", "level '%s' had no plan view, so the new view is the level's own plan view and keeps the level name (renaming it would rename the level)" % lvl.Name)
+    elif own_view_before:
+        info("LEVEL_FIRST_VIEW", "level '%s' had no plan view of this type before" % lvl.Name)
+
+    got = get_by_id(vid)
+    post("view_exists", got is not None, "view id %d" % vid)
+    if got is not None:
+        expect_name = lvl.Name if state["level_own"] else name
+        post("view_name", got.Name == expect_name, "'%s' (expected '%s')" % (got.Name, expect_name))
+        want_class = {"3d": View3D, "plan": ViewPlan, "section": ViewSection, "elevation": ViewSection}[kind]
+        post("view_type", isinstance(got, want_class), "%s" % got.__class__.__name__)
+        t = read_tag(got)
+        post("tag_readback", t is not None and t[0] == tag and t[1] == name, "tag %s" % (t,))
+        if tpl is not None:
+            post("template_applied", eid(got.ViewTemplateId) == eid(tpl), "template '%s'" % tpl.Name)
+        if kind == "3d" and state["box"] is not None:
+            sb = got.GetSectionBox()
+            ok = bool(got.IsSectionBoxActive) and sb.Min.X <= state["box"][0][0] + 1e-6 and sb.Min.Y <= state["box"][0][1] + 1e-6 \
+                and sb.Min.Z <= state["box"][0][2] + 1e-6 and sb.Max.X >= state["box"][1][0] - 1e-6 \
+                and sb.Max.Y >= state["box"][1][1] - 1e-6 and sb.Max.Z >= state["box"][1][2] - 1e-6
+            post("section_box_fits_scope", ok, "section box active=%s" % got.IsSectionBoxActive)
+        if kind == "3d" and ARGS.get("display_style") not in (None, "keep"):
+            post("display_style", str(got.DisplayStyle) == STYLES[ARGS["display_style"]], "%s" % got.DisplayStyle)
+        item([
+            ("kind", kind), ("id", vid), ("name", got.Name), ("view_type", str(got.ViewType)),
+            ("template", tpl.Name if tpl is not None else ""), ("status", "replaced" if state["replaced"] else "created"),
+            ("level", lvl.Name if lvl is not None else ""),
+        ])
+    check_levels_unchanged(levels_before)
+    summary("%s view '%s' %s (id %d)%s" % (
+        kind, name, "replaced" if state["replaced"] else "created", vid, (", template '%s'" % tpl.Name) if tpl is not None else ""))
+
+
+__output__ = run_write(main)

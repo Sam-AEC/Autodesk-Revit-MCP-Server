@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional
 from ..errors import BridgeError, CommandFailed
 from .approval import HUMAN_ONLY_TOOLS, ApprovalGate
 from .gating import requires_approval
+from .module_execution import authorized_module_execution
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +42,15 @@ def gate_before(registry: Any, gate: Optional[ApprovalGate], name: str, argument
     """Refuse human-only tools and claim the approved action for a mutating tool."""
     refuse_human_only(name)
     tool_def = registry.lookup_tool(name) if registry is not None else None
-    if gate is None or not (tool_def and tool_def.is_mutating):
+    if gate is None:
+        return None
+    if not (tool_def and tool_def.is_mutating):
+        gate.audit_dev_call(name, arguments, mutating=False)
         return None
     # A call that provably cannot change the model (revit_execute_python with mode='read',
     # or a revit_run_job wrapping one) skips the gate. A provider may raise to refuse it.
     if not requires_approval(registry, name, tool_def, arguments):
+        gate.audit_dev_call(name, arguments, mutating=False)
         return None
     return gate.claim_action(name, arguments)
 
@@ -102,6 +107,9 @@ def classify_outcome(tool: str, result: Any) -> Outcome:
     answer (a call that outlived the wait while Revit keeps working) is NOT final: the action
     is neither done nor failed until revit_get_result returns the real result."""
     if isinstance(result, dict):
+        if tool == "execute_plan" and result.get("pending_results"):
+            pending = result["pending_results"][0]
+            return Outcome("running", key=pending.get("key"), resume=pending.get("resume"))
         request_id = result.get("request_id")
         if result.get("status") == "running" and isinstance(request_id, str) and request_id:
             return Outcome("running", key=request_id, resume=f'revit_get_result(request_id="{request_id}")')
@@ -176,7 +184,8 @@ async def run_gated_tool(registry: Any, gate: Optional[ApprovalGate], name: str,
         raise ValueError(not_found.format(name=name))
     claim = gate_before(registry, gate, name, arguments)
     try:
-        result = await provider.execute_tool(name, arguments)
+        with authorized_module_execution(name):
+            result = await provider.execute_tool(name, arguments)
     except BaseException as e:
         gate_after(gate, claim, ok=False, error=str(e) or type(e).__name__)
         settle_in_flight(gate, name, arguments, error=e)

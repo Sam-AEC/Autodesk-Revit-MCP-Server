@@ -38,7 +38,7 @@ from .security.approval import HUMAN_ONLY_TOOLS
 from .security.proof import panel_plans_redacted
 from .security.audit import redact_data, redact_for_approval, redact_known_secrets, register_secret_value
 from .security.dispatch import run_gated_tool
-from .security.approval_override import disable_auto, enable_auto
+from .security.dev_mode import set_panel_mode
 from .security.panel_token import TOKEN_HEADER, PanelTokenError, load_or_create_token, read_token
 from .security.workspace import WorkspaceMonitor
 
@@ -184,7 +184,8 @@ APPROVAL_MODE_NOTES = {
 }
 
 
-def collect_diagnostics(workspace_dir: Path, approval_mode: Any = None, auto_window: Any = None) -> Dict[str, Any]:
+def collect_diagnostics(workspace_dir: Path, approval_mode: Any = None, auto_window: Any = None,
+                        dev_mode: bool = False) -> Dict[str, Any]:
     """Install-to-first-check status: one entry per thing that can block a first run.
 
     Each check carries a ``next_step`` so the panel can show a specific recovery
@@ -194,6 +195,8 @@ def collect_diagnostics(workspace_dir: Path, approval_mode: Any = None, auto_win
     from .config import BridgeMode, normalize_approval_mode
 
     mode_value = normalize_approval_mode(config.approval_mode if approval_mode is None else approval_mode)
+    dev_mode = bool(dev_mode and mode_value == "auto")
+    mode_note = "Dev mode: approvals are skipped until you switch it off. Calls are audited." if dev_mode else APPROVAL_MODE_NOTES[mode_value]
     checks = []
 
     def add(check_id: str, ok: bool, detail: str, next_step: str = "") -> None:
@@ -237,15 +240,16 @@ def collect_diagnostics(workspace_dir: Path, approval_mode: Any = None, auto_win
     )
 
     add(
-        "approval_mode", mode_value != "auto", APPROVAL_MODE_NOTES[mode_value],
+        "approval_mode", mode_value != "auto", mode_note,
         "Set approval_mode to ask_first (or look_only) so changes need your approval, then restart the hub.",
     )
 
     return {
         "ok": all(c["ok"] for c in checks),
         "approval_mode": mode_value,
-        "approval_mode_note": APPROVAL_MODE_NOTES[mode_value],
-        "auto_expires_at": auto_window["expires_at"] if mode_value == "auto" and isinstance(auto_window, dict) else None,
+        "approval_mode_note": mode_note,
+        "dev_mode": dev_mode,
+        "auto_expires_at": auto_window["expires_at"] if not dev_mode and mode_value == "auto" and isinstance(auto_window, dict) else None,
         "checks": checks,
     }
 
@@ -372,6 +376,7 @@ class PanelRequestHandler(BaseHTTPRequestHandler):
                     self.workspace.allowed_directories[0],
                     getattr(gate, "approval_mode", None) if gate is not None else getattr(self.approval_provider, "approval_mode", None),
                     gate.auto_window() if gate is not None and hasattr(gate, "auto_window") else None,
+                    bool(getattr(gate, "dev_mode", False)),
                 ),
             )
             return
@@ -384,8 +389,8 @@ class PanelRequestHandler(BaseHTTPRequestHandler):
         self._send_json(404, {"ok": False, "error": f"Unknown path '{self.path}'"})
 
     def _handle_set_approval_mode(self) -> None:
-        """Panel switch for a limited 'auto' window. Body: {"mode": "auto", "minutes": N} or
-        {"mode": "ask_first"}. Anything else is refused, and look_only is never relaxed."""
+        """Authenticated panel switch for timed Auto, persistent Dev, or Ask first.
+        Enabling either override requires confirm:true; look_only is never relaxed."""
         raw = self._read_body()
         if raw is None:
             return
@@ -399,29 +404,36 @@ class PanelRequestHandler(BaseHTTPRequestHandler):
 
         gate = self.approval_provider.gate
         mode = body.get("mode")
-        if mode == "auto":
+        if mode in ("auto", "dev"):
             if gate.baseline_approval_mode == "look_only":
                 self._send_json(409, {"ok": False, "error": "Approvals are locked to look-only for this hub; "
-                                      "the panel cannot switch them to auto."})
+                                      "the panel cannot relax them."})
                 return
             if body.get("confirm") is not True:
-                self._send_json(400, {"ok": False, "error": "Switching to auto needs an explicit confirmation."})
+                self._send_json(400, {"ok": False, "error": "Switching to Auto or Dev needs an explicit confirmation."})
+                return
+            if mode == "dev" and set(body) - {"mode", "confirm"}:
+                self._send_json(400, {"ok": False, "error": "Dev accepts only mode and confirm; filesystem scope is unchanged."})
                 return
             try:
-                enable_auto(gate.workspace_dir, body.get("minutes"), token=self.token or "")
-            except OSError as e:
-                self._send_json(500, {"ok": False, "error": f"Could not save the approval mode: {e.strerror or e}"})
+                set_panel_mode(gate.workspace_dir, mode, token=self.token or "", minutes=body.get("minutes"))
+            except (OSError, RevitMCPError, PanelTokenError) as e:
+                self._send_json(500, {"ok": False, "error": redact_data(f"Could not save the approval mode: {e}")})
                 return
-            logger.warning("Approval mode switched to AUTO from the panel (expires %s)",
-                           (gate.auto_window() or {}).get("expires_at"))
+            logger.warning("Approval mode switched to %s from the panel (expires %s)",
+                           mode.upper(), (gate.auto_window() or {}).get("expires_at"))
         elif mode in ("ask_first", "required"):
-            disable_auto(gate.workspace_dir)
+            try:
+                set_panel_mode(gate.workspace_dir, mode, token=self.token or "")
+            except OSError as e:
+                self._send_json(500, {"ok": False, "error": redact_data(f"Could not save the approval mode: {e}")})
+                return
             logger.info("Approval mode set back to ask_first from the panel")
         else:
-            self._send_json(400, {"ok": False, "error": "mode must be 'auto' or 'ask_first'"})
+            self._send_json(400, {"ok": False, "error": "mode must be 'auto', 'dev' or 'ask_first'"})
             return
 
-        self._send_json(200, collect_diagnostics(gate.workspace_dir, gate.approval_mode, gate.auto_window()))
+        self._send_json(200, collect_diagnostics(gate.workspace_dir, gate.approval_mode, gate.auto_window(), gate.dev_mode))
 
     def _handle_agent_providers(self) -> None:
         """Reports which chat providers are actually usable right now, so the

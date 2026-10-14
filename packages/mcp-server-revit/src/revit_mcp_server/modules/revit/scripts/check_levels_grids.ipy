@@ -1,0 +1,119 @@
+# revit_check_levels_grids: levels and grids of the open document (read only). Needs ARGS = {tolerance_mm,
+# require_ceiling_plan, max_elements, time_budget_s}. Levels without a floor plan view, levels at (nearly) the same
+# elevation, grids lying on top of each other, plus INFO for unpinned levels and grids.
+
+
+def main():
+    doc_meta()
+    budget = Budget(ARGS.get("time_budget_s") or 15)
+    tol = float(ARGS.get("tolerance_mm", 5.0)) / 1000.0 / FT_TO_M
+    want_ceiling = bool(ARGS.get("require_ceiling_plan"))
+    cap = int(ARGS.get("max_elements") or 3000)
+    partial = False
+
+    levels = []
+    for lv in FilteredElementCollector(doc).OfClass(Level):
+        if len(levels) >= cap:
+            partial = True
+            break
+        levels.append(lv)
+    plans = {}
+    ceilings = {}
+    for v in FilteredElementCollector(doc).OfClass(ViewPlan):
+        try:
+            if v.IsTemplate or v.GenLevel is None:
+                continue
+            kind = str(v.ViewType)
+            lid = eid(v.GenLevel)
+        except Exception:
+            continue
+        if kind == "FloorPlan":
+            plans.setdefault(lid, []).append(str(v.Name))
+        elif kind == "CeilingPlan":
+            ceilings.setdefault(lid, []).append(str(v.Name))
+    if not levels:
+        info("NO_LEVELS", "the document has no levels")
+
+    levels.sort(key=lambda l: l.Elevation)
+    no_plan = 0
+    no_ceiling = 0
+    dup_levels = 0
+    unpinned = 0
+    prev = None
+    for lv in levels:
+        lid = eid(lv)
+        name = str(lv.Name)
+        z = lv.Elevation
+        has_plan = lid in plans
+        if not has_plan:
+            no_plan += 1
+            fail("LEVEL_NO_PLAN", "level '%s' (id %d, %s m) has no floor plan view: nothing can be drawn or checked on it, and a view created later may rename the level" % (name, lid, to_m(z)))
+        if want_ceiling and lid not in ceilings:
+            no_ceiling += 1
+            fail("LEVEL_NO_CEILING_PLAN", "level '%s' (id %d) has no ceiling plan view" % (name, lid))
+        if prev is not None and abs(z - prev[1]) <= tol:
+            dup_levels += 1
+            fail("LEVEL_DUPLICATE", "levels '%s' (id %d) and '%s' (id %d) are %s mm apart at %s m" % (prev[0], prev[2], name, lid, round(abs(z - prev[1]) * FT_TO_M * 1000.0, 1), to_m(z)))
+        prev = (name, z, lid)
+        pinned = attr(lv, "Pinned")
+        if pinned is False:
+            unpinned += 1
+        row([("kind", "level"), ("id", lid), ("name", name), ("elevation_m", to_m(z)), ("plan_views", len(plans.get(lid, []))),
+             ("ceiling_plans", len(ceilings.get(lid, []))), ("pinned", "" if pinned is None else ("1" if pinned else "0"))])
+
+    grids = []
+    for g in FilteredElementCollector(doc).OfClass(Grid):
+        if len(grids) >= cap:
+            partial = True
+            break
+        grids.append(g)
+    dup_grids = 0
+    grid_unpinned = 0
+    segs = []
+    for g in grids:
+        crv = attr(g, "Curve")
+        a = crv.GetEndPoint(0) if crv is not None else None
+        b = crv.GetEndPoint(1) if crv is not None else None
+        segs.append((g, crv, a, b))
+        pinned = attr(g, "Pinned")
+        if pinned is False:
+            grid_unpinned += 1
+        row([("kind", "grid"), ("id", eid(g)), ("name", str(g.Name)),
+             ("x0_m", "" if a is None else to_m(a.X)), ("y0_m", "" if a is None else to_m(a.Y)),
+             ("x1_m", "" if b is None else to_m(b.X)), ("y1_m", "" if b is None else to_m(b.Y)),
+             ("pinned", "" if pinned is None else ("1" if pinned else "0"))])
+    for i in range(len(segs)):
+        if budget.expired():
+            partial = True
+            break
+        gi, ci, ai, bi = segs[i]
+        if ci is None:
+            continue
+        for j in range(i + 1, len(segs)):
+            gj, cj, aj, bj = segs[j]
+            if cj is None:
+                continue
+            same = (abs(ai.X - aj.X) <= tol and abs(ai.Y - aj.Y) <= tol and abs(bi.X - bj.X) <= tol and abs(bi.Y - bj.Y) <= tol)
+            swapped = (abs(ai.X - bj.X) <= tol and abs(ai.Y - bj.Y) <= tol and abs(bi.X - aj.X) <= tol and abs(bi.Y - aj.Y) <= tol)
+            if same or swapped:
+                dup_grids += 1
+                fail("GRID_DUPLICATE", "grids '%s' (id %d) and '%s' (id %d) lie on top of each other" % (gi.Name, eid(gi), gj.Name, eid(gj)))
+    if unpinned:
+        info("LEVELS_UNPINNED", "%d of %d levels are not pinned and can be moved by accident" % (unpinned, len(levels)))
+    if grid_unpinned:
+        info("GRIDS_UNPINNED", "%d of %d grids are not pinned and can be moved by accident" % (grid_unpinned, len(grids)))
+    if not levels and not grids:
+        meta("verified", "0")
+        info("UNVERIFIED_EMPTY", "no levels or grids were available to check")
+    if partial:
+        meta("partial", "1")
+        info("PARTIAL", "selection or grid comparison was bounded after %d ms (max_elements=%s, time_budget_s=%s)" % (budget.ms(), cap, ARGS.get("time_budget_s") or 15))
+    text = "%d levels (%d without a floor plan, %d duplicate elevations), %d grids (%d on top of another)" % (len(levels), no_plan, dup_levels, len(grids), dup_grids)
+    if want_ceiling:
+        text += ", %d levels without a ceiling plan" % no_ceiling
+    if partial:
+        text = "PARTIAL: " + text
+    summary(text)
+
+
+__output__ = run_main(main)

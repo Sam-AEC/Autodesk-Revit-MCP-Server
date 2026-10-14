@@ -117,6 +117,23 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `report_generator_build_review_pack` | Build one Excel 'Model review' workbook from a snapshot: cover, findings from the QA/QC rules, counts by category and what to do next. | No | sync |
 | `report_generator_export_excel` | Export a snapshot (optionally filtered, with chosen parameters and QA/QC findings) to an Excel workbook in the workspace. | No | sync |
 | `report_generator_export_sqlite_summary` | Export a summary of a snapshot to a SQLite database file in the workspace. | No | sync |
+| `revit_audit_openings` | Inspect scoped doors and windows for host, fit, dimensions and wall cuts, using ray or volume evidence when available. | No | sync |
+| `revit_audit_roofs` | Inspect scoped roofs for heights, slopes, coverage, exposed edges and stair openings. | No | sync |
+| `revit_check_intersections` | Measure solid/solid overlaps in the live model between two sets of elements (ids, Comments tag, categories): boolean-intersection volume in m3, pairs sorted largest first, with categories, ids and location; bounding boxes are only a pre-filter. | No | sync |
+| `revit_check_joins` | Check wall joins in the live model: for every end of the selected walls (ids, or a Comments tag) report whether it is joined to another wall, to which, and the join type. | No | sync |
+| `revit_check_levels_grids` | Check scoped levels and grids for missing plan views, duplicate elevations and coincident grids, using the supplied tolerance. | No | sync |
+| `revit_check_naming_and_params` | Check scoped elements for required parameter values, duplicate Marks and names matching a supplied pattern. | No | sync |
+| `revit_check_orientation` | Check that walls face the right way: probes 0. | No | sync |
+| `revit_export` | Export selected sheets or views as PDF or DWG, or the model as IFC or NWC, inside the workspace under an approved action. | Yes | sync |
+| `revit_list_views_sheets_schedules` | List views, sheets, schedules and view templates in the active document, with filters, placement status and pagination. | No | sync |
+| `revit_make_schedule` | Create a tagged schedule with requested fields, sorting and filters under an approved action. | Yes | sync |
+| `revit_make_sheet` | Create a tagged sheet and place supplied views under an approved action. | Yes | sync |
+| `revit_make_view` | Create a framed 3D, plan, section or elevation view under an approved action. | Yes | sync |
+| `revit_probe_family` | Inspect a family for category, nested instances, parameters, connectors and geometry. | No | sync |
+| `revit_render_check` | Export a view to a workspace PNG and inspect its pixel content for a blank image. | No | sync |
+| `revit_review` | Run selected read-only Revit checks for an explicit scope and return FAIL, PASS or INCOMPLETE with evidence. | No | sync |
+| `revit_system_report` | Inspect scoped MEP elements for connector domains, system membership, connections, open ends and size differences. | No | sync |
+| `revit_warnings_delta` | Track Revit warnings across a build phase. | No | sync |
 | `schedule_consistency_check_doors_and_rooms` | Check door and room schedules in a saved snapshot for duplicate or missing Marks, missing or identical From/To rooms, unnumbered or duplicate room numbers and zero-area rooms, and optionally Marks that do not fit a pattern you supply. | No | sync |
 | `selection_tools_group_convert_to_detail` | Convert a model group into a detail group. | Yes | sync |
 | `selection_tools_group_rename` | Rename a model group identified by its UniqueId. | Yes | sync |
@@ -200,7 +217,7 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `revit_export_navisworks` | Export the model to a Navisworks NWC file at a path inside the allowed workspace. | No | sync |
 | `revit_extract_snapshot` | Extract a semantic BIM snapshot of the active document. | No | sync |
 | `revit_get_categories` | List the Revit categories available in the active document. | No | sync |
-| `revit_get_context` | Read-only snapshot of the live Revit session: which build of the add-in is loaded (and whether it matches this server), Revit version, active document (title, path, guid, workshared), active view, how many requests are queued, which request is running and for how long, and the approval mode. | No | sync |
+| `revit_get_context` | Read-only snapshot of the live Revit session: which build of the add-in is loaded (and whether it matches this server), Revit version, active document (title, path, guid, workshared), active view, how many requests are queued, which request is running and for how long, and the approval mode in force right now (including a temporary Auto window from the panel and when it ends). | No | sync |
 | `revit_get_design_options` | List the design option sets and options of the active Revit document. | No | sync |
 | `revit_get_document_info` | Return metadata about the active Revit document, such as its title, path and workshare status. | No | sync |
 | `revit_get_element_bounding_box` | Return the axis-aligned bounding box (min and max corner, feet) of an element. | No | sync |

@@ -290,17 +290,27 @@ namespace RevitBridge.UI
 
                 case "settings.save":
                 {
-                    // Only the approval mode is a real setting: it goes to the hub, which keeps it
-                    // (signed, with an expiry) for every gate that shares the workspace. The panel
-                    // has already asked the person to confirm before sending "auto".
+                    // Forward only the person's Settings choice to the authenticated hub endpoint.
+                    // Auto expires; Dev stays on until switched off across the workspace.
                     var requested = root.TryGetProperty("approvalMode", out var modeEl) && modeEl.ValueKind == JsonValueKind.String
                         ? modeEl.GetString()
                         : null;
-                    var mode = requested == "auto" ? "auto" : "ask_first";
+                    if (requested != "auto" && requested != "dev" && requested != "ask_first")
+                    {
+                        PostToPanel(new { type = "tool.error", action = type, message = "Choose a valid approval mode in Settings." });
+                        break;
+                    }
+                    var mode = requested;
+                    var confirmed = root.TryGetProperty("confirm", out var confirmEl) && confirmEl.ValueKind == JsonValueKind.True;
+                    if ((mode == "auto" || mode == "dev") && !confirmed)
+                    {
+                        PostToPanel(new { type = "tool.error", action = type, message = "Confirm this mode in Settings before enabling it." });
+                        break;
+                    }
                     var minutes = root.TryGetProperty("minutes", out var minEl) && minEl.ValueKind == JsonValueKind.Number && minEl.TryGetInt32(out var m)
                         ? m
                         : 30;
-                    var saved = await HubClient.SetApprovalModeAsync(mode, minutes);
+                    var saved = await HubClient.SetApprovalModeAsync(mode, minutes, confirmed);
                     if (!saved.Ok)
                     {
                         PostToPanel(new { type = "tool.error", action = type, message = saved.Error });

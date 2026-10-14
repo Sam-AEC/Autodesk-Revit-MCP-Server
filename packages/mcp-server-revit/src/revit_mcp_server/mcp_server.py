@@ -20,6 +20,7 @@ from .security.dispatch import (
     gate_after, gate_after_result, gate_before, result_failed, settle_in_flight,
 )
 from .security.audit import redact_data
+from .security.module_execution import authorized_module_execution
 from .tool_metadata import enrich_tool
 
 logger = logging.getLogger(__name__)
@@ -118,7 +119,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent] | CallToolRe
             # how it ended. A job that fails needs a new plan.
             async def run_tool_job(context=None):
                 try:
-                    result = await provider.execute_tool(name, arguments)
+                    with authorized_module_execution(name):
+                        result = await provider.execute_tool(name, arguments)
                 except BaseException as e:
                     gate_after(gate, claim, ok=False, error=str(e) or type(e).__name__)
                     raise
@@ -139,7 +141,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent] | CallToolRe
 
         # Execute the tool on the provider
         try:
-            result = await provider.execute_tool(name, arguments)
+            with authorized_module_execution(name):
+                result = await provider.execute_tool(name, arguments)
         except BaseException as e:
             gate_after(gate, claim, ok=False, error=str(e) or type(e).__name__)
             settle_in_flight(gate, name, arguments, error=e)

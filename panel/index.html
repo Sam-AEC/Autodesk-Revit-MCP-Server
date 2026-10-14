@@ -164,9 +164,10 @@
       <form class="settings" id="settings-form">
         <label>
           Approval mode
-          <select id="approval-mode">
+          <select id="approval-mode" aria-describedby="approval-note">
             <option value="ask_first">Ask me first (recommended)</option>
             <option value="auto">Auto: skip approvals for a limited time</option>
+            <option value="dev">Dev: stay on until switched off</option>
           </select>
         </label>
         <label id="auto-minutes-label" hidden>
@@ -179,7 +180,7 @@
             <option value="480">8 hours (maximum)</option>
           </select>
         </label>
-        <p class="settings-note" id="approval-note">Auto ends by itself and applies to every AI session using this workspace. Look-only mode, if set, cannot be changed here.</p>
+        <p class="settings-note" id="approval-note">Auto ends by itself. Dev lets assistants make changes without approval and stays on until you switch it off. Both apply to every AI session using this workspace, across documents. Actions are logged. Look-only mode, if set, cannot be changed here.</p>
         <button type="submit" class="primary">Apply</button>
         <button type="button" id="auto-off" hidden>Back to Ask me first</button>
       </form>

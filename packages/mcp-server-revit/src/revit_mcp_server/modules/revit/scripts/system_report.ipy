@@ -1,0 +1,250 @@
+# revit_system_report: connection report of piping and duct systems (read only). Needs ARGS = {ids, tag, categories,
+# system, allow_open_ids, max_elements, time_budget_s}. Members are the pipes, ducts, fittings, accessories,
+# equipment, fixtures and air terminals picked by ids, a Comments tag and/or a system name (substring of the system
+# name or its type). Per system: members, open ends of pipes / ducts (with x y z), fittings and accessories with an
+# unconnected connector, equipment ports left unconnected, connected pairs whose flow directions or sizes disagree,
+# groups of members that are not connected to each other, and the sizes in use. Mechanical facts only: this is not
+# an engineering calculation.
+
+MEP_CATEGORIES = [
+    "PipeCurves", "DuctCurves", "FlexPipeCurves", "FlexDuctCurves", "PipeFitting", "DuctFitting",
+    "PipeAccessory", "DuctAccessory", "MechanicalEquipment", "PlumbingFixtures", "DuctTerminal",
+]
+FITTING_CATS = ["OST_PipeFitting", "OST_DuctFitting", "OST_PipeAccessory", "OST_DuctAccessory"]
+
+
+def connectors_of(e):
+    cm = attr(e, "ConnectorManager")
+    if cm is None:
+        mm = attr(e, "MEPModel")
+        cm = attr(mm, "ConnectorManager") if mm is not None else None
+    out = []
+    if cm is None:
+        return out
+    for c in cm.Connectors:
+        dom = str(attr(c, "Domain", ""))
+        kind = str(attr(c, "ConnectorType", ""))
+        if "Piping" not in dom and "Hvac" not in dom:
+            continue
+        if "Curve" in kind or "Logical" in kind:
+            continue
+        out.append(c)
+    return out
+
+
+def role_of(e):
+    if isinstance(e, MEPCurve):
+        return "curve"
+    for name in FITTING_CATS:
+        if is_cat(e, name):
+            return "fitting"
+    return "equipment"
+
+
+def size_key(c):
+    shape = str(attr(c, "Shape", ""))
+    try:
+        if "Round" in shape or not shape:
+            r = attr(c, "Radius", 0.0)
+            if r:
+                return "dia %d mm" % int(round(r * 2.0 * FT_TO_M * 1000.0))
+        w = attr(c, "Width", 0.0)
+        h = attr(c, "Height", 0.0)
+        if w or h:
+            return "%d x %d mm" % (int(round(w * FT_TO_M * 1000.0)), int(round(h * FT_TO_M * 1000.0)))
+    except Exception:
+        pass
+    return "size ?"
+
+
+def system_names(e, conns):
+    names = {}
+    candidates = [attr(e, "MEPSystem")]
+    for c in conns:
+        candidates.append(attr(c, "MEPSystem"))
+    for s in candidates:
+        if s is None:
+            continue
+        try:
+            nm = str(s.Name)
+        except Exception:
+            continue
+        tn = ""
+        try:
+            tn = str(doc.GetElement(s.GetTypeId()).Name)
+        except Exception:
+            pass
+        names[nm] = tn
+    return names
+
+
+def main():
+    doc_meta()
+    budget = Budget(ARGS.get("time_budget_s") or 18)
+    want = str(ARGS.get("system") or "").strip().lower()
+    spec = {"ids": ARGS.get("ids"), "tag": ARGS.get("tag"), "max_elements": ARGS.get("max_elements") or 5000}
+    cats = ARGS.get("categories") or []
+    if not cats and not spec["ids"] and (spec["tag"] or want):
+        cats = MEP_CATEGORIES
+    spec["categories"] = cats
+    elems = select_elements(spec, "system_report")
+    if elems is None:
+        return
+    waive = set([int(x) for x in (ARGS.get("allow_open_ids") or [])])
+
+    systems = {}
+    unassigned = "(no system)"
+    ids_in_scope = set([eid(e) for e in elems])
+    conn_cache = {}
+    skipped = 0
+    partial = False
+    for e in elems:
+        if budget.expired():
+            partial = True
+            break
+        eidv = eid(e)
+        conns = connectors_of(e)
+        if not conns:
+            skipped += 1
+            continue
+        conn_cache[eidv] = conns
+        names = system_names(e, conns)
+        if want:
+            keep = [n for n in names if want in n.lower() or want in names[n].lower()]
+            if not keep:
+                continue
+            names = dict([(n, names[n]) for n in keep])
+        if not names:
+            names = {unassigned: ""}
+        for n in names:
+            sysd = systems.get(n)
+            if sysd is None:
+                sysd = {"type": names[n], "members": [], "curves": 0, "fittings": 0, "equipment": 0}
+                systems[n] = sysd
+            sysd["members"].append(e)
+            sysd[{"curve": "curves", "fitting": "fittings", "equipment": "equipment"}[role_of(e)]] += 1
+    if skipped:
+        info("NO_CONNECTORS", "%d selected element(s) have no pipe / duct connectors and were skipped" % skipped)
+    if not systems:
+        error("empty_selection", "system_report: no piping or duct members matched (system='%s', tag='%s')" % (ARGS.get("system") or "", ARGS.get("tag") or ""))
+        return
+
+    total_open = 0
+    total_fit = 0
+    total_port = 0
+    total_islands = 0
+    total_flow = 0
+    total_size = 0
+    for sname in sorted(systems.keys()):
+        sysd = systems[sname]
+        member_ids = set([eid(m) for m in sysd["members"]])
+        open_ends = 0
+        bad_fit = 0
+        bad_ports = 0
+        flow_bad = 0
+        size_bad = 0
+        sizes = {}
+        seen_pairs = set()
+        adj = {}
+        for m in sysd["members"]:
+            mid = eid(m)
+            role = role_of(m)
+            adj.setdefault(mid, set())
+            for c in conn_cache.get(mid, []):
+                sizes[size_key(c)] = sizes.get(size_key(c), 0) + 1
+                connected = bool(attr(c, "IsConnected", False))
+                o = attr(c, "Origin")
+                if not connected:
+                    code = {"curve": "SYS_OPEN_END", "fitting": "SYS_FITTING_DISCONNECTED", "equipment": "SYS_PORT_UNCONNECTED"}[role]
+                    what = {"curve": "open end", "fitting": "fitting connector not connected", "equipment": "equipment port not connected"}[role]
+                    where = "(%s, %s, %s) m" % (to_m(o.X), to_m(o.Y), to_m(o.Z)) if o is not None else "(unknown position)"
+                    line = "%s %d (%s) in %s: %s at %s, %s" % (cat_name(m), mid, role, sname, what, where, size_key(c))
+                    if mid in waive:
+                        info("SYS_WAIVED", line + " (listed in allow_open_ids)")
+                    else:
+                        fail(code, line)
+                        if role == "curve":
+                            open_ends += 1
+                        elif role == "fitting":
+                            bad_fit += 1
+                        else:
+                            bad_ports += 1
+                        row([("kind", "open_end"), ("system", sname), ("element_id", mid), ("category", cat_name(m)), ("role", role),
+                             ("size", size_key(c)), ("x_m", to_m(o.X) if o is not None else ""), ("y_m", to_m(o.Y) if o is not None else ""), ("z_m", to_m(o.Z) if o is not None else "")])
+                    continue
+                try:
+                    refs = list(c.AllRefs)
+                except Exception:
+                    refs = []
+                for r in refs:
+                    owner = attr(r, "Owner")
+                    if owner is None or eid(owner) == mid:
+                        continue
+                    oid = eid(owner)
+                    if "Logical" in str(attr(r, "ConnectorType", "")):
+                        continue
+                    if oid in member_ids:
+                        adj[mid].add(oid)
+                        adj.setdefault(oid, set()).add(mid)
+                    key = (min(mid, oid), max(mid, oid), round(o.X, 2) if o is not None else 0, round(o.Y, 2) if o is not None else 0)
+                    if key in seen_pairs:
+                        continue
+                    seen_pairs.add(key)
+                    d1 = str(attr(c, "Direction", ""))
+                    d2 = str(attr(r, "Direction", ""))
+                    if (d1 == "Out" and d2 == "Out") or (d1 == "In" and d2 == "In"):
+                        flow_bad += 1
+                        fail("SYS_FLOW_MISMATCH", "%s %d and %s %d are connected in %s but both connectors are '%s'" % (cat_name(m), mid, cat_name(owner), oid, sname, d1))
+                    if size_key(c) != size_key(r) and size_key(c) != "size ?" and size_key(r) != "size ?":
+                        size_bad += 1
+                        fail("SYS_SIZE_MISMATCH", "%s %d (%s) is connected to %s %d (%s) in %s" % (cat_name(m), mid, size_key(c), cat_name(owner), oid, size_key(r), sname))
+        # islands: members that are not connected to each other
+        seen = set()
+        comps = []
+        for start in adj:
+            if start in seen:
+                continue
+            stack = [start]
+            seen.add(start)
+            comp = [start]
+            while stack:
+                cur = stack.pop()
+                for nb in adj.get(cur, []):
+                    if nb not in seen:
+                        seen.add(nb)
+                        stack.append(nb)
+                        comp.append(nb)
+            comps.append(comp)
+        islands = len(comps) if sname != unassigned else 0
+        if islands > 1 and len(sysd["members"]) > 1:
+            comps.sort(key=lambda c: -len(c))
+            fail("SYS_ISLANDS", "%s: %d separate groups of members (sizes %s); the smaller groups start at ids %s" % (sname, islands, ",".join([str(len(c)) for c in comps[:8]]), ",".join([str(min(c)) for c in comps[1:6]])))
+        elif islands > 1:
+            islands = 1
+        if sname == unassigned:
+            info("SYS_UNASSIGNED", "%d member(s) belong to no system: they carry no system type and no flow" % len(sysd["members"]))
+        size_text = ", ".join(["%s x%d" % (k, sizes[k]) for k in sorted(sizes.keys())])
+        info("SYS_SIZES", "%s: connector sizes in use: %s" % (sname, size_text or "none"))
+        total_open += open_ends
+        total_fit += bad_fit
+        total_port += bad_ports
+        total_islands += (islands - 1 if islands > 1 else 0)
+        total_flow += flow_bad
+        total_size += size_bad
+        row([
+            ("kind", "system"), ("system", sname), ("system_type", sysd["type"]), ("members", len(sysd["members"])),
+            ("curves", sysd["curves"]), ("fittings", sysd["fittings"]), ("equipment", sysd["equipment"]),
+            ("open_ends", open_ends), ("disconnected_fittings", bad_fit), ("unconnected_ports", bad_ports),
+            ("flow_mismatch", flow_bad), ("size_mismatch", size_bad), ("islands", islands), ("sizes", size_text),
+        ])
+    if partial:
+        meta("partial", "1")
+        info("PARTIAL", "stopped after %d ms (time_budget_s=%s); narrow the selection (tag, system) and run again" % (budget.ms(), ARGS.get("time_budget_s") or 18))
+    text = "%d systems, %d open ends, %d fittings not fully connected, %d equipment ports unconnected, %d flow mismatches, %d size mismatches, %d extra groups" % (
+        len(systems), total_open, total_fit, total_port, total_flow, total_size, total_islands)
+    if partial:
+        text = "PARTIAL: " + text
+    summary(text)
+
+
+__output__ = run_main(main)

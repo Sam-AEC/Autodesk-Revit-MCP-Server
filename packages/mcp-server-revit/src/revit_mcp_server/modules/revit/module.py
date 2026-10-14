@@ -7,6 +7,13 @@ Commands (tool names are ``revit_<command>``):
   check_intersections 1.3  solid/solid overlap volumes (BooleanOperationsUtils); mode=bbox kept
   warnings_delta      1.8  snapshot a warnings baseline, later list new / closed warnings
   check_orientation   1.9  probe 0.6 m along each exterior wall's Orientation, flag walls facing into a room
+  audit_openings      1.4  doors and windows: host, centre in the wall piece, cut (ray / volume), sill / head, swing vs hinge
+  audit_roofs         1.5  roofs: top vs level, slope, footprint coverage, open edges without parapet, stair openings
+  probe_family        1.6  nested instances, category, parameters, connectors, geometry extents and sill datum of a family
+  system_report       1.7  piping / duct systems: open ends, disconnected fittings, unconnected ports, flow and size mismatches
+  review              4.5  one call: runs the audits above plus the warnings delta; FAIL lines and what could not be verified
+  check_naming_and_params   required parameters empty or missing, duplicate marks, names off a pattern
+  check_levels_grids        levels without a plan view, duplicate elevations, grids on top of each other
 
 How it works: each command is thin. It builds an IronPython 2.7 script from ``scripts/_prelude.ipy`` plus one
 tool script, injects the arguments as an ``ARGS`` literal, runs it inside Revit and turns the printed line
@@ -14,16 +21,17 @@ protocol into the contract of plan section 6 (``revit_mcp_server.check_contract`
 lines, pageable rows, and a detail file in the workspace when lists are long. The scripts never open a
 transaction. Output is capped (default 50 rows; limit / offset / count_only / fields).
 
-The seam: ``run_readonly_script`` is the ONLY place that sends the script to Revit. It uses the existing
-``revit_execute_python`` tool. That tool is still declared mutating and gated in this build, so with approval
-mode "required" these tools answer ``kind: approval_required`` until the read-mode work (plan item 0.6) makes
-``revit_execute_python`` accept ``mode: "read"`` without a plan. Only that one function needs to change then.
+The seam: ``run_readonly_script`` is the ONLY place that sends the script to Revit. It uses
+``revit_execute_python`` with ``mode: "read"``; the server and add-in both validate that script before execution.
+These checks describe the selected elements and available geometry, not engineering calculations. Missing
+geometry, inaccessible family documents and bounded partial results are reported as unverified.
 
 Everything that needs a running Revit with the add-in is UNVERIFIED here: the scripts are syntax-checked and
 exercised against a stub of the Revit API in the tests, not against Revit.
 """
 from __future__ import annotations
 
+import math
 import re
 import time
 from collections import Counter
@@ -41,13 +49,29 @@ from revit_mcp_server.check_contract import (
     new_baseline_id,
     parse_script_output,
     save_json,
+    write_detail_file,
 )
 
 SCRIPT_DIR = Path(__file__).resolve().parent / "scripts"
 PRELUDE = "_prelude.ipy"
+HELPERS = "_helpers.ipy"
+# The first four tool scripts are self-contained; the newer ones share the helpers file.
+HELPER_SCRIPTS = frozenset(
+    {
+        "audit_openings.ipy",
+        "audit_roofs.ipy",
+        "probe_family.ipy",
+        "system_report.ipy",
+        "check_naming_and_params.ipy",
+        "check_levels_grids.ipy",
+    }
+)
 EXECUTE_TOOL = "revit_execute_python"
 
 ToolExecutor = Callable[[str, Dict[str, Any]], Any]
+
+# The checks revit_review can run, in the order it runs them (cheap and decisive first).
+REVIEW_CHECKS = ("levels_grids", "joins", "orientation", "openings", "roofs", "naming_params", "systems", "intersections", "warnings")
 
 _HINTS = {
     "invalid_input": "Give ids, a tag (a prefix of the Comments parameter) or categories; every tool needs an explicit scope.",
@@ -63,6 +87,8 @@ _HINTS = {
 def build_script(script_name: str, args: Dict[str, Any]) -> str:
     """Prelude + ``ARGS`` literal + tool script. ``ascii(repr)`` output is valid IronPython 2.7 source."""
     prelude = (SCRIPT_DIR / PRELUDE).read_text(encoding="utf-8")
+    if script_name in HELPER_SCRIPTS:
+        prelude += "\n\n" + (SCRIPT_DIR / HELPERS).read_text(encoding="utf-8")
     body = (SCRIPT_DIR / script_name).read_text(encoding="utf-8")
     return f"{prelude}\n\nARGS = {ascii(args)}\n\n{body}\n"
 
@@ -70,9 +96,7 @@ def build_script(script_name: str, args: Dict[str, Any]) -> str:
 def run_readonly_script(script: str, tool_executor: ToolExecutor) -> Any:
     """Send a read-only IronPython script to Revit and return the bridge's raw answer.
 
-    THE SEAM. Today this calls ``revit_execute_python``, which the server gates as mutating. When the
-    ``mode: "read"`` work lands, the ``mode`` key below is what makes that call ungated; nothing else in
-    this module should need to change. (The key is ignored by builds that do not know it.)
+    The shared dispatcher validates the generated script before skipping approval for mode "read".
     """
     return tool_executor(EXECUTE_TOOL, {"script": script, "mode": "read"})
 
@@ -213,6 +237,51 @@ def _selection(ids: Any, tag: Any, categories: Any) -> Dict[str, Any]:
         "tag": _tag(tag),
         "categories": [str(c) for c in (categories or [])],
     }
+
+
+def _clean_data(value: Any, depth: int = 0) -> Any:
+    """Plain, literal-safe copy of caller data: dicts, lists, finite numbers, bools, printable ASCII strings."""
+    if depth > 5:
+        raise ValueError("data is nested too deeply")
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("data holds a number that is not finite")
+        return float(value)
+    if isinstance(value, str):
+        if not _TAG.match(value):
+            raise ValueError("data strings must be 1-80 printable ASCII characters")
+        return value
+    if isinstance(value, (list, tuple)):
+        if len(value) > 2000:
+            raise ValueError("data has a list with more than 2000 entries")
+        return [_clean_data(v, depth + 1) for v in value]
+    if isinstance(value, dict):
+        out: Dict[str, Any] = {}
+        for k, v in value.items():
+            if not isinstance(k, str) or not re.match(r"^[A-Za-z0-9_]{1,40}$", k):
+                raise ValueError("data keys must be plain names (letters, digits, underscore)")
+            out[k] = _clean_data(v, depth + 1)
+        return out
+    raise ValueError(f"data cannot hold a {type(value).__name__}")
+
+
+def _names(value: Any, what: str) -> List[str]:
+    out: List[str] = []
+    for v in value or []:
+        text = str(v)
+        if not _TAG.match(text):
+            raise ValueError(f"{what} must be 1-80 printable ASCII characters")
+        out.append(text)
+    return out
+
+
+def _budget(value: Any, default: float) -> float:
+    """Script time budget in seconds, 1..25 (the bridge itself waits 30 s)."""
+    return max(1.0, min(float(value if value is not None else default), 25.0))
 
 
 def _bad_input(tool: str, exc: Exception) -> Dict[str, Any]:
@@ -360,6 +429,493 @@ class RevitModule:
             row_types={"wall_id": "int", "exterior_room_id": "int", "interior_room_id": "int", "x_m": "float", "y_m": "float"},
             sort_key=lambda r: (r.get("status") != "exterior_in_room", r.get("wall_id") or 0),
         )
+
+    # -- generic runner for the newer tools ---------------------------------- #
+    def _run(
+        self,
+        tool: str,
+        script: str,
+        args: Dict[str, Any],
+        page: PageSpec,
+        workspace: Any,
+        tool_executor: Optional[ToolExecutor],
+        row_types: Dict[str, str],
+        sort_key: Any,
+    ) -> Dict[str, Any]:
+        if tool != "revit_check_levels_grids" and not any(args.get(k) for k in ("ids", "tag", "categories", "name", "system")):
+            return _bad_input(tool, ValueError("give ids, a tag, categories, or a family/system name"))
+        parsed, elapsed, early = _execute(tool, script, args, tool_executor)
+        if early is not None or parsed is None:
+            return early or {}
+        if parsed.meta.get("partial") == "1" or any(i.startswith(("UNVERIFIED", "NO_CONNECTORS:")) for i in parsed.infos):
+            parsed.meta["verified"] = "0"
+        return _finish(tool, parsed, elapsed, page, workspace, row_types=row_types, sort_key=sort_key)
+
+    def audit_openings(
+        self,
+        ids: Optional[List[int]] = None,
+        tag: str = "",
+        categories: Optional[List[str]] = None,
+        data: Optional[Dict[str, Any]] = None,
+        pos_tol_m: float = 0.08,
+        ray_test: bool = True,
+        swing: bool = True,
+        max_elements: int = 3000,
+        time_budget_s: float = 15.0,
+        limit: int = 50,
+        offset: int = 0,
+        count_only: bool = False,
+        fields: Optional[List[str]] = None,
+        workspace: Any = None,
+        tool_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_audit_openings"
+        try:
+            args = _selection(ids, tag, categories)
+            args.update(
+                data=_clean_data(data) if data else None,
+                pos_tol_m=max(0.001, float(pos_tol_m)),
+                ray_test=bool(ray_test),
+                swing=bool(swing),
+                max_elements=int(max_elements),
+                time_budget_s=_budget(time_budget_s, 15.0),
+            )
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        page = PageSpec.from_args(limit, offset, count_only, fields)
+        return self._run(
+            tool,
+            "audit_openings.ipy",
+            args,
+            page,
+            workspace,
+            tool_executor,
+            {"id": "int", "host_id": "int", "along_m": "float", "wall_len_m": "float", "width_m": "float", "height_m": "float", "sill_m": "float", "head_m": "float"},
+            lambda r: (r.get("status") == "ok", r.get("id") or 0),
+        )
+
+    def audit_roofs(
+        self,
+        ids: Optional[List[int]] = None,
+        tag: str = "",
+        categories: Optional[List[str]] = None,
+        data: Optional[Dict[str, Any]] = None,
+        cover_ids: Optional[List[int]] = None,
+        cover_tag: str = "",
+        top_on_level: bool = False,
+        top_tol_m: float = 0.05,
+        parapet_min_height_m: float = 0.6,
+        parapet_dist_m: float = 0.35,
+        max_slope_deg: float = 60.0,
+        check_stairs: bool = True,
+        max_elements: int = 3000,
+        time_budget_s: float = 15.0,
+        limit: int = 50,
+        offset: int = 0,
+        count_only: bool = False,
+        fields: Optional[List[str]] = None,
+        workspace: Any = None,
+        tool_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_audit_roofs"
+        try:
+            args = _selection(ids, tag, categories)
+            args.update(
+                data=_clean_data(data) if data else None,
+                cover_ids=_int_list(cover_ids),
+                cover_tag=_tag(cover_tag),
+                top_on_level=bool(top_on_level),
+                top_tol_m=max(0.001, float(top_tol_m)),
+                parapet_min_height_m=max(0.05, float(parapet_min_height_m)),
+                parapet_dist_m=max(0.05, float(parapet_dist_m)),
+                max_slope_deg=max(1.0, float(max_slope_deg)),
+                check_stairs=bool(check_stairs),
+                max_elements=int(max_elements),
+                time_budget_s=_budget(time_budget_s, 15.0),
+            )
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        page = PageSpec.from_args(limit, offset, count_only, fields)
+        return self._run(
+            tool,
+            "audit_roofs.ipy",
+            args,
+            page,
+            workspace,
+            tool_executor,
+            {"id": "int", "level_z_m": "float", "top_m": "float", "bottom_m": "float", "max_slope_deg": "float", "min_slope_deg": "float", "plan_area_m2": "float", "flat": "bool"},
+            lambda r: (r.get("status") == "ok", r.get("id") or 0),
+        )
+
+    def probe_family(
+        self,
+        name: str = "",
+        ids: Optional[List[int]] = None,
+        deep: bool = True,
+        allow_nested: bool = False,
+        expect_connectors: bool = False,
+        max_families: int = 3,
+        max_symbols: int = 12,
+        time_budget_s: float = 18.0,
+        limit: int = 50,
+        offset: int = 0,
+        count_only: bool = False,
+        fields: Optional[List[str]] = None,
+        workspace: Any = None,
+        tool_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_probe_family"
+        try:
+            fam_name = _tag(name)
+            id_list = _int_list(ids)
+            if not fam_name and not id_list:
+                raise ValueError("give name (family or type name) or ids (family, type or instance ids)")
+            args = {
+                "name": fam_name,
+                "ids": id_list,
+                "deep": bool(deep),
+                "allow_nested": bool(allow_nested),
+                "expect_connectors": bool(expect_connectors),
+                "max_families": max(1, min(int(max_families), 10)),
+                "max_symbols": max(1, min(int(max_symbols), 50)),
+                "time_budget_s": _budget(time_budget_s, 18.0),
+            }
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        page = PageSpec.from_args(limit, offset, count_only, fields)
+        order = {"family": 0, "nested": 1, "nested_family": 2, "connector": 3, "extent": 4, "type": 5, "param": 6}
+        return self._run(
+            tool,
+            "probe_family.ipy",
+            args,
+            page,
+            workspace,
+            tool_executor,
+            {"id": "int", "types": "int", "instances": "int", "solids": "int"},
+            lambda r: (order.get(str(r.get("kind")), 9), str(r.get("family") or "")),
+        )
+
+    def system_report(
+        self,
+        system: str = "",
+        ids: Optional[List[int]] = None,
+        tag: str = "",
+        categories: Optional[List[str]] = None,
+        allow_open_ids: Optional[List[int]] = None,
+        max_elements: int = 5000,
+        time_budget_s: float = 18.0,
+        limit: int = 50,
+        offset: int = 0,
+        count_only: bool = False,
+        fields: Optional[List[str]] = None,
+        workspace: Any = None,
+        tool_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_system_report"
+        try:
+            args = _selection(ids, tag, categories)
+            args.update(
+                system=_tag(system),
+                allow_open_ids=_int_list(allow_open_ids),
+                max_elements=int(max_elements),
+                time_budget_s=_budget(time_budget_s, 18.0),
+            )
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        page = PageSpec.from_args(limit, offset, count_only, fields)
+        return self._run(
+            tool,
+            "system_report.ipy",
+            args,
+            page,
+            workspace,
+            tool_executor,
+            {"element_id": "int", "members": "int", "curves": "int", "fittings": "int", "equipment": "int", "open_ends": "int",
+             "disconnected_fittings": "int", "unconnected_ports": "int", "flow_mismatch": "int", "size_mismatch": "int",
+             "islands": "int", "x_m": "float", "y_m": "float", "z_m": "float"},
+            lambda r: (r.get("kind") != "system", str(r.get("system") or ""), r.get("element_id") or 0),
+        )
+
+    def check_naming_and_params(
+        self,
+        ids: Optional[List[int]] = None,
+        tag: str = "",
+        categories: Optional[List[str]] = None,
+        required: Optional[List[str]] = None,
+        unique: Optional[List[str]] = None,
+        name_pattern: str = "",
+        name_target: str = "type",
+        max_elements: int = 3000,
+        time_budget_s: float = 15.0,
+        limit: int = 50,
+        offset: int = 0,
+        count_only: bool = False,
+        fields: Optional[List[str]] = None,
+        workspace: Any = None,
+        tool_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_check_naming_and_params"
+        if name_target not in ("type", "element"):
+            return _bad_input(tool, ValueError("name_target must be 'type' or 'element'"))
+        try:
+            args = _selection(ids, tag, categories)
+            args.update(
+                required=_names(required, "required"),
+                unique=_names(unique if unique is not None else ["Mark"], "unique"),
+                name_pattern=_tag(name_pattern),
+                name_target=name_target,
+                max_elements=int(max_elements),
+                time_budget_s=_budget(time_budget_s, 15.0),
+            )
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        page = PageSpec.from_args(limit, offset, count_only, fields)
+        return self._run(
+            tool,
+            "check_naming_and_params.ipy",
+            args,
+            page,
+            workspace,
+            tool_executor,
+            {"id": "int"},
+            lambda r: (str(r.get("category") or ""), str(r.get("problem") or ""), r.get("id") or 0),
+        )
+
+    def check_levels_grids(
+        self,
+        tolerance_mm: float = 5.0,
+        require_ceiling_plan: bool = False,
+        max_elements: int = 3000,
+        time_budget_s: float = 15.0,
+        limit: int = 50,
+        offset: int = 0,
+        count_only: bool = False,
+        fields: Optional[List[str]] = None,
+        workspace: Any = None,
+        tool_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_check_levels_grids"
+        try:
+            args = {
+                "tolerance_mm": max(0.0, float(tolerance_mm)),
+                "require_ceiling_plan": bool(require_ceiling_plan),
+                "max_elements": int(max_elements),
+                "time_budget_s": _budget(time_budget_s, 15.0),
+            }
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        page = PageSpec.from_args(limit, offset, count_only, fields)
+        return self._run(
+            tool,
+            "check_levels_grids.ipy",
+            args,
+            page,
+            workspace,
+            tool_executor,
+            {"id": "int", "elevation_m": "float", "plan_views": "int", "ceiling_plans": "int", "x0_m": "float", "y0_m": "float", "x1_m": "float", "y1_m": "float"},
+            lambda r: (r.get("kind") != "level", r.get("elevation_m") or 0.0, r.get("id") or 0),
+        )
+
+    def review(
+        self,
+        tag: str = "",
+        ids: Optional[List[int]] = None,
+        baseline_id: str = "",
+        checks: Optional[List[str]] = None,
+        cover_tag: str = "",
+        system: str = "",
+        required: Optional[List[str]] = None,
+        unique: Optional[List[str]] = None,
+        openings_data: Optional[Dict[str, Any]] = None,
+        roofs_data: Optional[Dict[str, Any]] = None,
+        allow_free_ids: Optional[List[int]] = None,
+        time_budget_s: float = 90.0,
+        max_fails_per_check: int = 10,
+        limit: int = 50,
+        offset: int = 0,
+        count_only: bool = False,
+        fields: Optional[List[str]] = None,
+        workspace: Any = None,
+        tool_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_review"
+        wanted = list(checks) if checks else list(REVIEW_CHECKS)
+        unknown = [c for c in wanted if c not in REVIEW_CHECKS]
+        if unknown:
+            return _bad_input(tool, ValueError(f"unknown check(s) {unknown}; choose from {list(REVIEW_CHECKS)}"))
+        try:
+            scope_tag = _tag(tag)
+            scope_ids = _int_list(ids)
+            base = (baseline_id or "").strip()
+            if base and not is_safe_name(base):
+                raise ValueError("baseline_id must be the id returned by revit_warnings_delta (letters, digits, - and _)")
+            cap = max(1, min(int(max_fails_per_check), 100))
+            budget = max(5.0, min(float(time_budget_s), 600.0))
+            common = {"workspace": workspace, "tool_executor": tool_executor, "limit": 500}
+            sel = {"ids": scope_ids, "tag": scope_tag}
+            openings_args = dict(sel, data=openings_data)
+            roofs_args = dict(sel, data=roofs_data, cover_tag=_tag(cover_tag))
+            if openings_data:
+                _clean_data(openings_data)
+            if roofs_data:
+                _clean_data(roofs_data)
+            naming_args = dict(sel, required=_names(required, "required"), unique=unique)
+            if not scope_ids:
+                naming_args["categories"] = ["Doors", "Windows", "Rooms"]
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        if _server_in_mock_mode():
+            return mock_result(tool)
+
+        needs_scope = {"joins", "orientation", "intersections", "openings", "roofs", "naming_params", "systems"}
+        started = time.perf_counter()
+        table: List[Dict[str, Any]] = []
+        all_fails: List[str] = []
+        shown_fails: List[str] = []
+        not_verified: List[str] = []
+        skipped: List[str] = []
+        doc_info: Dict[str, Any] = {}
+        revit_version: Optional[str] = None
+        more_than_cap = False
+        stop_reason = ""
+
+        def run_one(name: str) -> Optional[Dict[str, Any]]:
+            if name == "joins":
+                return self.check_joins(ids=scope_ids, tag=scope_tag, allow_free_ids=allow_free_ids, **common)
+            if name == "orientation":
+                return self.check_orientation(ids=scope_ids, tag=scope_tag, **common)
+            if name == "intersections":
+                remaining = budget - (time.perf_counter() - started)
+                return self.check_intersections(
+                    set_a={"ids": scope_ids, "tag": scope_tag}, time_budget_s=max(1.0, min(10.0, remaining)), **common
+                )
+            if name == "openings":
+                return self.audit_openings(**openings_args, **common)
+            if name == "roofs":
+                return self.audit_roofs(**roofs_args, **common)
+            if name == "levels_grids":
+                return self.check_levels_grids(**common)
+            if name == "naming_params":
+                return self.check_naming_and_params(**naming_args, **common)
+            if name == "systems":
+                return self.system_report(ids=scope_ids, tag=scope_tag, system=system, **common)
+            if name == "warnings":
+                return self.warnings_delta(baseline_id=base, tag_prefix=scope_tag, **common)
+            return None
+
+        for name in wanted:
+            entry: Dict[str, Any] = {"check": name, "status": "", "fails": 0, "summary": "", "elapsed_ms": 0}
+            table.append(entry)
+            if stop_reason:
+                entry.update(status="not_verified", summary=stop_reason)
+                not_verified.append(f"{name}: not run ({stop_reason})")
+                continue
+            if name in needs_scope and not (scope_tag or scope_ids):
+                entry.update(status="not_verified", summary="needs tag or ids")
+                not_verified.append(f"{name}: not run (give tag or ids)")
+                continue
+            if name == "warnings" and not base:
+                entry.update(status="not_verified", summary="no baseline_id")
+                not_verified.append("warnings: new warnings were not compared (no baseline_id; call revit_warnings_delta before the phase and pass its baseline_id)")
+                continue
+            if time.perf_counter() - started > budget:
+                entry.update(status="not_verified", summary="time budget used up")
+                not_verified.append(f"{name}: not run (time_budget_s={budget:g} used up)")
+                continue
+            t0 = time.perf_counter()
+            r = run_one(name) or {}
+            entry["elapsed_ms"] = int((time.perf_counter() - t0) * 1000)
+            if r.get("mock"):
+                return mock_result(tool)
+            if not r.get("ok"):
+                kind = str(r.get("kind") or "error")
+                message = str(r.get("message") or "")
+                entry["summary"] = f"{kind}: {message}"[:160]
+                if kind == "empty_selection":
+                    entry["status"] = "skipped"
+                    skipped.append(f"{name}: nothing to check ({message[:120]})")
+                    not_verified.append(f"{name}: no elements were checked ({message[:120]})")
+                else:
+                    entry["status"] = "not_verified"
+                    not_verified.append(f"{name}: {kind}: {message[:160]}")
+                    if kind in ("no_bridge", "bridge_error", "approval_required", "timeout_running"):
+                        stop_reason = f"stopped after {kind} in {name}"
+                continue
+            if not doc_info.get("title") and (r.get("document") or {}).get("title"):
+                doc_info = dict(r["document"])
+            revit_version = revit_version or r.get("revit_version")
+            n_fail = int((r.get("counts") or {}).get("fails", len(r.get("fails", []))))
+            entry.update(fails=n_fail, summary=str(r.get("summary") or ""), verified=r.get("verified", True), partial=bool((r.get("limits") or {}).get("partial")))
+            lines = [f"{name}: {line}" for line in r.get("fails", [])]
+            all_fails.extend(lines)
+            shown_fails.extend(lines[:cap])
+            if n_fail > cap:
+                more_than_cap = True
+            for line in r.get("info", []):
+                if str(line).startswith("UNVERIFIED"):
+                    not_verified.append(f"{name}: {line}")
+            if r.get("verified") is False:
+                not_verified.append(f"{name}: {r.get('summary')}")
+            if entry["partial"]:
+                not_verified.append(f"{name}: partial result, stopped at its time or pair budget")
+            if r.get("detail_file"):
+                entry["detail_file"] = r["detail_file"]
+            entry["status"] = "fail" if n_fail else ("not_verified" if not entry["verified"] or entry["partial"] else "pass")
+
+        total_fails = sum(int(e.get("fails", 0)) for e in table)
+        verdict = "FAIL" if total_fails else ("INCOMPLETE" if not_verified else "PASS")
+        failing = [f"{e['check']} {e['fails']}" for e in table if e.get("fails")]
+        n_pass = sum(1 for e in table if e["status"] == "pass")
+        text = f"{verdict}: {total_fails} FAIL"
+        if failing:
+            text += " (" + ", ".join(failing) + ")"
+        text += f"; {n_pass} checks clean, {len(not_verified)} things could not be verified"
+        if skipped:
+            text += f", {len(skipped)} skipped (nothing to check)"
+        rows = [dict((k, str(v)) for k, v in e.items()) for e in table]
+        synthetic = ScriptOutput(
+            summary=text,
+            fails=shown_fails,
+            infos=[],
+            rows=rows,
+            meta={"doc_title": doc_info.get("title") or "", "doc_guid": doc_info.get("guid") or "", "revit_version": revit_version or "", "verified": "0" if not_verified else "1"},
+            counts={"fail": len(shown_fails), "info": 0, "row": len(rows)},
+        )
+        page = PageSpec.from_args(limit, offset, count_only, fields)
+        elapsed = int((time.perf_counter() - started) * 1000)
+        result = assemble_result(
+            tool,
+            synthetic,
+            page,
+            elapsed_ms=elapsed,
+            workspace=workspace,
+            summary=text,
+            extra={
+                "verdict": verdict,
+                "checks": table,
+                "not_verified": not_verified,
+                "skipped": skipped,
+                "not_included": ["renders: framed images are not part of this review yet (upgrade plan item 1.10); look at the model yourself or use revit_export_image"],
+                "fails_total": total_fails,
+            },
+            row_types={"fails": "int", "elapsed_ms": "int", "verified": "bool", "partial": "bool"},
+        )
+        if more_than_cap or len(all_fails) > len(shown_fails):
+            header = [f"tool: {tool}", f"document: {doc_info.get('title') or ''} {doc_info.get('guid') or ''}".rstrip(), f"summary: {text}"]
+            path, why = write_detail_file(workspace, tool, header, all_fails, not_verified, rows)
+            result["detail_file"] = path
+            result["limits"]["truncated"] = True
+            result["limits"]["fails_shown_per_check"] = cap
+            if why:
+                result["limits"]["detail_file_error"] = why
+        return result
 
     def warnings_delta(
         self,

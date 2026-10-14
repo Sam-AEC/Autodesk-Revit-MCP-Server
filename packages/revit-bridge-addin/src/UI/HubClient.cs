@@ -285,14 +285,14 @@ namespace RevitBridge.UI
         }
 
         /// <summary>
-        /// Switches the hub (and every gate sharing its workspace) to a limited "auto" window, or back
-        /// to ask-first. The hub answers with its fresh diagnostics payload on success. The caller must
-        /// have asked the person to confirm before passing "auto".
+        /// Switches the workspace to timed Auto, persistent Dev, or Ask me first. The hub answers
+        /// with fresh diagnostics. Confirmation comes from the person's Settings action.
         /// </summary>
-        public static async Task<HubResult> SetApprovalModeAsync(string mode, int minutes)
+        public static async Task<HubResult> SetApprovalModeAsync(string mode, int minutes, bool confirmed)
         {
-            var isAuto = mode == "auto";
-            var requestBody = JsonSerializer.Serialize(new { mode, minutes, confirm = isAuto });
+            var requestBody = mode == "dev"
+                ? JsonSerializer.Serialize(new { mode, confirm = confirmed })
+                : JsonSerializer.Serialize(new { mode, minutes, confirm = confirmed });
 
             try
             {
