@@ -1,0 +1,197 @@
+# revit_mep_circuit (write mode). One Transaction per circuit, all circuits in one TransactionGroup.
+# ARGS = {system (ElectricalSystemType name, for example PowerCircuit), tag, on_error,
+#         circuits: [{id, name, panel: {element_id | mark}, elements: [{element_id | mark}]}]}
+# A circuit is a native ElectricalSystem made with ElectricalSystem.Create from the listed family instances, then
+# SelectPanel(panel) and the Load Name. A circuit of the same tag + id made earlier is replaced (it is the only thing
+# deleted, and only because it carries this tool's tag). An element that is already on a circuit this tool does not own
+# is refused: the call never moves elements between circuits behind your back. Every element and the panel pass the
+# category guard first (kind elec): a family that is not an electrical element, or has no electrical connector of the
+# requested system, refuses the whole call before anything is created.
+
+MARK_PREFIX = "mep:circuit:"
+
+
+def refuse_all(problems):
+    ids = []
+    for p in problems:
+        for i in p[2]:
+            if i not in ids:
+                ids.append(i)
+    refuse(problems[0][0], problems[0][1], ids)
+    for p in problems[1:]:
+        fail(p[0].upper(), p[1])
+
+
+def circuits_of(e):
+    """ElectricalSystem objects the element already belongs to."""
+    out = []
+    try:
+        mm = e.MEPModel
+        found = mm.GetElectricalSystems() if mm is not None else None
+        if found is not None:
+            for es in found:
+                out.append(es)
+    except Exception:
+        pass
+    return out
+
+
+def panel_category_ok(e):
+    bic = getattr(BuiltInCategory, "OST_ElectricalEquipment", None)
+    try:
+        return bic is not None and eid(e.Category) == int(bic)
+    except Exception:
+        return False
+
+
+def preflight(circuits):
+    system = ARGS["system"]
+    problems = []
+    existing = []
+    seen_keys = set()
+    for c in circuits:
+        for e in owned_elements(None, ARGS["tag"], MARK_PREFIX + c["id"]):
+            if eid(e) not in seen_keys:
+                seen_keys.add(eid(e))
+                existing.append(e)
+    replaced = set([eid(e) for e in existing])
+    used = {}
+    plans = []
+    seen = []
+    for c in circuits:
+        cid = c["id"]
+        if cid in seen:
+            problems.append(("duplicate_circuit_id", "circuit id '%s' is used twice in this call" % cid, []))
+            continue
+        seen.append(cid)
+        before = len(problems)
+        panel, why = find_element(c["panel"])
+        if panel is None:
+            problems.append(("element_not_found", "circuit %s, panel: %s" % (cid, why), []))
+        else:
+            bad = guard_element(panel, "elec", system, False)
+            if bad is not None:
+                problems.append((bad[0], "circuit %s, panel: %s" % (cid, bad[1]), [eid(panel)]))
+            elif not panel_category_ok(panel):
+                problems.append(("panel_category", "circuit %s: panel %s (id %d) is in category %s; a panel must be Electrical Equipment" % (cid, mark_of(panel) or "element", eid(panel), category_label(panel)), [eid(panel)]))
+        members = []
+        for k, spec in enumerate(c["elements"]):
+            e, why = find_element(spec)
+            if e is None:
+                problems.append(("element_not_found", "circuit %s, element %d: %s" % (cid, k, why), []))
+                continue
+            bad = guard_element(e, "elec", system, False)
+            if bad is not None:
+                problems.append((bad[0], "circuit %s, element %d: %s" % (cid, k, bad[1]), [eid(e)]))
+                continue
+            if panel is not None and eid(e) == eid(panel):
+                problems.append(("panel_in_circuit", "circuit %s: the panel (id %d) is also listed as a circuit element" % (cid, eid(e)), [eid(e)]))
+                continue
+            if eid(e) in used:
+                problems.append(("element_in_two_circuits", "element id %d is listed in circuits %s and %s of this call" % (eid(e), used[eid(e)], cid), [eid(e)]))
+                continue
+            foreign = [es for es in circuits_of(e) if eid(es) not in replaced]
+            if foreign:
+                problems.append(("already_on_circuit", "element %s (id %d) is already on circuit id %d, which this tool did not make; it was left untouched" % (mark_of(e) or "element", eid(e), eid(foreign[0])), [eid(e), eid(foreign[0])]))
+                continue
+            used[eid(e)] = cid
+            members.append(e)
+        if len(problems) == before and not members:
+            problems.append(("empty_circuit", "circuit %s lists no elements" % cid, []))
+        if len(problems) == before:
+            plans.append({"c": c, "panel": panel, "members": members})
+    return plans, problems, existing
+
+
+def make_circuit(plan):
+    c = plan["c"]
+    ids = List[ElementId]()
+    for e in plan["members"]:
+        ids.Add(e.Id)
+    stype = getattr(ElectricalSystemType, ARGS["system"])
+    es = ElectricalSystem.Create(doc, ids, stype)
+    es.SelectPanel(plan["panel"])
+    name = c.get("name") or c["id"]
+    p = es.get_Parameter(BuiltInParameter.RBS_ELEC_CIRCUIT_NAME)
+    if p is None or p.IsReadOnly:
+        raise StepError("the circuit's Load Name cannot be set", [eid(es)])
+    p.Set(name)
+    set_tag(es, ARGS["tag"], MARK_PREFIX + c["id"], "circuit")
+    return es
+
+
+def check_circuit(plan, es):
+    c = plan["c"]
+    cid = c["id"]
+    got = get_by_id(eid(es))
+    post("circuit %s: exists" % cid, got is not None, "id %d" % eid(es))
+    if got is None:
+        return
+    t = read_tag(got)
+    post("circuit %s: tag readback" % cid, t is not None and t[0] == ARGS["tag"] and t[1] == MARK_PREFIX + cid, "tag %s" % (t,))
+    n = 0
+    try:
+        n = got.Elements.Size
+    except Exception:
+        n = -1
+    post("circuit %s: element count" % cid, n == len(plan["members"]), "%d on the circuit, %d requested" % (n, len(plan["members"])))
+    want = c.get("name") or cid
+    p = got.get_Parameter(BuiltInParameter.RBS_ELEC_CIRCUIT_NAME)
+    have = p.AsString() if p is not None else None
+    post("circuit %s: load name" % cid, have == want, "'%s'" % have)
+    base = None
+    try:
+        base = got.BaseEquipment
+    except Exception:
+        base = None
+    if base is None:
+        post("circuit %s: panel assigned" % cid, False, "the circuit reports no panel")
+    else:
+        post("circuit %s: panel assigned" % cid, eid(base) == eid(plan["panel"]), "panel id %d (wanted %d)" % (eid(base), eid(plan["panel"])))
+    try:
+        post("circuit %s: system type" % cid, str(got.SystemType) == ARGS["system"], "%s" % got.SystemType)
+    except Exception:
+        info("SYSTEM_TYPE_UNREADABLE", "circuit %s: could not read the system type" % cid)
+
+
+def main():
+    doc_meta()
+    plans, problems, existing = preflight(ARGS["circuits"])
+    if problems:
+        refuse_all(problems)
+        return
+    run = Runner("AEC MEP circuit", ARGS.get("on_error"))
+    removed = [0]
+    if existing:
+        def remove_old():
+            removed[0] = len(delete_owned(existing))
+            return True
+
+        if run.step("Remove the earlier build of these circuits", remove_old, ids=[eid(e) for e in existing]) is None:
+            return
+    made = []
+    for plan in plans:
+        def work(plan=plan):
+            return make_circuit(plan)
+
+        es = run.step("Circuit %s" % plan["c"]["id"], work, ids=[eid(e) for e in plan["members"]])
+        if es is None:
+            continue
+        made.append((plan, es))
+        run.changed.append(eid(es))
+    for plan, es in made:
+        check_circuit(plan, es)
+        c = plan["c"]
+        number = ""
+        pname = ""
+        try:
+            number = es.CircuitNumber
+            pname = es.PanelName
+        except Exception:
+            pass
+        item([("kind", "circuit"), ("id", eid(es)), ("circuit", c["id"]), ("name", c.get("name") or c["id"]), ("panel_id", eid(plan["panel"])),
+              ("elements", len(plan["members"])), ("circuit_number", number), ("panel_name", pname)])
+    summary("%d of %d circuits made%s" % (len(made), len(plans), (", replaced %d earlier ones" % removed[0]) if removed[0] else ""))
+
+
+__output__ = run_write(main)

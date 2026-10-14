@@ -1,0 +1,195 @@
+# revit_mep_connect (write mode). One Transaction per connection, all connections in one TransactionGroup.
+# ARGS = {kind: pipe|duct, tag, system (Revit system class name), tolerance_mm, on_error,
+#         connections: [{id, a, b, joint: auto|direct|elbow|union|transition}]}
+#   a / b   {element_id | mark, diameter_mm [lo, hi], sort, index, near_m [x, y, z]}  picks one connector of that element
+# The filters choose among ALL connectors of the system (free or not), so a repeated call finds the same pair and
+# reports it as already connected. Two connectors are joined only when they already touch (within tolerance_mm); this tool never moves or routes anything
+# (revit_mep_route does that). Equipment against a pipe or duct end is joined directly; two pipes or two ducts get a
+# union (straight, same size), a transition (straight, different size) or an elbow (corner). Fittings made here carry
+# this tool's Extensible Storage tag. A connection that exists already is reported, not repeated.
+# Open ends are reported afterwards by the server with revit_system_report on the ids in META report_ids.
+
+MARK_PREFIX = "mep:connect:"
+FITTING_CATEGORIES = ["OST_PipeFitting", "OST_DuctFitting", "OST_PipeAccessory", "OST_DuctAccessory"]
+
+
+def refuse_all(problems):
+    ids = []
+    for p in problems:
+        for i in p[2]:
+            if i not in ids:
+                ids.append(i)
+    refuse(problems[0][0], problems[0][1], ids)
+    for p in problems[1:]:
+        fail(p[0].upper(), p[1])
+
+
+def is_curve(e):
+    return isinstance(e, MEPCurve)
+
+
+def is_report_member(e):
+    """Pipes, ducts and fittings are checked by revit_system_report; equipment ports are left to the caller."""
+    if is_curve(e):
+        return True
+    for name in FITTING_CATEGORIES:
+        bic = getattr(BuiltInCategory, name, None)
+        try:
+            if bic is not None and eid(e.Category) == int(bic):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def resolve_side(cx, side, taken, problems):
+    kind = ARGS["kind"]
+    system = ARGS["system"]
+    spec = cx[side]
+    e, why = find_element(spec)
+    if e is None:
+        problems.append(("element_not_found", "connection %s, %s: %s" % (cx["id"], side, why), []))
+        return None, None, False
+    bad = guard_element(e, kind, system, False)
+    if bad is not None:
+        problems.append((bad[0], "connection %s, %s: %s" % (cx["id"], side, bad[1]), [eid(e)]))
+        return e, None, False
+    picked = dict(spec)
+    picked["free"] = False  # the filters choose among all connectors, so a repeated call finds the same ones
+    c, why = pick_connector(e, kind, system, picked, taken, lambda x: not x.IsConnected)
+    if c is None:
+        problems.append(("connector_not_found", "connection %s, %s: %s" % (cx["id"], side, why), [eid(e)]))
+        return e, None, False
+    taken.add(conn_key(e, c))
+    return e, c, True
+
+
+def plan_connection(cx, taken, problems):
+    kind = ARGS["kind"]
+    system = ARGS["system"]
+    ea, ca, ok_a = resolve_side(cx, "a", taken, problems)
+    eb, cb, ok_b = resolve_side(cx, "b", taken, problems)
+    if not (ok_a and ok_b):
+        return None
+    if eid(ea) == eid(eb):
+        problems.append(("same_element", "connection %s: a and b are the same element (id %d)" % (cx["id"], eid(ea)), [eid(ea)]))
+        return None
+    if eid(eb) in connector_owner_ids(ca) or any_owner_connects(ca, cb):
+        return {"cx": cx, "ea": ea, "eb": eb, "ca": ca, "cb": cb, "how": "already_connected"}
+    if ca.IsConnected or cb.IsConnected:
+        busy = ea if ca.IsConnected else eb
+        problems.append(("connector_in_use", "connection %s: the chosen connector of %s (id %d) is already connected to something else; choose another with near_m, sort or index" % (cx["id"], mark_of(busy) or "element", eid(busy)), [eid(busy)]))
+        return None
+    sa = connector_system(ca)
+    sb = connector_system(cb)
+    if not systems_compatible(sa, sb):
+        problems.append(("system_mismatch", "connection %s: the connectors belong to different systems (%s and %s)" % (cx["id"], sa or "none", sb or "none"), [eid(ea), eid(eb)]))
+        return None
+    da, db = str(ca.Direction), str(cb.Direction)
+    if (da == "Out" and db == "Out") or (da == "In" and db == "In"):
+        problems.append(("flow_mismatch", "connection %s: both connectors have flow direction %s" % (cx["id"], da), [eid(ea), eid(eb)]))
+        return None
+    gap = dist(ca.Origin, cb.Origin) * MM_PER_FT
+    if gap > ARGS["tolerance_mm"]:
+        problems.append(("not_coincident", "connection %s: the connectors are %.0f mm apart (tolerance %g mm). This tool does not move or route anything; use revit_mep_route to run a pipe or duct between them" % (cx["id"], gap, ARGS["tolerance_mm"]), [eid(ea), eid(eb)]))
+        return None
+    joint = cx.get("joint") or "auto"
+    both = is_curve(ea) and is_curve(eb)
+    if joint in ("elbow", "union", "transition") and not both:
+        problems.append(("joint_needs_curves", "connection %s: a %s needs two pipes or two ducts; use joint 'direct' for equipment" % (cx["id"], joint), [eid(ea), eid(eb)]))
+        return None
+    how = joint
+    if joint == "auto":
+        if not both:
+            how = "direct"
+        else:
+            na, nb = normal_of(ca), normal_of(cb)
+            if cross_len(na, nb) < 1e-3:
+                if dot(na, nb) > 0:
+                    problems.append(("facing_same_way", "connection %s: both connectors point the same way, so the pieces overlap instead of meeting" % cx["id"], [eid(ea), eid(eb)]))
+                    return None
+                how = "union" if connector_size_mm(ca) == connector_size_mm(cb) else "transition"
+            else:
+                how = "elbow"
+    return {"cx": cx, "ea": ea, "eb": eb, "ca": ca, "cb": cb, "how": how}
+
+
+def make_joint(plan):
+    ca, cb, how = plan["ca"], plan["cb"], plan["how"]
+    if how == "direct":
+        ca.ConnectTo(cb)
+        return None
+    if how == "union":
+        return doc.Create.NewUnionFitting(ca, cb)
+    if how == "transition":
+        return doc.Create.NewTransitionFitting(ca, cb)
+    return doc.Create.NewElbowFitting(ca, cb)
+
+
+def main():
+    doc_meta()
+    problems = []
+    taken = set()
+    plans = []
+    seen = []
+    for cx in ARGS["connections"]:
+        if cx["id"] in seen:
+            problems.append(("duplicate_connection_id", "connection id '%s' is used twice in this call" % cx["id"], []))
+            continue
+        seen.append(cx["id"])
+        before = len(problems)
+        plan = plan_connection(cx, taken, problems)
+        if plan is not None and len(problems) == before:
+            plans.append(plan)
+    if problems:
+        refuse_all(problems)
+        return
+    run = Runner("AEC MEP connect", ARGS.get("on_error"))
+    done = {}
+    for plan in plans:
+        cx = plan["cx"]
+        if plan["how"] == "already_connected":
+            done[cx["id"]] = None
+            info("ALREADY_CONNECTED", "connection %s: the elements are already joined; nothing was changed" % cx["id"])
+            continue
+
+        def work(plan=plan, cx=cx):
+            f = make_joint(plan)
+            if f is not None:
+                set_tag(f, ARGS["tag"], MARK_PREFIX + cx["id"], "fitting")
+            return {"fitting": f}
+
+        res = run.step("Connect %s" % cx["id"], work, ids=[eid(plan["ea"]), eid(plan["eb"])])
+        if res is None:
+            continue
+        done[cx["id"]] = res["fitting"]
+        for e in (plan["ea"], plan["eb"], res["fitting"]):
+            if e is not None and eid(e) not in run.changed:
+                run.changed.append(eid(e))
+    report_ids = []
+    for plan in plans:
+        cx = plan["cx"]
+        if cx["id"] not in done:
+            continue
+        f = done[cx["id"]]
+        ea, eb, ca, cb = plan["ea"], plan["eb"], plan["ca"], plan["cb"]
+        if plan["how"] == "already_connected":
+            joined = True
+            detail = "already joined"
+        elif f is not None:
+            joined = eid(f) in connector_owner_ids(ca) and eid(f) in connector_owner_ids(cb)
+            detail = "joined through %s %d" % (cat_name(f), eid(f))
+        else:
+            joined = eid(eb) in connector_owner_ids(ca) and eid(ea) in connector_owner_ids(cb)
+            detail = "joined directly"
+        post("connection %s: the two connectors are joined" % cx["id"], joined, detail)
+        item([("kind", "connection"), ("id", eid(f) if f is not None else ""), ("connection", cx["id"]), ("a_id", eid(ea)), ("b_id", eid(eb)),
+              ("joint", plan["how"]), ("status", "already_connected" if plan["how"] == "already_connected" else "connected")])
+        for e in (ea, eb, f):
+            if e is not None and is_report_member(e) and eid(e) not in report_ids:
+                report_ids.append(eid(e))
+    meta("report_ids", ",".join([str(i) for i in report_ids]))
+    summary("%d of %d connections made" % (len(done), len(plans)))
+
+
+__output__ = run_write(main)

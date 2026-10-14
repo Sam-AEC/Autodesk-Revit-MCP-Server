@@ -1,0 +1,50 @@
+# revit_mep_check_elements (read only). Dry run of the category guard the write tools use.
+# ARGS = {kind: pipe|duct|elec, system (Revit system class name, may be empty), need_free, elements: [{element_id | mark}]}
+# One row per element: its category, family, how many connectors it has in each domain, the systems of those connectors,
+# and the guard's verdict (ok, or category_mismatch / no_connectors / domain_mismatch / system_mismatch /
+# no_free_connector with the reason). Every refused element is also a FAIL line. Nothing is changed.
+
+
+def domain_counts(e):
+    counts = {}
+    for c in element_connectors(e):
+        key = domain_label(c)
+        counts[key] = counts.get(key, 0) + 1
+    names = sorted(counts.keys())
+    return ", ".join(["%s %d" % (k, counts[k]) for k in names]) or "none"
+
+
+def system_list(e, kind):
+    found = {}
+    for c in element_connectors(e):
+        if DOMAIN_WORD[kind] in str(c.Domain):
+            found[connector_system(c) or "(none)"] = 1
+    return ", ".join(sorted(found.keys()))
+
+
+def main():
+    doc_meta()
+    kind = ARGS["kind"]
+    system = ARGS.get("system") or ""
+    refused = 0
+    checked = 0
+    for k, spec in enumerate(ARGS["elements"]):
+        e, why = find_element(spec)
+        if e is None:
+            refused += 1
+            fail("ELEMENT_NOT_FOUND", "elements[%d]: %s" % (k, why))
+            row([("kind", "element"), ("element_id", spec.get("element_id") if spec.get("element_id") is not None else ""), ("mark", spec.get("mark") or ""),
+                 ("verdict", "element_not_found"), ("message", why)])
+            continue
+        checked += 1
+        bad = guard_element(e, kind, system, bool(ARGS.get("need_free")))
+        if bad is not None:
+            refused += 1
+            fail(bad[0].upper(), bad[1])
+        row([("kind", "element"), ("element_id", eid(e)), ("mark", mark_of(e)), ("category", category_label(e)), ("family", family_label(e)),
+             ("connectors", domain_counts(e)), ("systems", system_list(e, kind)),
+             ("verdict", "ok" if bad is None else bad[0]), ("message", "" if bad is None else bad[1])])
+    summary("%d elements checked for a %s system%s: %d would be refused" % (len(ARGS["elements"]), KIND_LABEL[kind], (" (%s)" % system) if system else "", refused))
+
+
+__output__ = run_main(main)

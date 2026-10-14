@@ -1,0 +1,368 @@
+# revit_mep_route (write mode). One Transaction per route, all routes in one TransactionGroup.
+# ARGS = {kind: pipe|duct, tag, system (Revit system class name), type_name, system_type_name, transition_m, on_error,
+#         routes: [{id, level, run_height_m, size{d | w, h}, stub_m, type_name, from, to | branch_to, via}]}
+#   from / to   {element_id | mark, diameter_mm [lo, hi], sort, index}  a connector of a placed family
+#               {point_m [x, y, height_above_level]}                   a free point
+#   branch_to   {route: id | element_ids: [..], fitting: takeoff | tee} end the route on a straight trunk piece
+#   via         [{x_m, y_m, to_height_m, level, size}]                  corner points (x first, then y); to_height_m moves vertically there
+# A route replaces what the same tag + id made earlier (its pieces carry an Extensible Storage tag); it never touches
+# anything else. Every family used at a connector passes the category guard first; a mismatch refuses the whole call
+# before anything is created. Units in ARGS are metres and millimetres; the script converts to feet explicitly.
+
+MARK_PREFIX = "mep:"
+
+
+def level_object(name):
+    return find_level(name)
+
+
+def point_ft(level, pt):
+    return XYZ(pt[0] * M_TO_FT, pt[1] * M_TO_FT, level.Elevation + pt[2] * M_TO_FT)
+
+
+def refuse_all(problems):
+    ids = []
+    for p in problems:
+        for i in p[2]:
+            if i not in ids:
+                ids.append(i)
+    refuse(problems[0][0], problems[0][1], ids)
+    for p in problems[1:]:
+        fail(p[0].upper(), p[1])
+
+
+def existing_owned(routes):
+    out = []
+    seen = set()
+    for r in routes:
+        for e in owned_elements(None, ARGS["tag"], MARK_PREFIX + r["id"]):
+            if eid(e) not in seen:
+                seen.add(eid(e))
+                out.append(e)
+    return out
+
+
+def make_is_free(replaced):
+    def is_free(c):
+        if not c.IsConnected:
+            return True
+        owners = connector_owner_ids(c)
+        if not owners:
+            return False
+        for o in owners:
+            if o not in replaced:
+                return False
+        return True
+    return is_free
+
+
+def resolve_ends(r, taken, is_free, level, problems):
+    """{'from': (connector, point), 'to': (connector, point)} or None after a problem was recorded."""
+    kind = ARGS["kind"]
+    system = ARGS["system"]
+    out = {}
+    for side in ("from", "to"):
+        spec = r.get(side)
+        if spec is None:
+            out[side] = (None, None)
+            continue
+        if spec.get("point_m") is not None:
+            out[side] = (None, point_ft(level, spec["point_m"]))
+            continue
+        e, why = find_element(spec)
+        if e is None:
+            problems.append(("element_not_found", "route %s, %s: %s" % (r["id"], side, why), []))
+            return None
+        bad = guard_element(e, kind, system, True, is_free)
+        if bad is not None:
+            problems.append((bad[0], "route %s, %s: %s" % (r["id"], side, bad[1]), [eid(e)]))
+            return None
+        c, why = pick_connector(e, kind, system, spec, taken, is_free)
+        if c is None:
+            problems.append(("no_free_connector", "route %s, %s: %s" % (r["id"], side, why), [eid(e)]))
+            return None
+        taken.add(conn_key(e, c))
+        out[side] = (c, None)
+    return out
+
+
+def trunk_curves_of(spec, built):
+    """Pipes or ducts of the trunk: a route of this call, a route made earlier under the same tag, or listed ids."""
+    kind = ARGS["kind"]
+    if spec.get("route"):
+        rid = spec["route"]
+        if rid in built:
+            return list(built[rid]["curves"]) + list(built[rid]["extra"])
+        return [e for e in owned_elements(kind, ARGS["tag"], MARK_PREFIX + rid)]
+    out = []
+    for i in spec.get("element_ids") or []:
+        e = doc.GetElement(ElementId(int(i)))
+        if e is not None:
+            out.append(e)
+    return out
+
+
+def preflight(routes):
+    """Everything that can be refused is refused here, before the first change. Returns the planned routes."""
+    kind = ARGS["kind"]
+    problems = []
+    existing = existing_owned(routes)
+    replaced = set([eid(e) for e in existing])
+    is_free = make_is_free(replaced)
+    taken = set()
+    seen_ids = []
+    type_cache = {}
+    plans = []
+    for r in routes:
+        if r["id"] in seen_ids:
+            problems.append(("duplicate_route_id", "route id '%s' is used twice in this call" % r["id"], []))
+            continue
+        level = level_object(r["level"])
+        if level is None:
+            problems.append(("level_not_found", "route %s: no level named '%s'" % (r["id"], r["level"]), []))
+            continue
+        tname = r.get("type_name") or ARGS.get("type_name")
+        if tname not in type_cache:
+            type_cache[tname] = curve_type_hits(kind, tname)
+        hits = type_cache[tname]
+        if len(hits) != 1:
+            why = "no %s type" % kind if not hits else "%d %s types" % (len(hits), kind)
+            problems.append(("type_not_found", "route %s: %s is named '%s'; available: %s" % (r["id"], why, tname, "; ".join(curve_type_names(kind, 12)) or "(none)"), []))
+            continue
+        for v in r.get("via") or []:
+            if v.get("level") and level_object(v["level"]) is None:
+                problems.append(("level_not_found", "route %s: via point names level '%s' which does not exist" % (r["id"], v["level"]), []))
+        ends = resolve_ends(r, taken, is_free, level, problems)
+        if ends is None:
+            continue
+        if ends["from"][0] is None:
+            # a route that starts at a free point has no connector to take its system from: it needs a system type
+            sts = system_type_hits(kind, ARGS["system"], ARGS.get("system_type_name") or "")
+            if not sts:
+                problems.append(("system_type_not_found", "route %s: no %s system type of class %s%s; start the route at a connector or name an existing system type" % (r["id"], kind, ARGS["system"], (" named '%s'" % ARGS["system_type_name"]) if ARGS.get("system_type_name") else ""), []))
+                continue
+        bt = r.get("branch_to")
+        if bt:
+            if bt.get("route"):
+                if bt["route"] not in seen_ids and not owned_elements(kind, ARGS["tag"], MARK_PREFIX + bt["route"]):
+                    problems.append(("trunk_not_found", "route %s: trunk route '%s' is neither earlier in this call nor made earlier under tag '%s'" % (r["id"], bt["route"], ARGS["tag"]), []))
+            else:
+                bad_ids = []
+                for i in bt.get("element_ids") or []:
+                    e = doc.GetElement(ElementId(int(i)))
+                    if e is None:
+                        problems.append(("trunk_not_found", "route %s: trunk element id %s does not exist" % (r["id"], i), []))
+                        continue
+                    g = guard_element(e, kind, ARGS["system"], False)
+                    if g is not None:
+                        problems.append((g[0], "route %s, trunk: %s" % (r["id"], g[1]), [eid(e)]))
+                if bt.get("fitting") == "tee":
+                    problems.append(("tee_needs_owned_trunk", "route %s: a tee splits the trunk, so the trunk must be a route of this tool (use branch_to.route); a trunk given by element_ids only takes a takeoff" % r["id"], []))
+        seen_ids.append(r["id"])
+        plans.append(r)
+    return plans, problems, existing, replaced
+
+
+def build_route(r, state):
+    kind = ARGS["kind"]
+    level = level_object(r["level"])
+    tname = r.get("type_name") or ARGS.get("type_name")
+    type_el = curve_type_hits(kind, tname)[0]
+    problems = []
+    ends = resolve_ends(r, state["taken"], state["is_free"], level, problems)
+    if ends is None:
+        raise StepError(problems[0][1])
+    c1, p1 = ends["from"]
+    c2, p2 = ends["to"]
+    ctx = {"kind": kind, "tag": ARGS["tag"], "key": MARK_PREFIX + r["id"], "type_id": type_el.Id, "level_id": level.Id}
+    if c1 is None:
+        sts = system_type_hits(kind, ARGS["system"], ARGS.get("system_type_name") or "")
+        if not sts:
+            raise StepError("no %s system type of class %s was found" % (kind, ARGS["system"]))
+        ctx["system_type_id"] = sts[0].Id
+    size0 = r["size"]
+    stub_ft = r["stub_m"] * M_TO_FT
+    transition_ft = ARGS["transition_m"] * M_TO_FT
+    result = {"curves": [], "fittings": [], "extra": [], "c1": c1, "c2": c2, "points": [], "free_ends": [], "route": r}
+    bt = r.get("branch_to")
+    if bt:
+        trunk = trunk_curves_of(bt, state["built"])
+        if not trunk:
+            raise StepError("trunk '%s' has no pieces: it was not built or is not in the model" % (bt.get("route") or bt.get("element_ids")))
+        z = curve_ends(trunk[0])[0].Z
+        if c1 is not None:
+            o = c1.Origin
+            s = moved(o, normal_of(c1), stub_ft)
+            att = trunk_attach(trunk, s.X, s.Y, z) or trunk_attach(trunk, o.X, o.Y, z)
+            start = [(o, size0), (s, None), (XYZ(s.X, s.Y, z), None)]
+        else:
+            att = trunk_attach(trunk, p1.X, p1.Y, z)
+            start = [(p1, size0), (XYZ(p1.X, p1.Y, z), None)]
+            result["points"].append(p1)
+        if att is None:
+            raise StepError("no straight horizontal trunk piece (at least 0.6 m long, within 0.2 m of the trunk height) to attach to")
+        dd, trunk_cu, p, u = att
+        pts = clean_path(start + [(p, None)])
+        if len(pts) < 2:
+            raise StepError("the branch has no length")
+        pts[0] = (pts[0][0], size0)
+        sizes = segment_sizes(pts, size0)
+        curves, fits = build_chain(ctx, pts, sizes, c1, None, r["id"])
+        end_c = nearest_connector(curves[-1], p)
+        if bt.get("fitting") == "tee":
+            second = break_curve(kind, trunk_cu, p)
+            owner = read_tag(trunk_cu)
+            if owner is not None:
+                set_tag(second, owner[0], owner[1], owner[2])
+            result["extra"].append(second)
+            f = doc.Create.NewTeeFitting(nearest_connector(trunk_cu, p), nearest_connector(second, p), end_c)
+        else:
+            f = doc.Create.NewTakeoffFitting(end_c, trunk_cu)
+        label_element(f, ctx, "fitting", None)
+        fits.append(f)
+        result["curves"] = curves
+        result["fittings"] = fits
+        result["sizes"] = sizes
+        result["trunk_id"] = eid(trunk_cu)
+        if c1 is None:
+            result["free_ends"].append(eid(curves[0]))
+        return result
+    zr = level.Elevation + r["run_height_m"] * M_TO_FT
+    via = []
+    for v in r.get("via") or []:
+        vl = level_object(v["level"]) if v.get("level") else level
+        zz = None
+        if v.get("to_height_m") is not None:
+            zz = vl.Elevation + v["to_height_m"] * M_TO_FT
+        via.append({"x": v["x_m"] * M_TO_FT, "y": v["y_m"] * M_TO_FT, "z": zz, "size": v.get("size")})
+    pts, sizes = plan_path(c1, p1, c2, p2, zr, stub_ft, via, size0, transition_ft)
+    curves, fits = build_chain(ctx, pts, sizes, c1, c2, r["id"])
+    if c1 is None:
+        result["points"].append(p1)
+        result["free_ends"].append(eid(curves[0]))
+    if c2 is None:
+        result["points"].append(p2)
+        result["free_ends"].append(eid(curves[-1]))
+    result["curves"] = curves
+    result["fittings"] = fits
+    result["sizes"] = sizes
+    return result
+
+
+def expected_open(c, points):
+    for p in points:
+        if dist(c.Origin, p) * MM_PER_FT < 1.0:
+            return True
+    return False
+
+
+def check_route(rid, res, run):
+    r = res["route"]
+    kind = ARGS["kind"]
+    key = MARK_PREFIX + rid
+    tag = ARGS["tag"]
+    curves = res["curves"]
+    all_pieces = curves + res["fittings"]
+    ids = set([eid(e) for e in curves])
+    for e in owned_elements(kind, tag, key):  # pieces made by a later tee on this trunk belong to it too
+        ids.add(eid(e))
+    missing = []
+    wrong_tag = []
+    for e in all_pieces:
+        got = get_by_id(eid(e))
+        if got is None:
+            missing.append(eid(e))
+            continue
+        t = read_tag(got)
+        if t is None or t[0] != tag or t[1] != key:
+            wrong_tag.append(eid(e))
+    post("route %s: pieces exist and carry the tag" % rid, not missing and not wrong_tag,
+         "%d pieces" % len(all_pieces) if not (missing or wrong_tag) else "missing %s, untagged %s" % (missing, wrong_tag))
+    for side, c in (("start", res["c1"]), ("end", res["c2"])):
+        if c is None:
+            continue
+        mine = [i for i in connector_owner_ids(c) if i in ids]
+        post("route %s: %s connector is connected" % (rid, side), bool(mine), "connected to %s" % (mine or "nothing of this route"))
+    if r.get("branch_to"):
+        end_c = nearest_connector(curves[-1], curves[-1].Location.Curve.GetEndPoint(1))
+        post("route %s: branch is joined to the trunk" % rid, end_c.IsConnected, "trunk piece %s" % res.get("trunk_id"))
+    open_ends = []
+    for cu in curves:
+        for c in cu.ConnectorManager.Connectors:
+            if not c.IsConnected and not expected_open(c, res["points"]):
+                open_ends.append("%d at %s" % (eid(cu), fmt_m(c.Origin)))
+    post("route %s: no unplanned open ends" % rid, not open_ends, "; ".join(open_ends[:4]) if open_ends else "every end is connected or a planned free end")
+    bad_sizes = []
+    sizes = res.get("sizes") or [r["size"]] * len(curves)
+    for i in range(len(curves)):
+        if i < len(sizes):
+            ok, text = size_matches(kind, curves[i], sizes[i])
+            if not ok:
+                bad_sizes.append("%d: %s" % (eid(curves[i]), text))
+    post("route %s: sizes as requested" % rid, not bad_sizes, "; ".join(bad_sizes[:4]) if bad_sizes else "all %d pieces" % len(curves))
+    cls = curve_classification(kind, curves[0])
+    if cls == "":
+        info("SYSTEM_CLASS_UNREADABLE", "route %s: could not read the system class of piece %d" % (rid, eid(curves[0])))
+    else:
+        post("route %s: system class" % rid, cls == ARGS["system"], "%s (wanted %s)" % (cls, ARGS["system"]))
+
+
+def emit_rows(rid, res):
+    r = res["route"]
+    kind = ARGS["kind"]
+    for i, cu in enumerate(res["curves"]):
+        sz = (res.get("sizes") or [r["size"]] * len(res["curves"]))[i]
+        item([("kind", kind), ("id", eid(cu)), ("route", rid), ("category", cat_name(cu)), ("size", size_text(sz)),
+              ("length_mm", round(curve_length_mm(cu), 1)), ("system", curve_classification(kind, cu))])
+    for f in res["fittings"]:
+        item([("kind", "fitting"), ("id", eid(f)), ("route", rid), ("category", cat_name(f)), ("size", ""), ("length_mm", ""), ("system", "")])
+
+
+def main():
+    doc_meta()
+    routes = ARGS["routes"]
+    plans, problems, existing, replaced = preflight(routes)
+    if problems:
+        refuse_all(problems)
+        return
+    run = Runner("AEC MEP route", ARGS.get("on_error"))
+    state = {"built": {}, "taken": set(), "is_free": make_is_free(replaced)}
+    removed = [0]
+
+    if existing:
+        def remove_old():
+            removed[0] = len(delete_owned(existing))
+            return True
+
+        if run.step("Remove the earlier build of these routes", remove_old, ids=[eid(e) for e in existing]) is None:
+            return
+        state["is_free"] = make_is_free(set())
+
+    free_ends = []
+    for r in plans:
+        def work(r=r):
+            return build_route(r, state)
+
+        res = run.step("Route %s" % r["id"], work, ids=[])
+        if res is None:
+            continue
+        state["built"][r["id"]] = res
+        for e in res["curves"] + res["fittings"] + res["extra"]:
+            run.changed.append(eid(e))
+        for i in res["free_ends"]:
+            if i not in free_ends:
+                free_ends.append(i)
+    for rid in [r["id"] for r in plans]:
+        res = state["built"].get(rid)
+        if res is None:
+            continue
+        check_route(rid, res, run)
+        emit_rows(rid, res)
+    meta("free_end_ids", ",".join([str(i) for i in free_ends]))
+    n_curves = sum([len(b["curves"]) for b in state["built"].values()])
+    n_fit = sum([len(b["fittings"]) for b in state["built"].values()])
+    summary("%d of %d routes built: %d %s pieces, %d fittings%s" % (
+        len(state["built"]), len(plans), n_curves, ARGS["kind"], n_fit, (", replaced %d earlier pieces" % removed[0]) if removed[0] else ""))
+
+
+__output__ = run_write(main)

@@ -1,0 +1,385 @@
+# Shared helpers of the revit_mep write scripts (IronPython 2.7). Loaded after the revit module's _prelude.ipy, the
+# revit_docs _tags_read.ipy and _write_prelude.ipy, and _mep_guard.ipy. Everything that changes the model here must run
+# inside a Runner step (one Transaction per route / connection / circuit).
+#
+# Routing follows the proven recipe docs/recipes/villa2/m3_route.py: a polyline of straight pipe or duct pieces
+#   connector, stub along the connector normal, vertical to the run height, horizontal legs through the via points
+#   (x first, then y), vertical to the target stub, target connector
+# where every corner gets an elbow, every straight joint a union (same size) or a transition (size change), and a
+# branch ends in a takeoff or a tee on a straight trunk piece. UNVERIFIED against a live Revit: see the module docstring.
+from Autodesk.Revit.DB.Plumbing import PlumbingUtils
+from Autodesk.Revit.DB.Mechanical import MechanicalUtils
+
+MIN_SEG_FT = 0.03 * M_TO_FT      # legs shorter than 30 mm are dropped
+TRUNK_MIN_LEN_FT = 0.6 * M_TO_FT  # a trunk piece must be at least 0.6 m long to take a branch
+TRUNK_END_GAP_FT = 0.15 * M_TO_FT  # a branch attaches at least 0.15 m from the end of a trunk piece
+TRUNK_Z_TOL_FT = 0.2 * M_TO_FT
+
+
+# ---- small vector helpers on plain tuples / XYZ, no operator overloads needed ----------------------------------------
+def sub(a, b):
+    return (a.X - b.X, a.Y - b.Y, a.Z - b.Z)
+
+
+def length(v):
+    return (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) ** 0.5
+
+
+def dist(a, b):
+    return length(sub(a, b))
+
+
+def unit(v):
+    n = length(v)
+    if n < 1e-12:
+        return (0.0, 0.0, 0.0)
+    return (v[0] / n, v[1] / n, v[2] / n)
+
+
+def cross_len(u, v):
+    return length((u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]))
+
+
+def dot(u, v):
+    return u[0] * v[0] + u[1] * v[1] + u[2] * v[2]
+
+
+def moved(p, v, k):
+    return XYZ(p.X + v[0] * k, p.Y + v[1] * k, p.Z + v[2] * k)
+
+
+def normal_of(c):
+    b = c.CoordinateSystem.BasisZ
+    return (b.X, b.Y, b.Z)
+
+
+def curve_ends(cu):
+    crv = cu.Location.Curve
+    return crv.GetEndPoint(0), crv.GetEndPoint(1)
+
+
+def curve_dir(cu):
+    a, b = curve_ends(cu)
+    return unit(sub(b, a))
+
+
+def curve_length_mm(cu):
+    a, b = curve_ends(cu)
+    return dist(a, b) * MM_PER_FT
+
+
+# ---- sizes: {"d": mm} (round, pipe or duct) or {"w": mm, "h": mm} (rectangular duct) ----------------------------------
+def size_text(sz):
+    if sz.get("d") is not None:
+        return "dia %g mm" % sz["d"]
+    return "%g x %g mm" % (sz["w"], sz["h"])
+
+
+def same_size(a, b):
+    if (a.get("d") is None) != (b.get("d") is None):
+        return False
+    if a.get("d") is not None:
+        return abs(a["d"] - b["d"]) < 0.05
+    return abs(a["w"] - b["w"]) < 0.05 and abs(a["h"] - b["h"]) < 0.05
+
+
+def size_params(kind, sz):
+    if kind == "pipe":
+        return [(BuiltInParameter.RBS_PIPE_DIAMETER_PARAM, sz["d"])]
+    if sz.get("d") is not None:
+        return [(BuiltInParameter.RBS_CURVE_DIAMETER_PARAM, sz["d"])]
+    return [(BuiltInParameter.RBS_CURVE_WIDTH_PARAM, sz["w"]), (BuiltInParameter.RBS_CURVE_HEIGHT_PARAM, sz["h"])]
+
+
+def set_size(kind, cu, sz):
+    for bip, mm in size_params(kind, sz):
+        p = cu.get_Parameter(bip)
+        if p is None or p.IsReadOnly:
+            raise StepError("cannot set the size (%s) on the new %s" % (size_text(sz), kind), [eid(cu)])
+        p.Set(mm * FEET_PER_MM)
+
+
+def size_matches(kind, cu, sz):
+    """(ok, text) comparing the size read back from the element with the requested one (tolerance 0.5 mm)."""
+    bad = []
+    for bip, mm in size_params(kind, sz):
+        p = cu.get_Parameter(bip)
+        got = None
+        if p is not None:
+            try:
+                got = p.AsDouble() * MM_PER_FT
+            except Exception:
+                got = None
+        if got is None or abs(got - mm) > 0.5:
+            bad.append("wanted %g mm, found %s" % (mm, "none" if got is None else "%.1f mm" % got))
+    return (not bad), ("; ".join(bad) if bad else size_text(sz))
+
+
+# ---- types and systems ------------------------------------------------------------------------------------------------
+def curve_type_hits(kind, name):
+    cls = PipeType if kind == "pipe" else DuctType
+    return [t for t in FilteredElementCollector(doc).OfClass(cls) if t.Name == name]
+
+
+def curve_type_names(kind, limit):
+    cls = PipeType if kind == "pipe" else DuctType
+    names = [t.Name for t in FilteredElementCollector(doc).OfClass(cls)]
+    names.sort()
+    return names[:limit]
+
+
+def system_type_hits(kind, system, name):
+    cls = PipingSystemType if kind == "pipe" else MechanicalSystemType
+    hits = []
+    for t in FilteredElementCollector(doc).OfClass(cls):
+        if name:
+            if t.Name == name:
+                hits.append(t)
+        elif str(t.SystemClassification) == system:
+            hits.append(t)
+    hits.sort(key=lambda t: t.Name)
+    return hits
+
+
+def curve_system_type_id(kind, cu):
+    bip = BuiltInParameter.RBS_PIPING_SYSTEM_TYPE_PARAM if kind == "pipe" else BuiltInParameter.RBS_DUCT_SYSTEM_TYPE_PARAM
+    p = cu.get_Parameter(bip)
+    return p.AsElementId() if p is not None else None
+
+
+def curve_classification(kind, cu):
+    """SystemClassification name of the system type a pipe or duct belongs to, or ''."""
+    sid = curve_system_type_id(kind, cu)
+    if sid is None:
+        return ""
+    t = doc.GetElement(sid)
+    if t is None:
+        return ""
+    try:
+        return str(t.SystemClassification)
+    except Exception:
+        return ""
+
+
+# ---- creating pieces --------------------------------------------------------------------------------------------------
+def make_curve(ctx, sysid, a, b):
+    """One straight pipe or duct piece. a is a Connector or an XYZ; b is a Connector or an XYZ."""
+    kind = ctx["kind"]
+    cls = Pipe if kind == "pipe" else Duct
+    if hasattr(a, "Origin"):
+        return cls.Create(doc, ctx["type_id"], ctx["level_id"], a, b)
+    if sysid is None:
+        raise StepError("no %s system type of the requested system was found for a route that starts at a free point" % kind)
+    return cls.Create(doc, sysid, ctx["type_id"], ctx["level_id"], a, b)
+
+
+def nearest_connector(cu, p):
+    best = None
+    for c in cu.ConnectorManager.Connectors:
+        d = dist(c.Origin, p)
+        if best is None or d < best[0]:
+            best = (d, c)
+    return best[1]
+
+
+def label_element(e, ctx, kind_word, mark):
+    set_tag(e, ctx["tag"], ctx["key"], kind_word)
+    if mark:
+        try:
+            p = e.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)
+            if p is not None and not p.IsReadOnly:
+                p.Set(mark)
+        except Exception:
+            pass
+
+
+def join_fitting(ctx, a, b, p, sa, sb):
+    """Elbow at a corner, union on a straight joint of equal size, transition on a straight joint of different size."""
+    ca = nearest_connector(a, p)
+    cb = nearest_connector(b, p)
+    if ca.IsConnected or cb.IsConnected:
+        if eid(b) in connector_owner_ids(ca) or any_owner_connects(ca, cb):
+            return None
+        raise StepError("a connector at %s is already connected; no fitting can be placed" % fmt_m(p), [eid(a), eid(b)])
+    da = curve_dir(a)
+    db = curve_dir(b)
+    if cross_len(da, db) < 1e-6:
+        if same_size(sa, sb):
+            return doc.Create.NewUnionFitting(ca, cb)
+        return doc.Create.NewTransitionFitting(ca, cb)
+    if not same_size(sa, sb):
+        raise StepError("a size change cannot be made at a corner at %s" % fmt_m(p), [eid(a), eid(b)])
+    return doc.Create.NewElbowFitting(ca, cb)
+
+
+def any_owner_connects(ca, cb):
+    mine = connector_owner_ids(ca)
+    other = connector_owner_ids(cb)
+    for i in mine:
+        if i in other:
+            return True
+    return False
+
+
+# ---- path planning ----------------------------------------------------------------------------------------------------
+def build_waypoints(c1, p1, c2, p2, zr, stub_ft, via, size0):
+    """[(XYZ, size or None)]: a size on a point means 'from here on'. Points are in feet; zr is the run elevation in feet."""
+    if c1 is not None:
+        o1 = c1.Origin
+        s1 = moved(o1, normal_of(c1), stub_ft)
+        pts = [(o1, size0), (s1, None), (XYZ(s1.X, s1.Y, zr), None)]
+    else:
+        pts = [(p1, size0), (XYZ(p1.X, p1.Y, zr), None)]
+    for v in via:
+        cur = pts[-1][0]
+        pts.append((XYZ(v["x"], cur.Y, cur.Z), None))
+        pts.append((XYZ(v["x"], v["y"], cur.Z), v.get("size")))
+        if v.get("z") is not None:
+            pts.append((XYZ(v["x"], v["y"], v["z"]), None))
+    cur = pts[-1][0]
+    if c2 is not None:
+        o2 = c2.Origin
+        s2 = moved(o2, normal_of(c2), stub_ft)
+        pts.append((XYZ(s2.X, cur.Y, cur.Z), None))
+        pts.append((XYZ(s2.X, s2.Y, cur.Z), None))
+        pts.append((XYZ(s2.X, s2.Y, s2.Z), None))
+        pts.append((s2, None))
+        pts.append((o2, None))
+    else:
+        pts.append((XYZ(p2.X, cur.Y, cur.Z), None))
+        pts.append((XYZ(p2.X, p2.Y, cur.Z), None))
+        pts.append((p2, None))
+    return pts
+
+
+def clean_path(pts):
+    """Drop legs shorter than 30 mm and points in the middle of a straight line (a size change keeps its point)."""
+    out = [pts[0]]
+    for q in pts[1:-1]:
+        if dist(out[-1][0], q[0]) > MIN_SEG_FT:
+            out.append(q)
+        elif q[1] is not None and len(out) > 1:
+            out[-1] = (out[-1][0], q[1])  # a size on a point that lands on the previous corner belongs to that corner
+    last = pts[-1]
+    if len(out) > 1 and dist(out[-1][0], last[0]) <= MIN_SEG_FT:
+        out.pop()
+    out.append(last)
+    res = [out[0]]
+    for i in range(1, len(out) - 1):
+        a = res[-1][0]
+        b = out[i][0]
+        c = out[i + 1][0]
+        u = unit(sub(b, a))
+        v = unit(sub(c, b))
+        if cross_len(u, v) > 1e-6:
+            res.append(out[i])
+        else:
+            if dot(u, v) < 0:
+                raise StepError("the route doubles back on itself at %s; add a via point" % fmt_m(b))
+            if out[i][1] is not None:
+                res.append(out[i])
+    res.append(out[-1])
+    return res
+
+
+def spread_size_changes(pts, transition_ft):
+    """A size change at a corner moves a short way down the next straight leg, where a transition can be placed."""
+    out = []
+    n = len(pts)
+    for i in range(n):
+        p, sz = pts[i]
+        if sz is None or i == 0 or i == n - 1:
+            out.append((p, sz))
+            continue
+        u = unit(sub(p, pts[i - 1][0]))
+        v = unit(sub(pts[i + 1][0], p))
+        if cross_len(u, v) <= 1e-6:
+            out.append((p, sz))
+            continue
+        t = min(transition_ft, dist(p, pts[i + 1][0]) / 3.0)
+        out.append((p, None))
+        out.append((moved(p, v, t), sz))
+    return out
+
+
+def segment_sizes(pts, size0):
+    sizes = []
+    cur = size0
+    for i in range(len(pts) - 1):
+        if pts[i][1] is not None:
+            cur = pts[i][1]
+        sizes.append(cur)
+    return sizes
+
+
+def plan_path(c1, p1, c2, p2, zr, stub_ft, via, size0, transition_ft):
+    raw = build_waypoints(c1, p1, c2, p2, zr, stub_ft, via, size0)
+    pts = clean_path(raw)
+    if len(pts) < 2 or (len(pts) == 2 and dist(pts[0][0], pts[1][0]) <= MIN_SEG_FT):
+        raise StepError("start and end of the route are the same point")
+    pts = spread_size_changes(pts, transition_ft)
+    pts[0] = (pts[0][0], size0)
+    return pts, segment_sizes(pts, size0)
+
+
+# ---- building a chain -------------------------------------------------------------------------------------------------
+def build_chain(ctx, pts, sizes, first, last, label):
+    """Create the pieces of one path. first / last are Connectors when the path starts / ends at one, else None.
+
+    Returns (curves, fittings). Pieces next to a connector are created from that connector, as in the proven recipe.
+    """
+    kind = ctx["kind"]
+    curves = []
+    fittings = []
+    n = len(pts)
+    for i in range(n - 1):
+        a = pts[i][0]
+        b = pts[i + 1][0]
+        if n == 2 and first is not None and last is not None:
+            cu = make_curve(ctx, None, first, last)
+        elif i == 0 and first is not None:
+            cu = make_curve(ctx, None, first, b)
+        elif i == n - 2 and last is not None:
+            cu = make_curve(ctx, None, last, a)
+        else:
+            sid = curve_system_type_id(kind, curves[0]) if curves else ctx.get("system_type_id")
+            cu = make_curve(ctx, sid, a, b)
+        set_size(kind, cu, sizes[i])
+        label_element(cu, ctx, kind, "%s_%d" % (label, i))
+        curves.append(cu)
+    for i in range(len(curves) - 1):
+        f = join_fitting(ctx, curves[i], curves[i + 1], pts[i + 1][0], sizes[i], sizes[i + 1])
+        if f is not None:
+            label_element(f, ctx, "fitting", None)
+            fittings.append(f)
+    return curves, fittings
+
+
+def trunk_attach(trunk_curves, x, y, z):
+    """Nearest straight horizontal trunk piece near (x, y) at height z: (distance, curve, point XYZ, unit direction) or None."""
+    best = None
+    for cu in trunk_curves:
+        a, b = curve_ends(cu)
+        if abs(a.Z - b.Z) > 1e-4 or abs(a.Z - z) > TRUNK_Z_TOL_FT:
+            continue
+        d = sub(b, a)
+        total = length(d)
+        if total < TRUNK_MIN_LEN_FT:
+            continue
+        u = (d[0] / total, d[1] / total, d[2] / total)
+        t = (x - a.X) * u[0] + (y - a.Y) * u[1]
+        if t < TRUNK_END_GAP_FT or t > total - TRUNK_END_GAP_FT:
+            continue
+        px = a.X + u[0] * t
+        py = a.Y + u[1] * t
+        dd = ((x - px) ** 2 + (y - py) ** 2) ** 0.5
+        if best is None or dd < best[0]:
+            best = (dd, cu, XYZ(px, py, a.Z), u)
+    return best
+
+
+def break_curve(kind, cu, p):
+    """Split a pipe or duct at p; returns the new second piece."""
+    util = PlumbingUtils if kind == "pipe" else MechanicalUtils
+    new_id = util.BreakCurve(doc, cu.Id, p)
+    return doc.GetElement(new_id)
