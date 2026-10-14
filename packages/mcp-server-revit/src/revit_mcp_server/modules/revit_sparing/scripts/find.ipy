@@ -1,0 +1,19 @@
+# revit_sparing_find (read only). Lists where MEP runs cross walls and floors and what sparing each crossing needs.
+# ARGS: see _sparing_detect.ipy. One ROW per suggested sparing, summary counts in META.
+
+
+def main():
+    doc_meta()
+    res = detect()
+    crossings = res["crossings"]
+    for g in crossings:
+        row(crossing_pairs(g))
+    detection_meta(res)
+    open_n = len([g for g in crossings if g["ex"] is not None])
+    st = res["state"]
+    summary("%d crossings (%d need a sparing, %d already open) between %d MEP elements and %d hosts; %d pairs tested%s" % (
+        len(crossings), len(crossings) - open_n, open_n, st["meps"], st["hosts"], st["pairs"],
+        (" - TRUNCATED at %s" % st["stopped"]) if st["stopped"] else ""))
+
+
+__output__ = run_main(main)
