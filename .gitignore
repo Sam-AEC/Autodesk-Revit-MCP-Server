@@ -273,3 +273,6 @@ riderModule.iml
 
 # Claude Code worktrees
 .claude/worktrees/
+
+# Output files written by the read-only check tools
+revit_checks/
