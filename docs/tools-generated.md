@@ -117,6 +117,7 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `report_generator_build_review_pack` | Build one Excel 'Model review' workbook from a snapshot: cover, findings from the QA/QC rules, counts by category and what to do next. | No | sync |
 | `report_generator_export_excel` | Export a snapshot (optionally filtered, with chosen parameters and QA/QC findings) to an Excel workbook in the workspace. | No | sync |
 | `report_generator_export_sqlite_summary` | Export a summary of a snapshot to a SQLite database file in the workspace. | No | sync |
+| `revit_api_lookup` | Check that a Revit API type, member or overload really exists before you use it in a revit_execute_python script, and get its exact signature. | No | sync |
 | `revit_audit_openings` | Inspect scoped doors and windows for host, fit, dimensions and wall cuts, using ray or volume evidence when available. | No | sync |
 | `revit_audit_roofs` | Inspect scoped roofs for heights, slopes, coverage, exposed edges and stair openings. | No | sync |
 | `revit_check_intersections` | Measure solid/solid overlaps in the live model between two sets of elements (ids, Comments tag, categories): boolean-intersection volume in m3, pairs sorted largest first, with categories, ids and location; bounding boxes are only a pre-filter. | No | sync |
@@ -125,6 +126,7 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `revit_check_naming_and_params` | Check scoped elements for required parameter values, duplicate Marks and names matching a supplied pattern. | No | sync |
 | `revit_check_orientation` | Check that walls face the right way: probes 0. | No | sync |
 | `revit_export` | Export selected sheets or views as PDF or DWG, or the model as IFC or NWC, inside the workspace under an approved action. | Yes | sync |
+| `revit_ifc_check` | Compare an exported IFC with the live Revit model and list what the export dropped: elements per category, classification (NL/SfB, Assembly Code), materials, storey assignment, expected parameters, duplicates at one placement, and the origin offset against the survey point. | No | sync |
 | `revit_list_views_sheets_schedules` | List views, sheets, schedules and view templates in the active document, with filters, placement status and pagination. | No | sync |
 | `revit_make_family` | Make loadable Revit families from data (name, category, box size, pipe, duct or electrical ports) under an approved action: builds from a family template, saves the. | Yes | sync |
 | `revit_make_schedule` | Create a tagged schedule with requested fields, sorting and filters under an approved action. | Yes | sync |
@@ -137,6 +139,8 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `revit_probe_family` | Inspect a family for category, nested instances, parameters, connectors and geometry. | No | sync |
 | `revit_render_check` | Export a view to a workspace PNG and inspect its pixel content for a blank image. | No | sync |
 | `revit_review` | Run selected read-only Revit checks for an explicit scope and return FAIL, PASS or INCOMPLETE with evidence. | No | sync |
+| `revit_sparing_find` | Find where MEP runs (pipes, ducts, conduits, cable trays) pass through walls and floors, also in links, and suggest a sparing per crossing: MEP size plus clearance, rounded up, with host thickness, angle and any existing opening. | No | sync |
+| `revit_sparing_place` | Place sparingen at the crossings revit_sparing_find reports: a loaded sparing family or a native opening, sized, with an approval status. | Yes | sync |
 | `revit_system_report` | Inspect scoped MEP elements for connector domains, system membership, connections, open ends and size differences. | No | sync |
 | `revit_warnings_delta` | Track Revit warnings across a build phase. | No | sync |
 | `schedule_consistency_check_doors_and_rooms` | Check door and room schedules in a saved snapshot for duplicate or missing Marks, missing or identical From/To rooms, unnumbered or duplicate room numbers and zero-area rooms, and optionally Marks that do not fit a pattern you supply. | No | sync |
