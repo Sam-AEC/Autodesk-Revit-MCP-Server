@@ -40,14 +40,11 @@ The live response is saved in `artifacts/bridge-upgrade-verification/live-contex
 The chat's older MCP process still targets the previous session and needs reconnection; the installed panel backend routes correctly.
 No model content was changed. Mutating acceptance remains pending on a requested scratch-model run.
 
-<<<<<<< HEAD
 Read-only native checks then exercised the runtime, joins, naming, openings, roofs, family probing, MEP and documentation inventory.
 They found an IronPython family-symbol name bug, which was fixed, regression-tested, installed and verified with shallow/deep family
 probes. Element/warning counts stayed unchanged. See [the live validation report](revit-addin-live-validation-2026-10-14.md) for measured
 results, actual quirks and the distinction between model findings and tool bugs.
 
-=======
->>>>>>> 111456fed602efdfa73cca934189fba8bd3f019f
 ## Development scope
 
 The villa recipes are integration-test evidence, not the bridge development roadmap. Keep future villa-specific work in test

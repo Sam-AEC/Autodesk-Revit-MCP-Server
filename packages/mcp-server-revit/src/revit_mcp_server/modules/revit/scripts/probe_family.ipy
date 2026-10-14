@@ -17,7 +17,6 @@ MEP_DOMAINS = {
 CONNECTOR_REQUIRED = ["OST_PlumbingFixtures", "OST_DuctTerminal", "OST_MechanicalEquipment"]
 
 
-<<<<<<< HEAD
 def symbol_name(symbol):
     """FamilySymbol.Name can expose a write-only descriptor in IronPython."""
     try:
@@ -40,8 +39,6 @@ def symbol_name(symbol):
     return None
 
 
-=======
->>>>>>> 111456fed602efdfa73cca934189fba8bd3f019f
 def cat_key(cat):
     if cat is None:
         return ""
@@ -94,12 +91,8 @@ def resolve_families():
             add(f, "name")
         if not found:
             for s in FilteredElementCollector(doc).OfClass(FamilySymbol):
-<<<<<<< HEAD
                 sname = symbol_name(s)
                 if sname is not None and low in sname.lower():
-=======
-                if low in str(s.Name).lower():
->>>>>>> 111456fed602efdfa73cca934189fba8bd3f019f
                     add(s.Family, "type name")
     if not found:
         error("empty_selection", "probe_family: no family matched name='%s' ids=%s" % (name, ARGS.get("ids") or []))
@@ -175,11 +168,7 @@ def probe_family_doc(fam, fam_label, cat, allow_nested, state):
             try:
                 sym = f.Symbol
                 fname = str(sym.Family.Name)
-<<<<<<< HEAD
                 sname = symbol_name(sym) or "?"
-=======
-                sname = str(sym.Name)
->>>>>>> 111456fed602efdfa73cca934189fba8bd3f019f
                 ccat = cat_name(f)
             except Exception:
                 fname, sname, ccat = "?", "?", "?"
@@ -277,11 +266,7 @@ def main():
             except Exception:
                 cnt = 0
             total_inst += cnt
-<<<<<<< HEAD
             row([("kind", "type"), ("family", fam_label), ("name", symbol_name(s) or "?"), ("id", eid(s)), ("instances", cnt)])
-=======
-            row([("kind", "type"), ("family", fam_label), ("name", str(s.Name)), ("id", eid(s)), ("instances", cnt)])
->>>>>>> 111456fed602efdfa73cca934189fba8bd3f019f
             if cnt and len(instances) < 1:
                 for inst in FilteredElementCollector(doc).WherePasses(FamilyInstanceFilter(doc, s.Id)):
                     instances.append(inst)

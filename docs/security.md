@@ -158,15 +158,9 @@ In Ask first mode, an AI assistant that wants to change the Revit model must dra
 
 ### Explicit development mode
 
-<<<<<<< HEAD
 Settings also offers **Dev: stays on until switched off**, separately from timed Auto. After confirmation, the authenticated hub writes an HMAC-signed `.dev-mode.json` workspace record that must match an owner-only nonce authority beside the panel token. Switching Dev off revokes that authority before clearing the workspace record, so restoring an old signed record cannot re-enable it. Invalid, unsigned, revoked or unreadable records are ignored. Every process sharing the workspace observes it; it survives restarts and has no expiry or document binding. No MCP tool enables Dev. Selecting Ask first clears both live overrides; selecting timed Auto replaces Dev with the expiring window. The configured baseline still applies after an override is cleared.
 
 Dev permits unplanned writes while retaining Look only lockdown. Calls supplying a plan id still require an unchanged, unused approved action. Diagnostics and `revit_get_context` identify Dev with `dev_mode: true`, effective `approval_mode: "auto"` and no Auto expiry; the panel displays Dev explicitly. Mode switches and Dev calls are audited, and an audit-write failure refuses the call. A mutating call uses one authorization snapshot for mode, audit and supplied-plan enforcement, so a concurrent switch cannot allow an unaudited write or bypass the plan checks. Workspace path checks, secret/path redaction, panel authentication and Python read-mode guards stay enforced. Optional folder/path relaxations are not implemented. See [ADR 0018](0018-explicit-development-mode.md). The installed Revit 2024 backend reported Dev active during read-only smoke checks; mutating scratch-model acceptance remains pending.
-=======
-Settings also offers **Dev: stays on until switched off**, separately from timed Auto. After confirmation, the authenticated hub writes an HMAC-signed `.dev-mode.json` workspace record. Every process sharing the workspace observes it; it survives restarts and has no expiry or document binding. No MCP tool enables Dev. Selecting Ask first clears both live overrides; selecting timed Auto replaces Dev with the expiring window. The configured baseline still applies after an override is cleared.
-
-Dev permits unplanned writes while retaining Look only lockdown. Calls supplying a plan id still require an unchanged, unused approved action. Diagnostics and `revit_get_context` identify Dev with `dev_mode: true`, effective `approval_mode: "auto"` and no Auto expiry; the panel displays Dev explicitly. Mode switches and Dev calls are audited, and an audit-write failure refuses the call. Workspace path checks, secret/path redaction, panel authentication and Python read-mode guards stay enforced. Optional folder/path relaxations are not implemented. See [ADR 0018](0018-explicit-development-mode.md). Deployment and live acceptance remain pending.
->>>>>>> 111456fed602efdfa73cca934189fba8bd3f019f
 
 ### Which tools the gate covers (fail closed)
 

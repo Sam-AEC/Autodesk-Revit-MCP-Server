@@ -121,7 +121,6 @@ def test_family_probe_closes_document_and_reports_missing_connectors(mod: Any, r
     assert any(i.startswith("UNVERIFIED_FAMILY_DOC:") for i in result["info"])
 
 
-<<<<<<< HEAD
 class WriteOnlyNameSymbol(stub.FamilySymbol):
     """Model the inherited write-only Name descriptor seen in Revit/IronPython."""
 
@@ -225,8 +224,6 @@ def test_family_probe_parameter_name_takes_priority_and_preserves_limits(
     assert any("time_budget_s=18" in i for i in timed["info"])
 
 
-=======
->>>>>>> 111456fed602efdfa73cca934189fba8bd3f019f
 def test_systems_report_open_ends_direction_size_and_islands(mod: Any, revit_stub: Any) -> None:
     system = stub.MepSystem("Heating")
     cat = stub.Category(stub.BuiltInCategory.OST_PipeCurves, "Pipes")
