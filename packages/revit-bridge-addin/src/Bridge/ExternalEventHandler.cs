@@ -29,7 +29,7 @@ public class RevitCommandExecutor : IExternalEventHandler
 
                 if (!_queue.IsWanted(request.RequestId))
                 {
-                    Log.Information("Skipping {Tool} request {RequestId}: the caller gave up waiting for it", request.Tool, request.RequestId);
+                    Log.Information("Skipping {Tool} request {RequestId}: nobody asked about it for {Seconds}s", request.Tool, request.RequestId, _queue.AbandonAfter.TotalSeconds);
                     _queue.Complete(request.RequestId, new CommandResponse { Status = "error", Tool = request.Tool, Message = "Abandoned before it started" });
                     continue;
                 }
@@ -52,6 +52,7 @@ public class RevitCommandExecutor : IExternalEventHandler
         try
         {
             Log.Information("Executing {Tool} request {RequestId}", request.Tool, request.RequestId);
+            _queue.MarkRunning(request.RequestId);
 
             var result = BridgeCommandFactory.Execute(app, request.Tool, request.Payload);
 

@@ -24,6 +24,10 @@ public class BridgeServer
     private SemaphoreSlim _concurrencySemaphore = new(10, 10);
     private const long MaxRequestSizeBytes = 5 * 1024 * 1024; // 5 MB
     private readonly WorkspaceMonitor _workspaceMonitor = new();
+    // How long /execute holds the HTTP call before answering "running" (a client can ask for less or more
+    // with wait_ms). The command is not cancelled when this passes.
+    private static readonly int SoftWaitMs = EnvMs("AEC_BRIDGE_SOFT_WAIT_MS", 25000);
+    private const int MaxWaitMs = 55000;
 
     public BridgeServer(CommandQueue queue, ExternalEvent externalEvent)
     {
@@ -34,6 +38,15 @@ public class BridgeServer
         
         var legacyEnv = Environment.GetEnvironmentVariable("MCP_REVIT_LEGACY_PORT");
         LegacyMode = !string.IsNullOrEmpty(legacyEnv) && (legacyEnv.ToLower() == "true" || legacyEnv == "1");
+    }
+
+    public CommandQueue Queue => _queue;
+
+    private static int EnvMs(string name, int fallback)
+    {
+        return int.TryParse(Environment.GetEnvironmentVariable(name), out var value)
+            ? Math.Min(MaxWaitMs, Math.Max(1000, value))
+            : fallback;
     }
 
     public string SessionToken { get; }
@@ -180,6 +193,10 @@ public class BridgeServer
             {
                 await HandleExecute(context);
             }
+            else if (path.StartsWith("/result/", StringComparison.Ordinal) && context.Request.HttpMethod == "GET")
+            {
+                await HandleResult(context, Uri.UnescapeDataString(path.Substring("/result/".Length)));
+            }
             else
             {
                 Respond(context, 404, new { error = "Not found" });
@@ -234,12 +251,54 @@ public class BridgeServer
         _queue.Enqueue(request);
         _externalEvent.Raise();
 
-        var response = await _queue.WaitForResponse(requestId);
+        var waitMs = SoftWaitMs;
+        if (root.TryGetProperty("wait_ms", out var waitProp) && waitProp.ValueKind == JsonValueKind.Number && waitProp.TryGetInt32(out var asked))
+        {
+            waitMs = Math.Min(MaxWaitMs, Math.Max(0, asked));
+        }
 
-        Log.Information("Request completed: {RequestId} {Tool} {Status} {DurationMs}ms",
-            requestId, tool, response.Status, (DateTime.UtcNow - startTime).TotalMilliseconds);
+        var snapshot = await _queue.WaitForResponse(requestId, waitMs);
 
-        Respond(context, 200, response);
+        if (snapshot != null && snapshot.IsFinished && snapshot.ResponseJson != null)
+        {
+            Log.Information("Request completed: {RequestId} {Tool} {State} {DurationMs}ms",
+                requestId, tool, snapshot.State, (DateTime.UtcNow - startTime).TotalMilliseconds);
+            RespondRaw(context, 200, snapshot.ResponseJson);
+            return;
+        }
+
+        // Still queued or running: the work goes on and its result is kept. The client collects it
+        // with GET /result/{request_id}.
+        Log.Information("Request still {State} after {WaitMs}ms: {RequestId} {Tool}", snapshot?.State ?? "unknown", waitMs, requestId, tool);
+        Respond(context, 200, new
+        {
+            status = "running",
+            state = snapshot?.State ?? "running",
+            request_id = requestId,
+            tool,
+            elapsed_ms = snapshot?.ElapsedMs ?? 0,
+            message = $"Request {requestId} is still {snapshot?.State ?? "running"} in Revit; fetch it with GET /result/{requestId}"
+        });
+    }
+
+    private Task HandleResult(HttpListenerContext context, string requestId)
+    {
+        var snapshot = _queue.GetSnapshot(requestId);
+        if (snapshot == null)
+        {
+            Respond(context, 404, new { error = "unknown_or_expired", request_id = requestId });
+            return Task.CompletedTask;
+        }
+
+        var json = "{\"request_id\":" + JsonSerializer.Serialize(snapshot.RequestId)
+            + ",\"tool\":" + JsonSerializer.Serialize(snapshot.Tool)
+            + ",\"state\":" + JsonSerializer.Serialize(snapshot.State)
+            + ",\"elapsed_ms\":" + snapshot.ElapsedMs
+            + ",\"ttl_seconds\":" + (int)_queue.ResultTtl.TotalSeconds
+            + ",\"response\":" + (snapshot.ResponseJson ?? "null")
+            + "}";
+        RespondRaw(context, 200, json);
+        return Task.CompletedTask;
     }
 
     private void ValidatePayloadPaths(JsonElement element)
@@ -274,13 +333,20 @@ public class BridgeServer
 
     private Task HandleHealth(HttpListenerContext context)
     {
+        var running = _queue.GetRunning();
         var health = new
         {
             status = "healthy",
             version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(),
             uptime_seconds = (DateTime.UtcNow - _startTime).TotalSeconds,
             revit_version = App.RevitVersion ?? "unknown",
-            active_document = App.ActiveDocumentName ?? "none"
+            active_document = App.ActiveDocumentName ?? "none",
+            build = ProductInfo.BuildInfo,
+            queue_depth = _queue.Count,
+            retained_results = _queue.FinishedCount,
+            running = running == null
+                ? null
+                : new { request_id = running.RequestId, tool = running.Tool, age_ms = running.ElapsedMs }
         };
         Respond(context, 200, health);
         return Task.CompletedTask;
@@ -335,9 +401,13 @@ public class BridgeServer
 
     private void Respond(HttpListenerContext context, int statusCode, object data)
     {
+        RespondRaw(context, statusCode, JsonSerializer.Serialize(data));
+    }
+
+    private void RespondRaw(HttpListenerContext context, int statusCode, string json)
+    {
         context.Response.StatusCode = statusCode;
         context.Response.ContentType = "application/json";
-        var json = JsonSerializer.Serialize(data);
         var buffer = Encoding.UTF8.GetBytes(json);
         context.Response.OutputStream.Write(buffer, 0, buffer.Length);
         context.Response.Close();
