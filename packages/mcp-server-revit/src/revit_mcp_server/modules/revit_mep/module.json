@@ -1,0 +1,619 @@
+{
+  "id": "revit_mep",
+  "name": "Revit MEP (route, connect, circuits)",
+  "version": "0.1.0",
+  "schema_version": 1,
+  "min_hub_version": "1.2.0",
+  "description": "Data-driven MEP for a live Revit session: route pipes and ducts with fittings, connect connectors, make electrical circuits, and check first that a family really is MEP for the system. check_elements is read-only. route, connect and circuit are write tools: they need an approved plan, refuse a family whose category or connectors do not match the system before changing anything, replace only what they made under the same tag, use one transaction per route, connection or circuit, and roll back on failure unless on_error is skip. Not yet run against a live Revit.",
+  "author": "AEC Model Bridge",
+  "license": "GPL-3.0-or-later",
+  "requires_providers": [
+    "revit"
+  ],
+  "permissions": [
+    "model.read",
+    "model.write"
+  ],
+  "commands": [
+    {
+      "id": "check_elements",
+      "title": "Dry run of the category guard: say whether elements would be accepted for a pipe, duct or electrical system, and why not (wrong category, no connectors, wrong domain, wrong system, no free connector). Read-only. Use it before revit_mep_route, revit_mep_connect or revit_mep_circuit; for a family that is not placed yet use revit_probe_family.",
+      "mcp_tool": "revit_mep_check_elements",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "Domain to check against: pipe, duct or elec.",
+            "enum": [
+              "pipe",
+              "duct",
+              "elec"
+            ]
+          },
+          "system": {
+            "type": "string",
+            "description": "System the elements must have a connector of. Pipe: hsup, hret, cold, hot, san, vent (or a Revit name such as SupplyHydronic, DomesticColdWater, Sanitary). Duct: supply, return, exhaust, outdoor (or a Revit name such as SupplyAir, ReturnAir, ExhaustAir, OtherAir). Elec: power, data (or PowerCircuit, Data). Omit to check only category and domain."
+          },
+          "elements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One element: element_id or mark.",
+              "properties": {
+                "element_id": {
+                  "type": "integer",
+                  "description": "ElementId (integer) of the family instance. Give element_id or mark."
+                },
+                "mark": {
+                  "type": "string",
+                  "description": "Mark parameter of the family instance; it must belong to exactly one element. Give mark or element_id."
+                }
+              }
+            },
+            "description": "Elements to check (1 to 200)."
+          },
+          "need_free": {
+            "type": "boolean",
+            "description": "Also require a free (unconnected) connector of the system. Default false.",
+            "default": false
+          }
+        },
+        "required": [
+          "kind",
+          "elements"
+        ]
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "route",
+      "title": "Run pipe or duct between connectors or points, or branch it off a trunk, with elbows, unions, transitions, takeoffs and tees. Use revit_mep_connect when the ends already touch; use this when pipe or duct has to be drawn. Families that are not MEP for the system are refused before anything changes. Write tool: replaces only what it made under the same tag and id; rolls back on failure unless on_error is skip.",
+      "mcp_tool": "revit_mep_route",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "pipe or duct.",
+            "enum": [
+              "pipe",
+              "duct"
+            ]
+          },
+          "tag": {
+            "type": "string",
+            "description": "Your own label for this build phase (for example MEP1). Elements made under the same tag and id are replaced when you run the call again; elements this tool did not make are never touched."
+          },
+          "system": {
+            "type": "string",
+            "description": "System to route. Pipe: hsup, hret, cold, hot, san, vent (or a Revit name such as SupplyHydronic, DomesticColdWater, Sanitary). Duct: supply, return, exhaust, outdoor (or a Revit name such as SupplyAir, ReturnAir, ExhaustAir, OtherAir). A system of the other domain is refused."
+          },
+          "type_name": {
+            "type": "string",
+            "description": "Pipe or duct type name to use (the type's name in the project). A route can override it."
+          },
+          "system_type_name": {
+            "type": "string",
+            "description": "Only for a route that starts at a free point: name of the piping or mechanical system type to use. Default: the first system type of the system's class."
+          },
+          "transition_m": {
+            "type": "number",
+            "description": "Distance from a corner at which a size change is placed, metres (default 0.15).",
+            "default": 0.15
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One route.",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Your name for this route, unique in the call (letters, digits, _ - .). Used to replace it on a rerun and to branch off it."
+                },
+                "level": {
+                  "type": "string",
+                  "description": "Name of the level the route belongs to; run_height_m and point heights are measured from it."
+                },
+                "run_height_m": {
+                  "type": "number",
+                  "description": "Height of the horizontal run above the level, in metres. Required, except for a branch (it runs at the trunk's height)."
+                },
+                "size": {
+                  "type": "object",
+                  "description": "Size of the pipe or duct: diameter_mm, or width_mm with height_mm for a rectangular duct.",
+                  "properties": {
+                    "diameter_mm": {
+                      "type": "number",
+                      "description": "Round pipe or duct diameter in millimetres."
+                    },
+                    "width_mm": {
+                      "type": "number",
+                      "description": "Rectangular duct width in millimetres (with height_mm)."
+                    },
+                    "height_mm": {
+                      "type": "number",
+                      "description": "Rectangular duct height in millimetres (with width_mm)."
+                    }
+                  }
+                },
+                "stub_m": {
+                  "type": "number",
+                  "description": "Length of the straight stub leaving a connector, in metres (default 0.2).",
+                  "default": 0.2
+                },
+                "type_name": {
+                  "type": "string",
+                  "description": "Pipe or duct type name for this route; overrides the call's type_name."
+                },
+                "from": {
+                  "type": "object",
+                  "description": "A connector of a placed family (element_id or mark, with optional filters) or a free point (point_m).",
+                  "properties": {
+                    "element_id": {
+                      "type": "integer",
+                      "description": "ElementId (integer) of the family instance. Give element_id or mark."
+                    },
+                    "mark": {
+                      "type": "string",
+                      "description": "Mark parameter of the family instance; it must belong to exactly one element. Give mark or element_id."
+                    },
+                    "diameter_mm": {
+                      "type": "array",
+                      "items": {
+                        "type": "number",
+                        "description": "Millimetres."
+                      },
+                      "description": "Only connectors whose diameter is between [low, high] millimetres (round connectors), for example [38, 42]."
+                    },
+                    "sort": {
+                      "type": "string",
+                      "description": "Order the matching connectors by this coordinate before index picks one.",
+                      "enum": [
+                        "x",
+                        "y",
+                        "z"
+                      ]
+                    },
+                    "index": {
+                      "type": "integer",
+                      "description": "Which of the matching connectors to use after sorting (0 is the first). In a route, connectors used by an earlier route of the same call are skipped.",
+                      "default": 0
+                    },
+                    "point_m": {
+                      "type": "array",
+                      "items": {
+                        "type": "number",
+                        "description": "Metres."
+                      },
+                      "description": "Instead of a connector: a free point [x, y, height]. x and y are model coordinates in metres; height is metres above the route's level."
+                    }
+                  }
+                },
+                "to": {
+                  "type": "object",
+                  "description": "Where the route ends: a connector or a free point. Give to or branch_to, not both.",
+                  "properties": {
+                    "element_id": {
+                      "type": "integer",
+                      "description": "ElementId (integer) of the family instance. Give element_id or mark."
+                    },
+                    "mark": {
+                      "type": "string",
+                      "description": "Mark parameter of the family instance; it must belong to exactly one element. Give mark or element_id."
+                    },
+                    "diameter_mm": {
+                      "type": "array",
+                      "items": {
+                        "type": "number",
+                        "description": "Millimetres."
+                      },
+                      "description": "Only connectors whose diameter is between [low, high] millimetres (round connectors), for example [38, 42]."
+                    },
+                    "sort": {
+                      "type": "string",
+                      "description": "Order the matching connectors by this coordinate before index picks one.",
+                      "enum": [
+                        "x",
+                        "y",
+                        "z"
+                      ]
+                    },
+                    "index": {
+                      "type": "integer",
+                      "description": "Which of the matching connectors to use after sorting (0 is the first). In a route, connectors used by an earlier route of the same call are skipped.",
+                      "default": 0
+                    },
+                    "point_m": {
+                      "type": "array",
+                      "items": {
+                        "type": "number",
+                        "description": "Metres."
+                      },
+                      "description": "Instead of a connector: a free point [x, y, height]. x and y are model coordinates in metres; height is metres above the route's level."
+                    }
+                  }
+                },
+                "branch_to": {
+                  "type": "object",
+                  "description": "End the route on a straight horizontal trunk piece instead of at a connector.",
+                  "properties": {
+                    "route": {
+                      "type": "string",
+                      "description": "Id of a trunk route built earlier in this call, or earlier with the same tag."
+                    },
+                    "element_ids": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer",
+                        "description": "ElementId of a pipe or duct."
+                      },
+                      "description": "Existing pipes or ducts to branch off (takeoff only). Give route or element_ids."
+                    },
+                    "fitting": {
+                      "type": "string",
+                      "description": "takeoff (default): takeoff fitting on the trunk, trunk unchanged. tee: the trunk piece is split and a tee placed (the trunk must be a route of this tool).",
+                      "enum": [
+                        "takeoff",
+                        "tee"
+                      ],
+                      "default": "takeoff"
+                    }
+                  }
+                },
+                "via": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "description": "A corner of the route. The run goes along x first, then y. A size here changes the size from this corner on, with a transition.",
+                    "properties": {
+                      "x_m": {
+                        "type": "number",
+                        "description": "Corner x in model metres."
+                      },
+                      "y_m": {
+                        "type": "number",
+                        "description": "Corner y in model metres."
+                      },
+                      "to_height_m": {
+                        "type": "number",
+                        "description": "Optional: also move vertically at this corner to this height above the level (metres)."
+                      },
+                      "level": {
+                        "type": "string",
+                        "description": "Level the to_height_m is measured from (default: the route's level)."
+                      },
+                      "size": {
+                        "type": "object",
+                        "description": "Size of the pipe or duct: diameter_mm, or width_mm with height_mm for a rectangular duct.",
+                        "properties": {
+                          "diameter_mm": {
+                            "type": "number",
+                            "description": "Round pipe or duct diameter in millimetres."
+                          },
+                          "width_mm": {
+                            "type": "number",
+                            "description": "Rectangular duct width in millimetres (with height_mm)."
+                          },
+                          "height_mm": {
+                            "type": "number",
+                            "description": "Rectangular duct height in millimetres (with width_mm)."
+                          }
+                        }
+                      }
+                    },
+                    "required": [
+                      "x_m",
+                      "y_m"
+                    ]
+                  },
+                  "description": "Corner points between from and to, in order. Not for branches."
+                }
+              },
+              "required": [
+                "id",
+                "level",
+                "size",
+                "from"
+              ]
+            },
+            "description": "The routes to make (1 to 25), built in this order; a branch may name an earlier route as its trunk."
+          },
+          "on_error": {
+            "type": "string",
+            "description": "abort (default): the first failure rolls the whole call back and nothing is kept. skip: keep what worked and list the failures.",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort"
+          }
+        },
+        "required": [
+          "kind",
+          "tag",
+          "system",
+          "routes"
+        ]
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    },
+    {
+      "id": "connect",
+      "title": "Join pairs of connectors that already touch (equipment to a pipe or duct end, or two pipe or duct ends) directly or with a union, transition or elbow, then list the open ends left. Use revit_mep_route to draw pipe or duct between connectors that are apart. Write tool: needs an approved plan; rolls back on failure unless on_error is skip.",
+      "mcp_tool": "revit_mep_connect",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "pipe or duct.",
+            "enum": [
+              "pipe",
+              "duct"
+            ]
+          },
+          "tag": {
+            "type": "string",
+            "description": "Your own label for this build phase (for example MEP1). Elements made under the same tag and id are replaced when you run the call again; elements this tool did not make are never touched."
+          },
+          "system": {
+            "type": "string",
+            "description": "System of both connectors. Pipe: hsup, hret, cold, hot, san, vent (or a Revit name such as SupplyHydronic, DomesticColdWater, Sanitary). Duct: supply, return, exhaust, outdoor (or a Revit name such as SupplyAir, ReturnAir, ExhaustAir, OtherAir). A system of the other domain is refused."
+          },
+          "tolerance_mm": {
+            "type": "number",
+            "description": "How far apart two connectors may be and still count as touching, millimetres (default 5).",
+            "default": 5
+          },
+          "connections": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One connection.",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Your name for this connection, unique in the call."
+                },
+                "a": {
+                  "type": "object",
+                  "description": "First element and how to choose its connector. The filters choose among all connectors of the system, free or not, so a repeated call finds the same one.",
+                  "properties": {
+                    "element_id": {
+                      "type": "integer",
+                      "description": "ElementId (integer) of the family instance. Give element_id or mark."
+                    },
+                    "mark": {
+                      "type": "string",
+                      "description": "Mark parameter of the family instance; it must belong to exactly one element. Give mark or element_id."
+                    },
+                    "diameter_mm": {
+                      "type": "array",
+                      "items": {
+                        "type": "number",
+                        "description": "Millimetres."
+                      },
+                      "description": "Only connectors whose diameter is between [low, high] millimetres (round connectors), for example [38, 42]."
+                    },
+                    "sort": {
+                      "type": "string",
+                      "description": "Order the matching connectors by this coordinate before index picks one.",
+                      "enum": [
+                        "x",
+                        "y",
+                        "z"
+                      ]
+                    },
+                    "index": {
+                      "type": "integer",
+                      "description": "Which of the matching connectors to use after sorting (0 is the first). In a route, connectors used by an earlier route of the same call are skipped.",
+                      "default": 0
+                    },
+                    "near_m": {
+                      "type": "array",
+                      "items": {
+                        "type": "number",
+                        "description": "Metres."
+                      },
+                      "description": "Pick the connector nearest to this model point [x, y, z] in metres (z is the elevation from the project zero)."
+                    }
+                  }
+                },
+                "b": {
+                  "type": "object",
+                  "description": "Second element and how to choose its connector.",
+                  "properties": {
+                    "element_id": {
+                      "type": "integer",
+                      "description": "ElementId (integer) of the family instance. Give element_id or mark."
+                    },
+                    "mark": {
+                      "type": "string",
+                      "description": "Mark parameter of the family instance; it must belong to exactly one element. Give mark or element_id."
+                    },
+                    "diameter_mm": {
+                      "type": "array",
+                      "items": {
+                        "type": "number",
+                        "description": "Millimetres."
+                      },
+                      "description": "Only connectors whose diameter is between [low, high] millimetres (round connectors), for example [38, 42]."
+                    },
+                    "sort": {
+                      "type": "string",
+                      "description": "Order the matching connectors by this coordinate before index picks one.",
+                      "enum": [
+                        "x",
+                        "y",
+                        "z"
+                      ]
+                    },
+                    "index": {
+                      "type": "integer",
+                      "description": "Which of the matching connectors to use after sorting (0 is the first). In a route, connectors used by an earlier route of the same call are skipped.",
+                      "default": 0
+                    },
+                    "near_m": {
+                      "type": "array",
+                      "items": {
+                        "type": "number",
+                        "description": "Metres."
+                      },
+                      "description": "Pick the connector nearest to this model point [x, y, z] in metres (z is the elevation from the project zero)."
+                    }
+                  }
+                },
+                "joint": {
+                  "type": "string",
+                  "description": "auto (default): direct for equipment, union or transition when two straight pieces meet, elbow at a corner. Or force one.",
+                  "enum": [
+                    "auto",
+                    "direct",
+                    "elbow",
+                    "union",
+                    "transition"
+                  ],
+                  "default": "auto"
+                }
+              },
+              "required": [
+                "id",
+                "a",
+                "b"
+              ]
+            },
+            "description": "The connections to make (1 to 50)."
+          },
+          "on_error": {
+            "type": "string",
+            "description": "abort (default): the first failure rolls the whole call back and nothing is kept. skip: keep what worked and list the failures.",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort"
+          }
+        },
+        "required": [
+          "kind",
+          "tag",
+          "system",
+          "connections"
+        ]
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    },
+    {
+      "id": "circuit",
+      "title": "Make native electrical circuits (ElectricalSystem) from a list of placed elements and a panel. Use after the families are placed; a circuit is replaced when you run it again with the same tag and id. Elements already on a circuit this tool did not make are refused; run revit_mep_check_elements first to see whether the families qualify. Write tool: needs an approved plan; rolls back on failure unless on_error is skip.",
+      "mcp_tool": "revit_mep_circuit",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "tag": {
+            "type": "string",
+            "description": "Your own label for this build phase (for example MEP1). Elements made under the same tag and id are replaced when you run the call again; elements this tool did not make are never touched."
+          },
+          "system": {
+            "type": "string",
+            "description": "Electrical system type: power (default), data, or a Revit name such as PowerCircuit. A pipe or duct system is refused.",
+            "default": "power"
+          },
+          "circuits": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One circuit.",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Your name for this circuit, unique in the call. Used to replace it on a rerun."
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Load Name of the circuit in Revit (default: the id)."
+                },
+                "panel": {
+                  "type": "object",
+                  "description": "The panel (an Electrical Equipment family): element_id or mark.",
+                  "properties": {
+                    "element_id": {
+                      "type": "integer",
+                      "description": "ElementId (integer) of the family instance. Give element_id or mark."
+                    },
+                    "mark": {
+                      "type": "string",
+                      "description": "Mark parameter of the family instance; it must belong to exactly one element. Give mark or element_id."
+                    }
+                  }
+                },
+                "elements": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "description": "One element: element_id or mark.",
+                    "properties": {
+                      "element_id": {
+                        "type": "integer",
+                        "description": "ElementId (integer) of the family instance. Give element_id or mark."
+                      },
+                      "mark": {
+                        "type": "string",
+                        "description": "Mark parameter of the family instance; it must belong to exactly one element. Give mark or element_id."
+                      }
+                    }
+                  },
+                  "description": "Elements on the circuit (1 to 200): lights, sockets, equipment with an electrical connector."
+                }
+              },
+              "required": [
+                "id",
+                "panel",
+                "elements"
+              ]
+            },
+            "description": "The circuits to make (1 to 50)."
+          },
+          "on_error": {
+            "type": "string",
+            "description": "abort (default): the first failure rolls the whole call back and nothing is kept. skip: keep what worked and list the failures.",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort"
+          }
+        },
+        "required": [
+          "tag",
+          "circuits"
+        ]
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    }
+  ]
+}

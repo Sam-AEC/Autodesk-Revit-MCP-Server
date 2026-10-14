@@ -1,0 +1,245 @@
+# Shared helpers of the revit_mep scripts, read side (IronPython 2.7). Loaded after the revit module's _prelude.ipy.
+# Nothing in this file changes the model. It also avoids the words that read mode refuses, so the read-only tool
+# revit_mep_check_elements can run it without approval.
+#
+# The category guard lives here: guard_element() decides whether an element may take part in a pipe, duct or electrical
+# system. It looks at the category AND at the real connectors, never at the family name, and it answers with a code:
+#   category_mismatch  the category is not an MEP category of that system (a Generic Model, a wall, a door ...)
+#   no_connectors      the family has no pipe, duct or electrical connector at all
+#   domain_mismatch    it has connectors, but only in another domain (for example duct connectors on a pipe route)
+#   system_mismatch    right domain, but no connector of the requested system (for example Sanitary on a heating route)
+#   no_free_connector  right system, but every such connector is already connected
+from Autodesk.Revit.DB.Plumbing import Pipe, PipeType, PipingSystemType
+from Autodesk.Revit.DB.Mechanical import Duct, DuctType, MechanicalSystemType
+from Autodesk.Revit.DB.Electrical import ElectricalSystem, ElectricalSystemType
+
+MM_PER_FT = 304.8
+FEET_PER_MM = 1.0 / 304.8
+DOMAIN_WORD = {"pipe": "Piping", "duct": "Hvac", "elec": "Electrical"}
+KIND_LABEL = {"pipe": "piping", "duct": "duct", "elec": "electrical"}
+UNDEFINED_SYSTEMS = ("", "UndefinedSystemType", "Global", "Undefined")
+CATEGORIES = {
+    "pipe": ["OST_MechanicalEquipment", "OST_PlumbingFixtures", "OST_PipeFitting", "OST_PipeAccessory", "OST_PipeCurves",
+             "OST_FlexPipeCurves", "OST_Sprinklers"],
+    "duct": ["OST_MechanicalEquipment", "OST_DuctTerminal", "OST_DuctFitting", "OST_DuctAccessory", "OST_DuctCurves",
+             "OST_FlexDuctCurves"],
+    "elec": ["OST_ElectricalEquipment", "OST_ElectricalFixtures", "OST_LightingFixtures", "OST_LightingDevices",
+             "OST_MechanicalEquipment", "OST_DataDevices", "OST_CommunicationDevices", "OST_FireAlarmDevices",
+             "OST_SecurityDevices", "OST_TelephoneDevices", "OST_NurseCallDevices"],
+}
+
+
+def category_ids(kind):
+    """{category id: OST name} of the categories that may take part in a system of this kind."""
+    out = {}
+    for name in CATEGORIES[kind]:
+        bic = getattr(BuiltInCategory, name, None)
+        if bic is not None:
+            out[int(bic)] = name
+    return out
+
+
+def mark_of(e):
+    try:
+        p = e.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)
+        if p is None:
+            return ""
+        return p.AsString() or ""
+    except Exception:
+        return ""
+
+
+def category_label(e):
+    try:
+        return e.Category.Name
+    except Exception:
+        return "(no category)"
+
+
+def domain_label(c):
+    return str(c.Domain).replace("Domain", "")
+
+
+def connector_system(c):
+    """Name of the connector's system classification ('SupplyHydronic', 'SupplyAir', 'PowerCircuit' ...), or ''."""
+    dom = str(c.Domain)
+    try:
+        if "Piping" in dom:
+            return str(c.PipeSystemType)
+        if "Hvac" in dom:
+            return str(c.DuctSystemType)
+        if "Electrical" in dom:
+            return str(c.ElectricalSystemType)
+    except Exception:
+        pass
+    return ""
+
+
+def systems_compatible(a, b):
+    """Two connector systems may be joined when they are equal or one of them is still undefined."""
+    return a == b or a in UNDEFINED_SYSTEMS or b in UNDEFINED_SYSTEMS
+
+
+def element_connectors(e):
+    """All real connectors of a family instance, pipe, duct or fitting (logical and curve connectors left out)."""
+    cm = None
+    try:
+        cm = e.ConnectorManager
+    except Exception:
+        cm = None
+    if cm is None:
+        try:
+            mm = e.MEPModel
+            cm = mm.ConnectorManager if mm is not None else None
+        except Exception:
+            cm = None
+    out = []
+    if cm is None:
+        return out
+    for c in cm.Connectors:
+        kind = str(c.ConnectorType)
+        if "Curve" in kind or "Logical" in kind:
+            continue
+        out.append(c)
+    return out
+
+
+def connector_owner_ids(c):
+    out = []
+    try:
+        for r in c.AllRefs:
+            o = r.Owner
+            if o is not None:
+                out.append(eid(o))
+    except Exception:
+        pass
+    return out
+
+
+def connector_size_mm(c):
+    try:
+        shape = str(c.Shape)
+        if "Round" in shape or not shape:
+            return "dia %d mm" % int(round(c.Radius * 2.0 * MM_PER_FT))
+        return "%d x %d mm" % (int(round(c.Width * MM_PER_FT)), int(round(c.Height * MM_PER_FT)))
+    except Exception:
+        return "size ?"
+
+
+def fmt_m(p):
+    return "(%s, %s, %s) m" % (to_m(p.X), to_m(p.Y), to_m(p.Z))
+
+
+def find_element(spec):
+    """(element, None) for {element_id} or {mark}; (None, reason) otherwise."""
+    if spec.get("element_id") is not None:
+        e = doc.GetElement(ElementId(int(spec["element_id"])))
+        if e is None:
+            return None, "element id %s does not exist" % spec["element_id"]
+        return e, None
+    mark = spec.get("mark")
+    if mark:
+        hits = []
+        for cls in (FamilyInstance, Pipe, Duct):
+            for e in FilteredElementCollector(doc).OfClass(cls):
+                if mark_of(e) == mark:
+                    hits.append(e)
+        if len(hits) == 1:
+            return hits[0], None
+        return None, "%d elements have Mark '%s' (exactly one is needed; give element_id instead)" % (len(hits), mark)
+    return None, "an element needs element_id or mark"
+
+
+def guard_element(e, kind, system, need_free, is_free=None):
+    """None when e may take part in a system of this kind (and system, when given), else (code, message).
+
+    is_free(c) says whether a connector counts as free (default: not connected)."""
+    label = "%s (id %d, category %s, family %s)" % (mark_of(e) or "element", eid(e), category_label(e), family_label(e))
+    allowed = category_ids(kind)
+    cat = None
+    try:
+        cat = e.Category
+    except Exception:
+        cat = None
+    if cat is None or eid(cat) not in allowed:
+        names = sorted([allowed[k].replace("OST_", "") for k in allowed])
+        return ("category_mismatch", "%s is not a %s element: its category is not one of %s. It was not used." % (label, KIND_LABEL[kind], ", ".join(names)))
+    every = element_connectors(e)
+    if not every:
+        return ("no_connectors", "%s has no pipe, duct or electrical connectors, so it cannot take part in a %s system. Fix or replace the family." % (label, KIND_LABEL[kind]))
+    mine = [c for c in every if DOMAIN_WORD[kind] in str(c.Domain)]
+    if not mine:
+        found = sorted(set([domain_label(c) for c in every]))
+        return ("domain_mismatch", "%s has connectors only in the %s domain, not %s." % (label, ", ".join(found), DOMAIN_WORD[kind]))
+    if system:
+        match = [c for c in mine if connector_system(c) == system]
+        if not match:
+            found = sorted(set([connector_system(c) or "(none)" for c in mine]))
+            return ("system_mismatch", "%s has no %s connector of system %s; its %s connectors are: %s." % (label, KIND_LABEL[kind], system, KIND_LABEL[kind], ", ".join(found)))
+        free = is_free or (lambda c: not c.IsConnected)
+        if need_free and not [c for c in match if free(c)]:
+            return ("no_free_connector", "%s has no free connector of system %s: all %d are already connected." % (label, system, len(match)))
+    return None
+
+
+def family_label(e):
+    try:
+        return e.Symbol.Family.Name
+    except Exception:
+        pass
+    try:
+        return e.Name
+    except Exception:
+        return "?"
+
+
+def pick_connector(e, kind, system, spec, taken, is_free):
+    """(connector, None) or (None, reason). spec may hold diameter_mm [lo, hi], sort x|y|z, index, near_m [x, y, z].
+
+    taken is a set of (owner id, rounded origin) keys already used by an earlier route of this call;
+    is_free(c) says whether a connector counts as free (it may be connected to something this call replaces).
+    """
+    cs = []
+    for c in element_connectors(e):
+        if DOMAIN_WORD[kind] not in str(c.Domain):
+            continue
+        if system and connector_system(c) != system:
+            continue
+        if spec.get("free", True) and not is_free(c):
+            continue
+        if conn_key(e, c) in taken:
+            continue
+        cs.append(c)
+    dia = spec.get("diameter_mm")
+    if dia:
+        keep = []
+        for c in cs:
+            try:
+                d = c.Radius * 2.0 * MM_PER_FT
+            except Exception:
+                continue
+            if dia[0] <= d <= dia[1]:
+                keep.append(c)
+        cs = keep
+    near = spec.get("near_m")
+    if near:
+        tx, ty, tz = near[0] / FT_TO_M, near[1] / FT_TO_M, near[2] / FT_TO_M
+        cs.sort(key=lambda c: (c.Origin.X - tx) ** 2 + (c.Origin.Y - ty) ** 2 + (c.Origin.Z - tz) ** 2)
+    elif spec.get("sort"):
+        axis = spec["sort"]
+        if axis == "x":
+            cs.sort(key=lambda c: c.Origin.X)
+        elif axis == "y":
+            cs.sort(key=lambda c: c.Origin.Y)
+        else:
+            cs.sort(key=lambda c: c.Origin.Z)
+    idx = int(spec.get("index") or 0)
+    if idx >= len(cs):
+        return None, "%s (id %d) has %d matching free %s connector(s) of system %s (filters: diameter %s, index %d)" % (
+            mark_of(e) or "element", eid(e), len(cs), KIND_LABEL[kind], system or "any", dia or "any", idx)
+    return cs[idx], None
+
+
+def conn_key(e, c):
+    o = c.Origin
+    return (eid(e), round(o.X, 3), round(o.Y, 3), round(o.Z, 3))
