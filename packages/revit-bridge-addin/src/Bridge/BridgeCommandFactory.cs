@@ -402,7 +402,12 @@ public static partial class BridgeCommandFactory
         var endPoint = ParseXYZ(payload.GetProperty("end_point"));
         var height = payload.GetProperty("height").GetDouble();
         var levelName = payload.GetProperty("level").GetString();
-        var wallTypeName = payload.TryGetProperty("wall_type", out var wt) ? wt.GetString() : null;
+        var wallTypeName = payload.TryGetProperty("wall_type", out var wt) && wt.ValueKind == JsonValueKind.String ? wt.GetString() : null;
+        // reverse flips the wall so its exterior face is on the other side of the drawn line.
+        var reverse = payload.TryGetProperty("reverse", out var rv) && rv.ValueKind == JsonValueKind.True;
+
+        if (height <= 0)
+            throw new ArgumentException("height must be greater than zero");
 
         using (var trans = BridgeCommandFactory.CreateTransaction(doc, "Create Wall"))
         {
@@ -411,27 +416,19 @@ public static partial class BridgeCommandFactory
             var level = GetLevelByName(doc, levelName);
             var line = Line.CreateBound(startPoint, endPoint);
 
-            Wall wall;
-            if (!string.IsNullOrEmpty(wallTypeName))
-            {
-                var wallType = GetWallTypeByName(doc, wallTypeName);
-                wall = Wall.Create(doc, line, wallType.Id, level.Id, height, 0, false, false);
-            }
-            else
-            {
-                wall = Wall.Create(doc, line, level.Id, false);
-                var param = wall.get_Parameter(BuiltInParameter.WALL_USER_HEIGHT_PARAM);
-                if (param != null && !param.IsReadOnly)
-                {
-                    param.Set(height);
-                }
-            }
+            var wallType = !string.IsNullOrEmpty(wallTypeName)
+                ? GetWallTypeByName(doc, wallTypeName)
+                : GetDefaultWallType(doc);
+
+            var wall = Wall.Create(doc, line, wallType.Id, level.Id, height, 0, reverse, false);
 
             trans.CommitChecked();
 
             return new
             {
                 wall_id = wall.Id.Value,
+                wall_type = wallType.Name,
+                reversed = reverse,
                 length = line.Length,
                 length_ft = line.Length,
                 length_m = UnitUtils.ConvertFromInternalUnits(line.Length, UnitTypeId.Meters),
@@ -449,7 +446,7 @@ public static partial class BridgeCommandFactory
 
         var boundaryPoints = ParsePointArray(payload.GetProperty("boundary_points"));
         var levelName = payload.GetProperty("level").GetString();
-        var floorTypeName = payload.TryGetProperty("floor_type", out var ft) ? ft.GetString() : null;
+        var floorTypeName = payload.TryGetProperty("floor_type", out var ft) && ft.ValueKind == JsonValueKind.String ? ft.GetString() : null;
 
         using (var trans = BridgeCommandFactory.CreateTransaction(doc, "Create Floor"))
         {
@@ -465,24 +462,10 @@ public static partial class BridgeCommandFactory
                 curveLoop.Append(Line.CreateBound(start, end));
             }
 
-            Floor floor;
-            if (!string.IsNullOrEmpty(floorTypeName))
-            {
-                var floorType = GetFloorTypeByName(doc, floorTypeName);
-                floor = Floor.Create(doc, new List<CurveLoop> { curveLoop }, floorType.Id, level.Id);
-            }
-            else
-            {
-                var defaultFloorType = new FilteredElementCollector(doc)
-                    .OfClass(typeof(FloorType))
-                    .Cast<FloorType>()
-                    .FirstOrDefault();
-
-                if (defaultFloorType == null)
-                    throw new InvalidOperationException("No floor types found in document");
-
-                floor = Floor.Create(doc, new List<CurveLoop> { curveLoop }, defaultFloorType.Id, level.Id);
-            }
+            var floorType = !string.IsNullOrEmpty(floorTypeName)
+                ? GetFloorTypeByName(doc, floorTypeName)
+                : GetDefaultFloorType(doc);
+            var floor = Floor.Create(doc, new List<CurveLoop> { curveLoop }, floorType.Id, level.Id);
 
             trans.CommitChecked();
 
@@ -491,6 +474,7 @@ public static partial class BridgeCommandFactory
             return new
             {
                 floor_id = floor.Id.Value,
+                floor_type = floorType.Name,
                 area_sf = area,
                 area_sm = UnitUtils.ConvertFromInternalUnits(area, UnitTypeId.SquareMeters),
                 level = levelName
@@ -507,7 +491,11 @@ public static partial class BridgeCommandFactory
 
         var boundaryPoints = ParsePointArray(payload.GetProperty("boundary_points"));
         var levelName = payload.GetProperty("level").GetString();
-        var roofTypeName = payload.TryGetProperty("roof_type", out var rt) ? rt.GetString() : null;
+        var roofTypeName = payload.TryGetProperty("roof_type", out var rt) && rt.ValueKind == JsonValueKind.String ? rt.GetString() : null;
+        // slope is rise over run (0.5 = 1:2). Omitted or 0 gives a flat roof.
+        var slope = payload.TryGetProperty("slope", out var sl) && sl.ValueKind == JsonValueKind.Number ? sl.GetDouble() : 0.0;
+        if (slope < 0)
+            throw new ArgumentException("slope must not be negative");
 
         using (var trans = BridgeCommandFactory.CreateTransaction(doc, "Create Roof"))
         {
@@ -523,20 +511,29 @@ public static partial class BridgeCommandFactory
                 curveArray.Append(Line.CreateBound(start, end));
             }
 
-            RoofType roofType = null;
-            if (!string.IsNullOrEmpty(roofTypeName))
-            {
-                roofType = GetRoofTypeByName(doc, roofTypeName);
-            }
+            var roofType = !string.IsNullOrEmpty(roofTypeName)
+                ? GetRoofTypeByName(doc, roofTypeName)
+                : GetDefaultRoofType(doc);
 
             var modelCurveArray = new ModelCurveArray();
             var footprint = doc.Create.NewFootPrintRoof(curveArray, level, roofType, out modelCurveArray);
+
+            if (slope > 0)
+            {
+                foreach (ModelCurve modelCurve in modelCurveArray)
+                {
+                    footprint.set_DefinesSlope(modelCurve, true);
+                    footprint.set_SlopeAngle(modelCurve, slope);
+                }
+            }
 
             trans.CommitChecked();
 
             return new
             {
                 roof_id = footprint.Id.Value,
+                roof_type = roofType.Name,
+                slope = slope,
                 level = levelName,
                 curve_count = curveArray.Size
             };
@@ -552,6 +549,7 @@ public static partial class BridgeCommandFactory
 
         var name = payload.GetProperty("name").GetString();
         var elevation = payload.GetProperty("elevation").GetDouble();
+        var createPlanView = !payload.TryGetProperty("create_plan_view", out var cpv) || cpv.ValueKind != JsonValueKind.False;
 
         using (var trans = BridgeCommandFactory.CreateTransaction(doc, "Create Level"))
         {
@@ -559,6 +557,19 @@ public static partial class BridgeCommandFactory
 
             var level = Level.Create(doc, elevation);
             level.Name = name;
+
+            // A level without a plan view is invisible in the project browser; make the view in the same transaction.
+            ViewPlan planView = null;
+            if (createPlanView)
+            {
+                var planType = new FilteredElementCollector(doc)
+                    .OfClass(typeof(ViewFamilyType))
+                    .Cast<ViewFamilyType>()
+                    .FirstOrDefault(v => v.ViewFamily == ViewFamily.FloorPlan);
+                if (planType == null)
+                    throw new InvalidOperationException("No floor plan view type found; pass create_plan_view=false to create the level only");
+                planView = ViewPlan.Create(doc, planType.Id, level.Id);
+            }
 
             trans.CommitChecked();
 
@@ -568,7 +579,9 @@ public static partial class BridgeCommandFactory
                 name = level.Name,
                 elevation = level.Elevation,
                 elevation_ft = level.Elevation,
-                elevation_m = UnitUtils.ConvertFromInternalUnits(level.Elevation, UnitTypeId.Meters)
+                elevation_m = UnitUtils.ConvertFromInternalUnits(level.Elevation, UnitTypeId.Meters),
+                plan_view_id = planView?.Id.Value,
+                plan_view_name = planView?.Name
             };
         }
     }
@@ -1079,6 +1092,50 @@ public static partial class BridgeCommandFactory
             throw new ArgumentException($"Roof type '{name}' not found");
 
         return roofType;
+    }
+
+    private static WallType GetDefaultWallType(Document doc)
+    {
+        if (doc.GetElement(doc.GetDefaultElementTypeId(ElementTypeGroup.WallType)) is WallType preferred
+            && preferred.Kind == WallKind.Basic)
+            return preferred;
+
+        var basic = new FilteredElementCollector(doc)
+            .OfClass(typeof(WallType))
+            .Cast<WallType>()
+            .Where(wt => wt.Kind == WallKind.Basic)
+            .OrderBy(wt => wt.Name)
+            .FirstOrDefault();
+        return basic ?? throw new InvalidOperationException("No basic wall types found in document; pass wall_type");
+    }
+
+    private static FloorType GetDefaultFloorType(Document doc)
+    {
+        // Foundation slabs are floor types too and must not be the silent default for a storey floor.
+        if (doc.GetElement(doc.GetDefaultElementTypeId(ElementTypeGroup.FloorType)) is FloorType preferred
+            && !preferred.IsFoundationSlab)
+            return preferred;
+
+        var floorType = new FilteredElementCollector(doc)
+            .OfClass(typeof(FloorType))
+            .Cast<FloorType>()
+            .Where(ft => !ft.IsFoundationSlab)
+            .OrderBy(ft => ft.Name)
+            .FirstOrDefault();
+        return floorType ?? throw new InvalidOperationException("No non-foundation floor types found in document; pass floor_type");
+    }
+
+    private static RoofType GetDefaultRoofType(Document doc)
+    {
+        if (doc.GetElement(doc.GetDefaultElementTypeId(ElementTypeGroup.RoofType)) is RoofType preferred)
+            return preferred;
+
+        var roofType = new FilteredElementCollector(doc)
+            .OfClass(typeof(RoofType))
+            .Cast<RoofType>()
+            .OrderBy(rt => rt.Name)
+            .FirstOrDefault();
+        return roofType ?? throw new InvalidOperationException("No roof types found in document; pass roof_type");
     }
 
     private static Category GetCategoryByName(Document doc, string name)

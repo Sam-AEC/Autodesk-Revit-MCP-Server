@@ -22,6 +22,12 @@ from . import revit_context
 
 logger = logging.getLogger(__name__)
 
+
+def _optional(args: Dict[str, Any], *names: str) -> Dict[str, Any]:
+    """Forward only the arguments the caller actually gave, so the add-in applies its own defaults."""
+    return {name: args[name] for name in names if args.get(name) is not None}
+
+
 # Per-request bridge chosen by the panel hub's instance routing. A ContextVar so concurrent
 # requests aimed at different Revit instances cannot see each other's choice.
 _BRIDGE_OVERRIDE: contextvars.ContextVar = contextvars.ContextVar("revit_bridge_override", default=None)
@@ -369,6 +375,7 @@ class RevitProvider(AECProvider):
                     "end_point": {"x": args.get("end_x", 0), "y": args.get("end_y", 0), "z": args.get("end_z", 0)},
                     "height": args.get("height", 10),
                     "level": args.get("level", "L1"),
+                    **_optional(args, "wall_type", "reverse"),
                 },
             ),
             "revit_create_floor": (
@@ -378,6 +385,7 @@ class RevitProvider(AECProvider):
                         {"x": p.get("x", 0), "y": p.get("y", 0), "z": p.get("z", 0)} for p in args.get("points", [])
                     ],
                     "level": args.get("level", "L1"),
+                    **_optional(args, "floor_type"),
                 },
             ),
             "revit_create_roof": (
@@ -387,12 +395,16 @@ class RevitProvider(AECProvider):
                         {"x": p.get("x", 0), "y": p.get("y", 0), "z": p.get("z", 0)} for p in args.get("points", [])
                     ],
                     "level": args.get("level", "Level 2"),
-                    "slope": args.get("slope", 0.5),
+                    **_optional(args, "roof_type", "slope"),
                 },
             ),
             "revit_create_level": (
                 "revit.create_level",
-                lambda args: {"name": args.get("name", "New Level"), "elevation": args.get("elevation", 10)},
+                lambda args: {
+                    "name": args.get("name", "New Level"),
+                    "elevation": args.get("elevation", 10),
+                    **_optional(args, "create_plan_view"),
+                },
             ),
             "revit_save_document": ("revit.save_document", lambda args: {"path": args.get("path", "")}),
             "revit_create_grid": (
@@ -927,6 +939,15 @@ class RevitProvider(AECProvider):
                     "end_z": {"type": "number", "description": "End point Z coordinate in feet", "default": 0},
                     "height": {"type": "number", "description": "Wall height in feet", "default": 10},
                     "level": {"type": "string", "description": "Level name (e.g., 'L1', 'L2')", "default": "L1"},
+                    "wall_type": {
+                        "type": "string",
+                        "description": "Wall type name. Omit to use the project's default basic wall type; an unknown name fails.",
+                    },
+                    "reverse": {
+                        "type": "boolean",
+                        "description": "Flip the wall so its exterior face is on the other side of the drawn line. Default false.",
+                        "default": False,
+                    },
                 },
                 "required": ["start_x", "start_y", "end_x", "end_y"],
             },
@@ -951,6 +972,10 @@ class RevitProvider(AECProvider):
                         },
                     },
                     "level": {"type": "string", "description": "Level name", "default": "L1"},
+                    "floor_type": {
+                        "type": "string",
+                        "description": "Floor type name. Omit to use the first non-foundation floor type; an unknown name fails.",
+                    },
                 },
                 "required": ["points"],
             },
@@ -970,7 +995,14 @@ class RevitProvider(AECProvider):
                         },
                     },
                     "level": {"type": "string", "description": "Level name"},
-                    "slope": {"type": "number", "description": "Roof slope", "default": 0.5},
+                    "roof_type": {
+                        "type": "string",
+                        "description": "Roof type name. Omit to use the project's default roof type; an unknown name fails.",
+                    },
+                    "slope": {
+                        "type": "number",
+                        "description": "Roof slope as rise over run (0.5 = 1:2) applied to every boundary edge. Omit or 0 for a flat roof.",
+                    },
                 },
                 "required": ["points", "level"],
             },
@@ -1009,6 +1041,11 @@ class RevitProvider(AECProvider):
                 "properties": {
                     "name": {"type": "string", "description": "Level name"},
                     "elevation": {"type": "number", "description": "Elevation in feet"},
+                    "create_plan_view": {
+                        "type": "boolean",
+                        "description": "Also create a floor plan view for the level in the same step. Default true.",
+                        "default": True,
+                    },
                 },
                 "required": ["name", "elevation"],
             },
