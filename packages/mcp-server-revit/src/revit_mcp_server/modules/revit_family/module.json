@@ -1,0 +1,173 @@
+{
+  "id": "revit_family",
+  "name": "Revit Families (make a family from data)",
+  "version": "0.1.0",
+  "schema_version": 1,
+  "min_hub_version": "1.2.0",
+  "description": "Make loadable Revit families from data. revit_make_family builds a box family with pipe, duct or electrical connectors from a spec, saves the .rfa inside the workspace, loads it into the project and checks it with revit_probe_family. It is a write tool: it needs an approved plan and rolls back on failure unless on_error is skip.",
+  "author": "AEC Model Bridge",
+  "license": "GPL-3.0-or-later",
+  "requires_providers": [
+    "revit"
+  ],
+  "permissions": [
+    "model.read",
+    "model.write",
+    "workspace.write"
+  ],
+  "commands": [
+    {
+      "id": "make_family",
+      "title": "Make a Family From a Spec (box body and connectors)",
+      "mcp_tool": "revit_make_family",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "specs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Family name and file name (without .rfa). Must not contain \\ / : * ? \" < > | and must be unique in the call."
+                },
+                "category": {
+                  "type": "string",
+                  "enum": [
+                    "mech",
+                    "plumb",
+                    "air",
+                    "elec_eq",
+                    "elec_fx",
+                    "light"
+                  ],
+                  "description": "mech: Mechanical Equipment (pipe, duct or elec ports, at least one pipe or duct). plumb: Plumbing Fixtures (pipe, elec; at least one pipe). air: Air Terminals (duct, elec; at least one duct). elec_eq: Electrical Equipment, elec_fx: Electrical Fixtures, light: Lighting Fixtures (elec only). A category that does not fit the port kinds is refused."
+                },
+                "w": {
+                  "type": "number",
+                  "description": "Body width (x) in metres."
+                },
+                "d": {
+                  "type": "number",
+                  "description": "Body depth (y) in metres."
+                },
+                "h": {
+                  "type": "number",
+                  "description": "Body height (z) in metres."
+                },
+                "ports": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "pos": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "[x, y, z] of the port in metres, relative to the family origin. The body box is centred on x and y with its bottom at z=0."
+                      },
+                      "dir": {
+                        "type": "string",
+                        "enum": [
+                          "+x",
+                          "-x",
+                          "+y",
+                          "-y",
+                          "+z",
+                          "-z"
+                        ],
+                        "description": "Outward direction of the connector: the face of the small port cube it sits on."
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "pipe",
+                          "duct",
+                          "elec",
+                          "electrical"
+                        ],
+                        "description": "Connector type. elec and electrical mean the same."
+                      },
+                      "system": {
+                        "type": "string",
+                        "description": "pipe: cold, hot, san, vent, hsup, hret. duct: supply, return, exhaust, outdoor. elec: power (default), data."
+                      },
+                      "dia_mm": {
+                        "type": "number",
+                        "description": "Connector diameter in millimetres. Required for pipe and duct, not allowed for elec."
+                      },
+                      "flow": {
+                        "type": "string",
+                        "enum": [
+                          "in",
+                          "out",
+                          "both"
+                        ],
+                        "description": "Flow direction at the connector. Pipe and duct only; optional."
+                      },
+                      "label": {
+                        "type": "string",
+                        "description": "Your own name for the port (printable ASCII, at most 80 characters). Used in messages."
+                      }
+                    },
+                    "required": [
+                      "pos",
+                      "dir",
+                      "kind"
+                    ]
+                  },
+                  "description": "Connectors, at most 40. Each one gets a 40 mm cube on its pos and a real connector on the cube face named by dir."
+                }
+              },
+              "required": [
+                "name",
+                "category",
+                "w",
+                "d",
+                "h"
+              ]
+            },
+            "description": "1 to 5 family specs, built in order. The spec format is that of docs/recipes/villa2/m1_specs.json. Use this tool for a connector-bearing equipment, fixture or terminal family; use revit_execute_python for any other family shape."
+          },
+          "output_dir": {
+            "type": "string",
+            "description": "Folder for the saved .rfa files, one per spec named <name>.rfa. Must lie inside the allowed workspace directories; it is created when missing."
+          },
+          "template_path": {
+            "type": "string",
+            "description": "Optional .rft family template to use for every spec, inside the allowed workspace directories. Without it the Revit family template folder is searched for a template that fits the category (generic model as the fallback). If none is found the call fails with template_not_found; no path is guessed."
+          },
+          "replace": {
+            "type": "boolean",
+            "default": false,
+            "description": "Overwrite an existing .rfa file and load over a project family of the same name. Default false: either one stops the call before anything changes."
+          },
+          "on_error": {
+            "type": "string",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort",
+            "description": "abort (default): the first failure rolls the whole call back and removes the .rfa files it wrote. skip: keep the families that worked and list the failures."
+          }
+        },
+        "required": [
+          "specs",
+          "output_dir"
+        ]
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    }
+  ]
+}

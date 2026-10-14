@@ -1,0 +1,400 @@
+# revit_make_family (write mode, a few families per call; the bridge waits 30 s).
+# ARGS = {specs: [{name, category, w, d, h, ports: [{pos, dir, kind, system, dia_mm, flow, label}]}],
+#         output_dir, template_path, replace, on_error}
+# Ported from docs/recipes/villa2/m1_mep_families.py, but the family is built from a real family template
+# (Application.NewFamilyDocument) instead of the project's own "Pole" family.
+# Per spec: family document from the template -> category -> body box (extrusion, bottom at z=0, centred on x/y) ->
+# one small port cube per port with a real pipe, duct or electrical connector on the cube face named by dir -> one
+# family type -> checks inside the family document -> SaveAs into output_dir -> the family document is closed
+# (always, try/finally) -> LoadFamily into the project in its own Transaction -> checks in the project.
+# The spec was validated on the server before this script was built: categories match port kinds, names are safe
+# file names, output_dir and template_path are inside the workspace sandbox. Spec numbers are metres and millimetres.
+# The project is changed only by LoadFamily, inside one TransactionGroup: on abort (default) a failure rolls
+# everything back and removes the .rfa files this call wrote; "skip" keeps the families that worked.
+import System
+from System.IO import Directory, File, FileInfo, Path as IoPath, SearchOption
+from Autodesk.Revit.DB.Plumbing import PipeSystemType
+from Autodesk.Revit.DB.Mechanical import DuctSystemType
+from Autodesk.Revit.DB.Electrical import ElectricalSystemType
+
+FT = FT_TO_M            # metres per foot: x / FT converts metres to feet
+PORT = 0.04             # port cube edge, m
+CAT_NAMES = {"mech": "OST_MechanicalEquipment", "plumb": "OST_PlumbingFixtures", "air": "OST_DuctTerminal",
+             "elec_eq": "OST_ElectricalEquipment", "elec_fx": "OST_ElectricalFixtures", "light": "OST_LightingFixtures"}
+PIPE_SYS = {"cold": "DomesticColdWater", "hot": "DomesticHotWater", "san": "Sanitary", "vent": "Vent",
+            "hsup": "SupplyHydronic", "hret": "ReturnHydronic"}
+DUCT_SYS = {"supply": "SupplyAir", "return": "ReturnAir", "exhaust": "ExhaustAir", "outdoor": "OtherAir"}
+ELEC_SYS = {"power": "PowerCircuit", "data": "Data"}
+DOMAIN_OF_KIND = {"pipe": "Piping", "duct": "Hvac", "elec": "Electrical"}
+# File-name words that pick the template of a category; the generic model template is the explicit fallback.
+TEMPLATE_WORDS = {"mech": ["mechanical equipment"], "plumb": ["plumbing fixture"], "air": ["air terminal", "duct terminal"],
+                  "elec_eq": ["electrical equipment"], "elec_fx": ["electrical fixture"], "light": ["lighting fixture"]}
+GENERIC_WORDS = ["generic model"]
+# Hosted, line-based and other special templates are never picked by name.
+TEMPLATE_SKIP = ["based", "hosted", "wall", "ceiling", "floor", "face", "line", "work plane", "adaptive", "curtain",
+                 "roof", "pattern", "profile", "detail", "annotation"]
+CREATED = []            # .rfa files this call wrote (removed again when the call is rolled back)
+
+
+def cat_bic(key):
+    return getattr(BuiltInCategory, CAT_NAMES[key])
+
+
+def list_templates(folder):
+    out = []
+    if folder and Directory.Exists(folder):
+        for p in Directory.GetFiles(folder, "*.rft", SearchOption.AllDirectories):
+            out.append(p)
+    return out
+
+
+def pick_templates(files, words):
+    """Template files whose name holds one of the words, best first: 'Metric ...' before others, then the shortest name."""
+    hits = []
+    for p in files:
+        stem = IoPath.GetFileNameWithoutExtension(p).lower()
+        wanted = False
+        for w in words:
+            if stem.find(w) >= 0:
+                wanted = True
+        if not wanted:
+            continue
+        skipped = False
+        for s in TEMPLATE_SKIP:
+            if stem.find(s) >= 0:
+                skipped = True
+        if skipped:
+            continue
+        hits.append((0 if stem.startswith("metric") else 1, len(stem), p))
+    hits.sort()
+    return [h[2] for h in hits]
+
+
+def resolve_template(category):
+    """(path, how, None) or (None, None, message). Never guesses a path: explicit template_path, else a search of Revit's template folder."""
+    explicit = ARGS.get("template_path")
+    if explicit:
+        if not File.Exists(explicit):
+            return None, None, "template_path '%s' does not exist" % explicit
+        return explicit, "explicit", None
+    folder = ""
+    try:
+        folder = app.FamilyTemplatePath
+    except Exception:
+        folder = ""
+    files = list_templates(folder)
+    hits = pick_templates(files, TEMPLATE_WORDS[category])
+    if hits:
+        return hits[0], "category", None
+    hits = pick_templates(files, GENERIC_WORDS)
+    if hits:
+        return hits[0], "generic", None
+    names = []
+    for p in files[:8]:
+        names.append(IoPath.GetFileName(p))
+    where = ("the folder '%s' holds %d .rft files%s" % (folder, len(files), (" (first: " + ", ".join(names) + ")") if names else "")) if folder else "Revit reports no family template folder"
+    return None, None, ("no family template found for category '%s' (looked for a file name with '%s' or '%s'; %s). Pass template_path "
+                        "(a .rft file inside the workspace) or set the family template folder in Revit Options > File Locations."
+                        % (category, "' or '".join(TEMPLATE_WORDS[category]), GENERIC_WORDS[0], where))
+
+
+def face_key(face):
+    n = face.FaceNormal
+    if abs(n.X) > 0.9:
+        return "+x" if n.X > 0 else "-x"
+    if abs(n.Y) > 0.9:
+        return "+y" if n.Y > 0 else "-y"
+    return "+z" if n.Z > 0 else "-z"
+
+
+def make_box(fd, cx, cy, z0, w, d, h):
+    """Extrusion box (metres): footprint w x d centred on cx, cy, bottom at z0, height h."""
+    sp = SketchPlane.Create(fd, Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ(0, 0, z0 / FT)))
+    pts = [(cx - w / 2, cy - d / 2), (cx + w / 2, cy - d / 2), (cx + w / 2, cy + d / 2), (cx - w / 2, cy + d / 2)]
+    ca = CurveArray()
+    for i in range(4):
+        a, b = pts[i], pts[(i + 1) % 4]
+        ca.Append(Line.CreateBound(XYZ(a[0] / FT, a[1] / FT, z0 / FT), XYZ(b[0] / FT, b[1] / FT, z0 / FT)))
+    arr = CurveArrArray()
+    arr.Append(ca)
+    return fd.FamilyCreate.NewExtrusion(True, arr, sp, h / FT)
+
+
+def faces_of(fd, ex):
+    opt = Options()
+    opt.ComputeReferences = True
+    opt.DetailLevel = ViewDetailLevel.Fine
+    faces = {}
+    for g in ex.get_Geometry(opt):
+        if isinstance(g, Solid):
+            for f in g.Faces:
+                if isinstance(f, PlanarFace):
+                    faces[face_key(f)] = f
+    return faces
+
+
+def set_dia(ce, dia_mm):
+    """ConnectorElement.Radius is read-only: the size lives in a built-in parameter."""
+    for bip, val in ((BuiltInParameter.CONNECTOR_DIAMETER, dia_mm / 1000.0 / FT), (BuiltInParameter.CONNECTOR_RADIUS, dia_mm / 2000.0 / FT)):
+        try:
+            pm = ce.get_Parameter(bip)
+            if pm is not None and not pm.IsReadOnly:
+                pm.Set(val)
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def set_flow(ce, kind, flow):
+    bip = BuiltInParameter.RBS_PIPE_FLOW_DIRECTION_PARAM if kind == "pipe" else BuiltInParameter.RBS_DUCT_FLOW_DIRECTION_PARAM
+    pm = ce.get_Parameter(bip)
+    if pm is None:
+        return "the connector has no flow direction parameter"
+    try:
+        pm.Set({"in": 0, "out": 1, "both": 2}[flow])
+    except Exception as ex:
+        return str(ex)
+    return None
+
+
+def make_connector(fd, p, ref):
+    kind = p["kind"]
+    if kind == "pipe":
+        return ConnectorElement.CreatePipeConnector(fd, getattr(PipeSystemType, PIPE_SYS[p["system"]]), ref)
+    if kind == "duct":
+        return ConnectorElement.CreateDuctConnector(fd, getattr(DuctSystemType, DUCT_SYS[p["system"]]), ConnectorProfileType.Round, ref)
+    return ConnectorElement.CreateElectricalConnector(fd, getattr(ElectricalSystemType, ELEC_SYS[p.get("system") or "power"]), ref)
+
+
+def port_name(p, i):
+    return "port %d%s" % (i + 1, (" '%s'" % p["label"]) if p.get("label") else "")
+
+
+def family_checks(fd, spec):
+    """Facts read back from the family document: (nested count, category matches, connector domain counts)."""
+    nested = len([x for x in FilteredElementCollector(fd).OfClass(FamilyInstance)])
+    cat = fd.OwnerFamily.FamilyCategory
+    cat_ok = cat is not None and eid(cat) == int(cat_bic(spec["category"]))
+    domains = {}
+    total = 0
+    for ce in FilteredElementCollector(fd).OfClass(ConnectorElement):
+        total += 1
+        dom = str(ce.Domain)
+        domains[dom] = domains.get(dom, 0) + 1
+    return nested, cat_ok, total, domains
+
+
+def build_family(spec, template, path):
+    """Build and save one family in its own family document. The document is always closed again. Returns the facts read back."""
+    fd = app.NewFamilyDocument(template)
+    if fd is None:
+        raise StepError("Revit could not create a family document from the template '%s'" % template)
+    try:
+        errors = []
+        t = Transaction(fd, "AEC family " + spec["name"])
+        t.Start()
+        try:
+            opts = t.GetFailureHandlingOptions()
+            opts.SetFailuresPreprocessor(Collector(RUN[0].warnings, errors))
+            t.SetFailureHandlingOptions(opts)
+            if len([x for x in FilteredElementCollector(fd).OfClass(FamilyInstance)]) > 0:
+                raise StepError("the template '%s' already contains nested family instances; a nested instance is rescaled with its parent and hides content, so this template is refused" % template)
+            bic = cat_bic(spec["category"])
+            cur = fd.OwnerFamily.FamilyCategory
+            if cur is None or eid(cur) != int(bic):
+                fd.OwnerFamily.FamilyCategory = fd.Settings.Categories.get_Item(bic)
+            fd.Regenerate()
+            make_box(fd, 0, 0, 0, spec["w"], spec["d"], spec["h"])
+            fd.Regenerate()
+            for i, p in enumerate(spec["ports"]):
+                x, y, z = p["pos"]
+                ex = make_box(fd, x, y, z - PORT / 2, PORT, PORT, PORT)
+                fd.Regenerate()
+                face = faces_of(fd, ex).get(p["dir"])
+                if face is None:
+                    raise StepError("%s: the port cube has no %s face" % (port_name(p, i), p["dir"]))
+                ce = make_connector(fd, p, face.Reference)
+                if p["kind"] != "elec" and not set_dia(ce, p["dia_mm"]):
+                    raise StepError("%s: Revit would not take the connector size %s mm" % (port_name(p, i), p["dia_mm"]))
+                if p.get("flow") and p["kind"] != "elec":
+                    why = set_flow(ce, p["kind"], p["flow"])
+                    if why:
+                        raise StepError("%s: flow direction '%s' not set: %s" % (port_name(p, i), p["flow"], why))
+            fm = fd.FamilyManager
+            if fm.Types.Size == 0:
+                fm.CurrentType = fm.NewType(spec["name"])
+            status = t.Commit()
+            if status != TransactionStatus.Committed:
+                raise StepError("Revit did not commit the family%s" % ((": " + "; ".join(errors[:3])) if errors else ""))
+        except Exception:
+            try:
+                if t.HasStarted():
+                    t.RollBack()
+            except Exception:
+                pass
+            raise
+        nested, cat_ok, total, domains = family_checks(fd, spec)
+        want = {}
+        for p in spec["ports"]:
+            want[DOMAIN_OF_KIND[p["kind"]]] = want.get(DOMAIN_OF_KIND[p["kind"]], 0) + 1
+        if nested > 0:
+            raise StepError("the family document holds %d nested family instance(s); expected none" % nested)
+        if not cat_ok:
+            raise StepError("the family document is not in the category '%s'" % spec["category"])
+        if total != len(spec["ports"]):
+            raise StepError("the family document has %d connectors, the spec has %d ports" % (total, len(spec["ports"])))
+        for dom in want:
+            got = 0
+            for k in domains:
+                if k.find(dom) >= 0:
+                    got += domains[k]
+            if got != want[dom]:
+                raise StepError("the family document has %d %s connectors, the spec has %d" % (got, dom, want[dom]))
+        so = SaveAsOptions()
+        so.OverwriteExistingFile = True
+        fd.SaveAs(path, so)
+        if not File.Exists(path) or FileInfo(path).Length <= 0:
+            raise StepError("Revit reported the save but '%s' is missing or empty" % path)
+        CREATED.append(path)
+        return total
+    finally:
+        try:
+            fd.Close(False)
+        except Exception as ex:
+            info("FAMILY_DOC_CLOSE", "the family document of '%s' could not be closed: %s" % (spec["name"], ex))
+
+
+class LoadOptions(IFamilyLoadOptions):
+    def OnFamilyFound(self, inUse, overwrite):
+        return bool(ARGS.get("replace"))
+
+    def OnSharedFamilyFound(self, shared, inUse, source, overwrite):
+        return bool(ARGS.get("replace"))
+
+
+def find_family(name):
+    for f in FilteredElementCollector(doc).OfClass(Family):
+        if f.Name == name:
+            return f
+    return None
+
+
+def load_family(spec, path):
+    res = doc.LoadFamily(path, LoadOptions())
+    ok = res[0] if isinstance(res, tuple) else bool(res)
+    fam = res[1] if isinstance(res, tuple) and len(res) > 1 else None
+    if not ok:
+        raise StepError("Revit did not load '%s' into the project" % path)
+    if fam is None:
+        fam = find_family(spec["name"])
+    if fam is None:
+        raise StepError("Revit reported the load but no family '%s' is in the project" % spec["name"])
+    return fam
+
+
+def remove_file(path, why):
+    """Delete a file this call wrote (never one that was already there before the save)."""
+    if path not in CREATED:
+        return
+    try:
+        CREATED.remove(path)
+        if File.Exists(path):
+            File.Delete(path)
+    except Exception as ex:
+        info("FILE_NOT_REMOVED", "%s: could not delete %s (%s)" % (why, path, ex))
+
+
+def make_one(run, plan, state):
+    spec, template, how, path = plan
+    name = spec["name"]
+    built = run.step("Build family '%s'" % name, lambda: build_family(spec, template, path), txn=False)
+    if built is None:
+        return None
+    existed = state["existing"].get(name) is not None
+    fam = run.step("Load family '%s'" % name, lambda: load_family(spec, path))
+    if fam is None:
+        return None
+    run.changed.append(eid(fam))
+    symbols = []
+    for sid in fam.GetFamilySymbolIds():
+        run.changed.append(eid(sid))
+        symbols.append(sid)
+    got = find_family(name)
+    post("family_loaded:" + name, got is not None and eid(got) == eid(fam), "family id %d" % eid(fam))
+    cat = fam.FamilyCategory
+    post("category:" + name, cat is not None and eid(cat) == int(cat_bic(spec["category"])), "category '%s' in the project" % (cat.Name if cat is not None else "none"))
+    post("types:" + name, len(symbols) >= 1, "%d type(s)" % len(symbols))
+    post("connectors_built:" + name, built == len(spec["ports"]), "%d connector elements and 0 nested instances in the family document for %d ports" % (built, len(spec["ports"])))
+    size = 0
+    try:
+        size = FileInfo(path).Length
+    except Exception:
+        pass
+    item([("kind", "family"), ("id", eid(fam)), ("name", name), ("category", spec["category"]), ("template", template), ("template_kind", how),
+          ("file", path), ("bytes", size), ("ports", len(spec["ports"])), ("types", len(symbols)), ("status", "replaced" if existed else "created")])
+    return fam
+
+
+def main():
+    doc_meta()
+    if doc.IsFamilyDocument:
+        refuse("wrong_document", "the active document is a family document; open the project that should receive the families")
+        return
+    specs = ARGS["specs"]
+    out_dir = ARGS["output_dir"]
+    replace = bool(ARGS.get("replace"))
+    existing = {}
+    for f in FilteredElementCollector(doc).OfClass(Family):
+        existing[f.Name] = f
+    plans = []
+    cache = {}
+    for spec in specs:
+        cat = spec["category"]
+        if cat not in cache:
+            tpl, how, why = resolve_template(cat)
+            if tpl is None:
+                refuse("template_not_found", why)
+                return
+            cache[cat] = (tpl, how)
+            if how == "generic":
+                info("TEMPLATE_GENERIC", "no category template found for '%s'; used the generic model template %s and set the category in the family" % (cat, tpl))
+        tpl, how = cache[cat]
+        path = IoPath.Combine(out_dir, spec["name"] + ".rfa")
+        if not replace and File.Exists(path):
+            refuse("file_exists", "'%s' already exists; pass replace=true to overwrite it or choose another output_dir" % path)
+            return
+        if not replace and existing.get(spec["name"]) is not None:
+            refuse("family_exists", "a family named '%s' is already in the project (id %d); pass replace=true to load over it or choose another name" % (spec["name"], eid(existing[spec["name"]])), [eid(existing[spec["name"]])])
+            return
+        plans.append((spec, tpl, how, path))
+    if not Directory.Exists(out_dir):
+        Directory.CreateDirectory(out_dir)
+
+    run = Runner("AEC make family", ARGS.get("on_error"))
+    state = {"existing": existing}
+    made = 0
+    try:
+        for plan in plans:
+            fam = None
+            try:
+                fam = make_one(run, plan, state)
+            finally:
+                if fam is None:
+                    remove_file(plan[3], "family '%s' was not loaded" % plan[0]["name"])
+            if fam is not None:
+                made += 1
+        summary("%d of %d families made; templates: %s" % (made, len(plans), "; ".join(sorted(set([p[1] for p in plans])))))
+    except Abort:
+        raise
+    except Exception:
+        run.crashed = True
+        raise
+    finally:
+        run.close()
+        if run.outcome == "rolled_back":
+            for p in list(CREATED):
+                remove_file(p, "the call was rolled back")
+
+
+__output__ = run_write(main)

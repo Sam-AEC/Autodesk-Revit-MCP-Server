@@ -678,9 +678,415 @@ def installed(monkeypatch: Any) -> Iterator[None]:
     _CURRENT["doc"] = None
 
 
-def run_script(script: str, document: Document) -> str:
+def run_script(script: str, document: Document, app: Any = None) -> str:
     """Execute a built script like the add-in does (``doc`` and ``app`` in scope) and return ``__output__``."""
     _CURRENT["doc"] = document
-    scope: Dict[str, Any] = {"doc": document, "app": App(), "__output__": "", "__name__": "__ipy__"}
+    scope: Dict[str, Any] = {"doc": document, "app": app if app is not None else App(), "__output__": "", "__name__": "__ipy__"}
     exec(compile(script, "<embedded-script>", "exec"), scope)  # noqa: S102 - test-only stub execution
     return str(scope["__output__"])
+
+
+# --------------------------------------------------------------------------- #
+# Write-side stand-ins for the family builder (tests/test_revit_family_scripts.py)
+# --------------------------------------------------------------------------- #
+# Just enough of the Revit API to run scripts/make_family.ipy of the revit_family module under CPython: a family
+# document that records what is built in it, a project document that can load a saved family, transactions that can
+# be rolled back, and System.IO on the real file system (tests give it a temp folder). Everything is opt-in through
+# install_family_write_api(); the read-side stubs above are not changed.
+XYZ.BasisZ = XYZ(0.0, 0.0, 1.0)
+
+
+class FLine(Line):
+    @staticmethod
+    def CreateBound(a: XYZ, b: XYZ) -> "FLine":
+        return FLine((a.X, a.Y, a.Z), (b.X, b.Y, b.Z))
+
+
+class CurveArray:
+    def __init__(self) -> None:
+        self.items: List[Any] = []
+
+    def Append(self, curve: Any) -> None:
+        self.items.append(curve)
+
+
+class CurveArrArray:
+    def __init__(self) -> None:
+        self.items: List[CurveArray] = []
+
+    def Append(self, arr: CurveArray) -> None:
+        self.items.append(arr)
+
+
+class Plane:
+    @staticmethod
+    def CreateByNormalAndOrigin(normal: XYZ, origin: XYZ) -> Any:
+        return types.SimpleNamespace(Normal=normal, Origin=origin)
+
+
+class SketchPlane:
+    @staticmethod
+    def Create(document: Any, plane: Any) -> Any:
+        return types.SimpleNamespace(Plane=plane)
+
+
+class SaveAsOptions:
+    OverwriteExistingFile = False
+
+
+class IFailuresPreprocessor:
+    pass
+
+
+class IFamilyLoadOptions:
+    pass
+
+
+class _WParam:
+    """A connector parameter the script can set."""
+
+    def __init__(self, store: Dict[str, Any], key: str, read_only: bool = False) -> None:
+        self._store, self._key, self.IsReadOnly = store, key, read_only
+
+    def Set(self, value: Any) -> None:
+        self._store[self._key] = value
+
+
+class _FaceRef:
+    def __init__(self, extrusion: "FExtrusion", key: str) -> None:
+        self.extrusion, self.key = extrusion, key
+
+
+class _BoxFace(PlanarFace):
+    def __init__(self, extrusion: "FExtrusion", key: str) -> None:
+        super().__init__(0.0, 1.0, [])
+        axis, sign = key[1], 1.0 if key[0] == "+" else -1.0
+        self.FaceNormal = XYZ(sign if axis == "x" else 0.0, sign if axis == "y" else 0.0, sign if axis == "z" else 0.0)
+        self.Reference = _FaceRef(extrusion, key)
+
+
+class FExtrusion(GenericForm):
+    """The box NewExtrusion makes: six planar faces with references, a bounding box in feet."""
+
+    def get_Geometry(self, opt: Any) -> List[Any]:
+        return [Solid(1.0, [_BoxFace(self, k) for k in ("+x", "-x", "+y", "-y", "+z", "-z")])]
+
+
+class FConnector(ConnectorElement):
+    """ConnectorElement with the Create* factories and the size / flow parameters a family builder sets."""
+
+    def __init__(self, eid: int, domain: str, system: str, ref: Any, fam: "FamilyDoc") -> None:
+        super().__init__(eid, domain, system)
+        self.ref = ref
+        self.values: Dict[str, Any] = {}
+        self._fam = fam
+
+    def get_Parameter(self, which: Any) -> Any:
+        app = self._fam.app
+        if which in ("connector_diameter", "connector_radius"):
+            return None if app.refuse_size else _WParam(self.values, which)
+        if which in ("pipe_flow", "duct_flow"):
+            return None if app.refuse_flow else _WParam(self.values, which)
+        return None
+
+    @staticmethod
+    def _make(fam: "FamilyDoc", domain: str, system: Any, ref: Any) -> "FConnector":
+        ce = FConnector(fam.next_id(), domain, str(system), ref, fam)
+        fam.elements.append(ce)
+        return ce
+
+    @staticmethod
+    def CreatePipeConnector(fam: "FamilyDoc", system: Any, ref: Any) -> "FConnector":
+        return FConnector._make(fam, "DomainPiping", system, ref)
+
+    @staticmethod
+    def CreateDuctConnector(fam: "FamilyDoc", system: Any, profile: Any, ref: Any) -> "FConnector":
+        return FConnector._make(fam, "DomainHvac", system, ref)
+
+    @staticmethod
+    def CreateElectricalConnector(fam: "FamilyDoc", system: Any, ref: Any) -> "FConnector":
+        return FConnector._make(fam, "DomainElectrical", system, ref)
+
+
+class _FamilyCreate:
+    def __init__(self, fam: "FamilyDoc") -> None:
+        self._fam = fam
+
+    def NewExtrusion(self, solid: bool, profile: CurveArrArray, plane: Any, height_ft: float) -> FExtrusion:
+        pts = [p for curve in profile.items[0].items for p in (curve.p0, curve.p1)]
+        z0 = plane.Plane.Origin.Z
+        lo = (min(p.X for p in pts), min(p.Y for p in pts), z0)
+        hi = (max(p.X for p in pts), max(p.Y for p in pts), z0 + height_ft)
+        ex = FExtrusion(self._fam.next_id(), lo, hi, solid)
+        self._fam.elements.append(ex)
+        return ex
+
+
+class _Types:
+    def __init__(self) -> None:
+        self.names: List[str] = []
+
+    @property
+    def Size(self) -> int:
+        return len(self.names)
+
+
+class _FamManager:
+    def __init__(self) -> None:
+        self.Types = _Types()
+        self.Parameters: List[Any] = []
+        self.CurrentType: Any = None
+
+    def NewType(self, name: str) -> str:
+        self.Types.names.append(name)
+        return name
+
+
+class _Categories:
+    def get_Item(self, bic: int) -> Category:
+        return Category(bic, "Category %s" % bic)
+
+
+class FTransaction:
+    def __init__(self, document: Any, name: str = "") -> None:
+        self.doc, self.name, self.started = document, name, False
+
+    def Start(self) -> None:
+        self.started = True
+        self.doc.open_txns += 1
+
+    def GetFailureHandlingOptions(self) -> Any:
+        return types.SimpleNamespace(SetFailuresPreprocessor=lambda p: None)
+
+    def SetFailureHandlingOptions(self, opts: Any) -> None:
+        return None
+
+    def HasStarted(self) -> bool:
+        return self.started
+
+    def Commit(self) -> str:
+        self.started = False
+        self.doc.open_txns -= 1
+        if self.doc.refuse_commit:
+            self.doc.rolled_back_txns.append(self.name)
+            return "RolledBack"
+        self.doc.committed_txns.append(self.name)
+        return "Committed"
+
+    def RollBack(self) -> str:
+        self.started = False
+        self.doc.open_txns -= 1
+        self.doc.rolled_back_txns.append(self.name)
+        return "RolledBack"
+
+
+class FTransactionGroup:
+    def __init__(self, document: Any, name: str = "") -> None:
+        self.doc, self.name, self.started, self.snapshot = document, name, False, []
+
+    def Start(self) -> None:
+        self.started, self.snapshot = True, list(self.doc.elements)
+
+    def HasStarted(self) -> bool:
+        return self.started
+
+    def RollBack(self) -> str:
+        self.started = False
+        self.doc.elements = list(self.snapshot)
+        self.doc.group_log.append("RolledBack")
+        return "RolledBack"
+
+    def Assimilate(self) -> str:
+        self.started = False
+        self.doc.group_log.append("Assimilated")
+        return "Committed"
+
+
+class FamilyDoc(Document):
+    """A family document made by FakeApp.NewFamilyDocument."""
+
+    def __init__(self, app: "FakeApp", template: str) -> None:
+        super().__init__()
+        self.app, self.template, self.IsFamilyDocument = app, template, True
+        self._ids = 1000
+        self.OwnerFamily = types.SimpleNamespace(FamilyCategory=app.template_category)
+        self.Settings = types.SimpleNamespace(Categories=_Categories())
+        self.FamilyCreate = _FamilyCreate(self)
+        self.FamilyManager = _FamManager()
+        self.open_txns, self.committed_txns, self.rolled_back_txns, self.group_log = 0, [], [], []
+        self.refuse_commit = False
+        self.saved_to: Optional[str] = None
+        self.elements.extend(app.template_nested)
+
+    def next_id(self) -> int:
+        self._ids += 1
+        return self._ids
+
+    def Regenerate(self) -> None:
+        return None
+
+    def SaveAs(self, path: str, options: Any) -> None:
+        if self.app.fail_save:
+            raise RuntimeError("disk is full")
+        with open(path, "wb") as fh:
+            fh.write(b"RFA")
+        self.saved_to = path
+        self.app.saved[path] = self.OwnerFamily.FamilyCategory
+
+    def Close(self, save: bool) -> bool:
+        assert save is False, "the builder must never close with save=True"
+        self.closed = True
+        return True
+
+
+class ProjectDoc(Document):
+    """The project document: loads a family saved by a FamilyDoc and supports transactions and groups."""
+
+    def __init__(self, app: "FakeApp") -> None:
+        super().__init__()
+        self.app, self.IsFamilyDocument = app, False
+        self.open_txns, self.committed_txns, self.rolled_back_txns, self.group_log = 0, [], [], []
+        self.refuse_commit = False
+        self._ids = 500
+        self.load_calls: List[str] = []
+
+    def LoadFamily(self, path: str, options: Any) -> Any:
+        self.load_calls.append(path)
+        if self.app.refuse_load:
+            return (False, None)
+        category = self.app.saved.get(path)
+        if category is None:
+            raise RuntimeError("not a family file: %s" % path)
+        name = path.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        existing = [e for e in self.elements if isinstance(e, Family) and e.Name == name]
+        if existing:
+            if not options.OnFamilyFound(True, False):
+                return (False, existing[0])
+            existing[0].FamilyCategory = category
+            return (True, existing[0])
+        self._ids += 1
+        fam = Family(self._ids, name, category)
+        self._ids += 1
+        FamilySymbol(self._ids, name, fam)
+        self.elements.append(fam)
+        self.elements.extend(fam.symbols)
+        return (True, fam)
+
+
+class FakeApp(App):
+    """Application with a template folder, NewFamilyDocument and switches to make the builder fail."""
+
+    def __init__(self, template_folder: str = "") -> None:
+        self.FamilyTemplatePath = template_folder
+        self.template_category = Category(BuiltInCategory.OST_GenericModel, "Generic Models")
+        self.template_nested: List[Element] = []
+        self.family_docs: List[FamilyDoc] = []
+        self.saved: Dict[str, Category] = {}
+        self.refuse_size = self.refuse_flow = self.fail_save = self.refuse_load = False
+
+    def NewFamilyDocument(self, template: str) -> FamilyDoc:
+        import os
+
+        if not os.path.isfile(template):
+            raise RuntimeError("the template file does not exist: %s" % template)
+        fd = FamilyDoc(self, template)
+        self.family_docs.append(fd)
+        return fd
+
+
+class _IoDirectory:
+    @staticmethod
+    def Exists(path: str) -> bool:
+        import os
+
+        return os.path.isdir(path)
+
+    @staticmethod
+    def GetFiles(folder: str, pattern: str = "*", option: Any = None) -> List[str]:
+        import pathlib
+
+        walk = pathlib.Path(folder).rglob(pattern) if option else pathlib.Path(folder).glob(pattern)
+        return [str(p) for p in walk if p.is_file()]
+
+    @staticmethod
+    def CreateDirectory(path: str) -> None:
+        import os
+
+        os.makedirs(path, exist_ok=True)
+
+
+class _IoFile:
+    @staticmethod
+    def Exists(path: str) -> bool:
+        import os
+
+        return os.path.isfile(path)
+
+    @staticmethod
+    def Delete(path: str) -> None:
+        import os
+
+        os.remove(path)
+
+
+class _IoFileInfo:
+    def __init__(self, path: str) -> None:
+        import os
+
+        self.Length = os.path.getsize(path)
+
+
+class _IoPath:
+    @staticmethod
+    def Combine(a: str, b: str) -> str:
+        import os
+
+        return os.path.join(a, b)
+
+    @staticmethod
+    def GetFileName(p: str) -> str:
+        import os
+
+        return os.path.basename(p)
+
+    @staticmethod
+    def GetFileNameWithoutExtension(p: str) -> str:
+        import os
+
+        return os.path.splitext(os.path.basename(p))[0]
+
+
+@contextlib.contextmanager
+def install_family_write_api(monkeypatch: Any) -> Iterator[None]:
+    """``installed()`` plus the write-side names the family builder imports (Transaction, SketchPlane, System.IO, ...)."""
+    with installed(monkeypatch):
+        db = sys.modules["Autodesk.Revit.DB"]
+        extra = {
+            "Line": FLine, "ConnectorElement": FConnector, "CurveArray": CurveArray, "CurveArrArray": CurveArrArray, "Plane": Plane,
+            "SketchPlane": SketchPlane, "SaveAsOptions": SaveAsOptions, "IFailuresPreprocessor": IFailuresPreprocessor,
+            "IFamilyLoadOptions": IFamilyLoadOptions, "Transaction": FTransaction, "TransactionGroup": FTransactionGroup,
+            "TransactionStatus": _Enum(Committed="Committed", RolledBack="RolledBack", Started="Started"),
+            "FailureSeverity": _Enum(Warning="Warning", Error="Error"),
+            "FailureProcessingResult": _Enum(Continue="Continue", ProceedWithRollBack="ProceedWithRollBack"),
+            "ConnectorProfileType": _Enum(Round="Round", Rectangular="Rectangular"),
+            "BuiltInParameter": _Enum(
+                **BuiltInParameter.__dict__, CONNECTOR_DIAMETER="connector_diameter", CONNECTOR_RADIUS="connector_radius",
+                RBS_PIPE_FLOW_DIRECTION_PARAM="pipe_flow", RBS_DUCT_FLOW_DIRECTION_PARAM="duct_flow",
+            ),
+        }
+        for name, value in extra.items():
+            setattr(db, name, value)
+        system_io = types.ModuleType("System.IO")
+        for name, value in {"Directory": _IoDirectory, "File": _IoFile, "FileInfo": _IoFileInfo, "Path": _IoPath, "SearchOption": _Enum(AllDirectories=True)}.items():
+            setattr(system_io, name, value)
+        monkeypatch.setitem(sys.modules, "System.IO", system_io)
+        for module, names in (
+            ("Autodesk.Revit.DB.Plumbing", {"PipeSystemType": ["DomesticColdWater", "DomesticHotWater", "Sanitary", "Vent", "SupplyHydronic", "ReturnHydronic"]}),
+            ("Autodesk.Revit.DB.Mechanical", {"DuctSystemType": ["SupplyAir", "ReturnAir", "ExhaustAir", "OtherAir"]}),
+            ("Autodesk.Revit.DB.Electrical", {"ElectricalSystemType": ["PowerCircuit", "Data"]}),
+        ):
+            mod = types.ModuleType(module)
+            for enum, members in names.items():
+                setattr(mod, enum, _Enum(**{m: m for m in members}))
+            monkeypatch.setitem(sys.modules, module, mod)
+        yield
