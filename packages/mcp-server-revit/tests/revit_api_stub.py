@@ -305,6 +305,10 @@ class FilteredElementCollector:
         self._not_types = True
         return self
 
+    def WhereElementIsElementType(self) -> "FilteredElementCollector":
+        self._only_types = True
+        return self
+
     def WherePasses(self, flt: Any) -> "FilteredElementCollector":
         if isinstance(flt, FamilyInstanceFilter):
             self._symbol = flt.symbol_id
@@ -315,6 +319,8 @@ class FilteredElementCollector:
 
     def _matches(self, e: Element) -> bool:
         if self._not_types and e.is_type:
+            return False
+        if getattr(self, "_only_types", False) and not e.is_type:
             return False
         if self._cls is not None and not isinstance(e, self._cls):
             return False

@@ -1,0 +1,270 @@
+# Shared helpers of the revit_params scripts (IronPython 2.7). Loaded after the revit module's _prelude.ipy and, for the
+# write script only, the revit_docs _tags_read.ipy and _write_prelude.ipy. Nothing in this file changes the model, so it
+# is also used by the read-only get_parameters script.
+#
+# Units are explicit. Revit keeps lengths in feet and angles in radians internally:
+#   mm, m      a length parameter (Double), converted to feet
+#   deg        an angle parameter (Double), converted to radians
+#   number     any other Double parameter, written as given (internal units)
+#   int        an Integer parameter
+#   bool       a Yes/No parameter (Integer 1 / 0)
+#   text       a String parameter
+#   elementid  an ElementId parameter, given by the name of the element (or its integer id)
+# UNVERIFIED against a live Revit: Definition.GetDataType() / SpecTypeId and the older ParameterType fallback,
+# Element.GetParameters(name), and the built-in ids of the refused parameters below.
+import math
+
+MM_PER_FT = 304.8
+UNITS = ("mm", "m", "deg", "number", "int", "bool", "text", "elementid")
+
+# Built-in parameters this tool never writes, with the reason. Missing names (older Revit) are skipped.
+CRITICAL = [
+    ("identity", "changes the element's type, family, category or name", [
+        "ELEM_TYPE_PARAM", "ELEM_FAMILY_AND_TYPE_PARAM", "ELEM_FAMILY_PARAM", "SYMBOL_ID_PARAM", "SYMBOL_NAME_PARAM",
+        "ALL_MODEL_TYPE_NAME", "SYMBOL_FAMILY_NAME_PARAM", "ALL_MODEL_FAMILY_NAME", "ELEM_CATEGORY_PARAM",
+        "ELEM_CATEGORY_PARAM_MT", "ID_PARAM"]),
+    ("organisation", "moves the element to another workset, phase or design option", [
+        "ELEM_PARTITION_PARAM", "PHASE_CREATED", "PHASE_DEMOLISHED", "DESIGN_OPTION_ID", "DESIGN_OPTION_PARAM"]),
+    ("tracking", "is an identity or ownership record", ["IFC_GUID", "IFC_TYPE_GUID", "EDITED_BY"]),
+    ("placement", "changes the level or host the element is placed on", [
+        "LEVEL_PARAM", "FAMILY_LEVEL_PARAM", "SCHEDULE_LEVEL_PARAM", "INSTANCE_REFERENCE_LEVEL_PARAM",
+        "INSTANCE_SCHEDULE_ONLY_LEVEL_PARAM", "WALL_BASE_CONSTRAINT", "WALL_HEIGHT_TYPE", "ROOF_BASE_LEVEL_PARAM",
+        "STAIRS_BASE_LEVEL_PARAM", "STAIRS_TOP_LEVEL_PARAM", "FAMILY_BASE_LEVEL_PARAM", "FAMILY_TOP_LEVEL_PARAM",
+        "ROOM_LEVEL_ID", "HOST_ID_PARAM"]),
+]
+
+
+def critical_reason(p):
+    """None, or why this built-in parameter is refused."""
+    try:
+        bip = p.Definition.BuiltInParameter
+    except Exception:
+        return None
+    if bip is None:
+        return None
+    for group, why, names in CRITICAL:
+        for n in names:
+            value = getattr(BuiltInParameter, n, None)
+            if value is not None and bip == value:
+                return "built-in %s parameter %s: it %s" % (group, n, why)
+    return None
+
+
+def storage_of(p):
+    try:
+        return str(p.StorageType)
+    except Exception:
+        return "None"
+
+
+def spec_of(p):
+    """length, angle, yesno, other or unknown."""
+    d = p.Definition
+    try:
+        dt = d.GetDataType()
+        if dt == SpecTypeId.Length:
+            return "length"
+        if dt == SpecTypeId.Angle:
+            return "angle"
+        if dt == SpecTypeId.Boolean.YesNo:
+            return "yesno"
+        return "other"
+    except Exception:
+        pass
+    try:
+        pt = str(d.ParameterType)
+        return {"Length": "length", "Angle": "angle", "YesNo": "yesno"}.get(pt, "other")
+    except Exception:
+        return "unknown"
+
+
+def unit_hint(p):
+    st = storage_of(p)
+    sp = spec_of(p)
+    if st == "Double":
+        return {"length": "mm", "angle": "deg"}.get(sp, "number")
+    if st == "Integer":
+        return "bool" if sp == "yesno" else "int"
+    if st == "String":
+        return "text"
+    if st == "ElementId":
+        return "elementid"
+    return ""
+
+
+def params_named(e, name):
+    """All parameters of e with this exact name (Revit may have more than one)."""
+    try:
+        return list(e.GetParameters(name))
+    except Exception:
+        p = e.LookupParameter(name)
+        return [p] if p is not None else []
+
+
+def element_name(e):
+    try:
+        return e.Name or ""
+    except Exception:
+        return ""
+
+
+def raw_value(p):
+    """Internal value: float (feet, radians, ...), int, text or an element id (int); None when unset."""
+    st = storage_of(p)
+    try:
+        if st == "Double":
+            return p.AsDouble()
+        if st == "Integer":
+            return p.AsInteger()
+        if st == "String":
+            return p.AsString()
+        if st == "ElementId":
+            return eid(p.AsElementId())
+    except Exception:
+        return None
+    return None
+
+
+def to_unit(raw, unit):
+    """Internal value -> the value in the request's unit (for old -> new rows and the revert list)."""
+    if raw is None:
+        return None
+    if unit == "mm":
+        return raw * MM_PER_FT
+    if unit == "m":
+        return raw * FT_TO_M
+    if unit == "deg":
+        return raw * 180.0 / math.pi
+    if unit == "bool":
+        return 1 if raw else 0
+    return raw
+
+
+def show(value):
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return repr(value)
+    return value
+
+
+def value_string(p):
+    try:
+        return p.AsValueString() or ""
+    except Exception:
+        return ""
+
+
+def name_of_id(i):
+    if i is None or i < 0:
+        return ""
+    e = doc.GetElement(ElementId(int(i)))
+    return element_name(e) if e is not None else ""
+
+
+def same_value(st, a, b):
+    if st == "Double":
+        if a is None or b is None:
+            return False
+        return abs(a - b) <= 1e-6 * max(1.0, abs(b))
+    if st == "String":
+        return (a or "") == (b or "")
+    return a == b
+
+
+# ---- selection ---------------------------------------------------------------------------------------------------------
+def level_name_of(e):
+    try:
+        lid = e.LevelId
+        if lid is not None and eid(lid) > 0:
+            lv = doc.GetElement(lid)
+            if lv is not None:
+                return lv.Name
+    except Exception:
+        pass
+    return ""
+
+
+def select_by(sel, cap):
+    """Elements matching selector {category, name, level, tag}; (list, None) or (None, reason). At most cap + 1 are read."""
+    col = FilteredElementCollector(doc).WhereElementIsNotElementType()
+    cats = sel.get("category") or ""
+    if cats:
+        bics, bad = parse_categories([cats])
+        if bics is None:
+            return None, "unknown category '%s'" % bad
+        col = col.OfCategory(bics[0])
+    found = []
+    for e in col:
+        if e.Category is None:
+            continue
+        if sel.get("tag") and not comment_of(e).startswith(sel["tag"]):
+            continue
+        if sel.get("name") and element_name(e) != sel["name"]:
+            continue
+        if sel.get("level") and level_name_of(e) != sel["level"]:
+            continue
+        found.append(e)
+        if len(found) > cap:
+            break
+    return found, None
+
+
+def resolve_items(items, cap, strict=True):
+    """([(item index, element, scope)], None, None, None), or (None, kind, message, ids) when the request cannot be met.
+
+    strict=False (the read tool): more than cap elements is not an error; the list is cut at cap and kind is 'capped'."""
+    out = []
+    total = 0
+    for idx, it in enumerate(items):
+        scope = it.get("scope") or "instance"
+        elems = []
+        if it.get("ids"):
+            missing = []
+            for i in it["ids"]:
+                e = doc.GetElement(ElementId(int(i)))
+                if e is None:
+                    missing.append(int(i))
+                else:
+                    elems.append(e)
+            if missing:
+                return None, "element_not_found", "items[%d]: %d id(s) are not in the document: %s" % (
+                    idx, len(missing), ",".join([str(m) for m in missing[:20]])), missing
+        else:
+            elems, why = select_by(it.get("selector") or {}, cap)
+            if elems is None:
+                return None, "invalid_input", "items[%d].selector: %s" % (idx, why), []
+            if not elems:
+                return None, "empty_selection", "items[%d].selector matched no element (%s)" % (idx, describe_selector(it.get("selector") or {})), []
+        total += len(elems)
+        for e in elems:
+            out.append((idx, e, scope))
+        if total > cap:
+            if strict:
+                return None, "too_many_elements", "more than %d elements are selected; narrow the selectors or split the call" % cap, []
+            return out[:cap], "capped", "more than %d elements matched; only the first %d were read" % (cap, cap), None
+    return out, None, None, None
+
+
+def describe_selector(sel):
+    parts = []
+    for k in ("category", "name", "level", "tag"):
+        if sel.get(k):
+            parts.append("%s='%s'" % (k, sel[k]))
+    return ", ".join(parts) or "empty"
+
+
+def target_of(e, scope):
+    """(element to read or write, None) or (None, reason)."""
+    if scope != "type":
+        return e, None
+    try:
+        tid = e.GetTypeId()
+    except Exception:
+        tid = None
+    if tid is None or eid(tid) < 0:
+        return None, "element %d has no type, so scope 'type' does not apply" % eid(e)
+    t = doc.GetElement(tid)
+    if t is None:
+        return None, "the type of element %d is not in the document" % eid(e)
+    return t, None

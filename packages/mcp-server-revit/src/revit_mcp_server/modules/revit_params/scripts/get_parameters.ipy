@@ -1,0 +1,87 @@
+# revit_get_parameters (read mode: no approval, never changes the model).
+# ARGS = {items: [{ids | selector{category, name, level, tag}, scope: instance|type, params: [names] (empty: all)}],
+#         max_elements, time_budget_s}
+# One row per element and parameter: storage, the unit revit_set_parameters expects, read-only, whether
+# revit_set_parameters would write it (and why not), the value in that unit and Revit's own display text.
+# Stops with a partial result at the element cap or the time budget.
+from System.Diagnostics import Stopwatch
+
+
+def describe(p):
+    reason = ""
+    if p.IsReadOnly:
+        reason = "read-only"
+    else:
+        why = critical_reason(p)
+        if why:
+            reason = why
+    return reason
+
+
+def main():
+    doc_meta()
+    items = ARGS["items"]
+    cap = ARGS.get("max_elements") or 200
+    budget_ms = int((ARGS.get("time_budget_s") or 10) * 1000)
+    clock = Stopwatch.StartNew()
+    resolved, kind, msg, bad_ids = resolve_items(items, cap, strict=False)
+    if resolved is None:
+        error(kind, msg)
+        return
+    partial = False
+    if kind == "capped":
+        info("ELEMENT_CAP", msg + " (raise max_elements or narrow the selectors)")
+        partial = True
+    seen = {}
+    read = 0
+    for idx, e, scope in resolved:
+        if clock.ElapsedMilliseconds > budget_ms:
+            info("TIME_BUDGET", "stopped after %d of %d elements: the time budget of %d s ran out" % (read, len(resolved), budget_ms / 1000))
+            partial = True
+            break
+        t, why = target_of(e, scope)
+        if t is None:
+            fail("NO_TYPE", why)
+            continue
+        key = (eid(t), idx)
+        if key in seen:
+            continue
+        seen[key] = 1
+        read += 1
+        names = items[idx].get("params") or []
+        found = []
+        if names:
+            for n in names:
+                ps = params_named(t, n)
+                if not ps:
+                    row([("kind", "missing"), ("id", eid(t)), ("element_id", eid(e)), ("scope", scope), ("param", n),
+                         ("reason", "no parameter with this name on the element")])
+                    continue
+                if len(ps) > 1:
+                    info("AMBIGUOUS_NAME", "element %d has %d parameters named '%s'; revit_set_parameters refuses it" % (eid(t), len(ps), n))
+                found.extend(ps)
+        else:
+            try:
+                found = list(t.Parameters)
+            except Exception:
+                found = []
+            found.sort(key=lambda q: q.Definition.Name)
+        for p in found:
+            unit = unit_hint(p)
+            raw = raw_value(p)
+            st = storage_of(p)
+            why = describe(p)
+            row([
+                ("kind", "param"), ("id", eid(t)), ("element_id", eid(e)), ("scope", scope),
+                ("category", cat_name(t) if scope != "type" else cat_name(e)), ("element_name", element_name(t)),
+                ("param", p.Definition.Name), ("storage", st), ("unit", unit),
+                ("value", name_of_id(raw) if st == "ElementId" else show(to_unit(raw, unit))),
+                ("value_id", raw if st == "ElementId" else ""), ("value_text", value_string(p)),
+                ("read_only", 1 if p.IsReadOnly else 0), ("writable", 0 if why else 1), ("reason", why),
+            ])
+    if partial:
+        meta("partial", 1)
+    summary("%d element(s) read%s" % (read, " (partial)" if partial else ""))
+
+
+__output__ = run_main(main)

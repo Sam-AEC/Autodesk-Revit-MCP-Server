@@ -1,0 +1,278 @@
+# revit_set_parameters (write mode, up to 500 elements per call).
+# ARGS = {items: [{ids | selector{category, name, level, tag}, scope: instance|type, params: {name: {value, unit}}}],
+#         on_error: abort|skip, dry_run, max_elements}
+# Every element is resolved and every value is checked BEFORE anything changes: a missing parameter (this tool never
+# creates one), a read-only or built-in critical parameter, a unit that does not fit, or an ambiguous element name is
+# refused with a reason per element. on_error "abort" (default): any refusal stops the call before the group starts;
+# "skip": refused elements are left alone and listed. Then one TransactionGroup, one Transaction per element; every value
+# is read back inside the group (post-check) and reported old -> new so the call can be audited and reverted.
+MAX_ROW_LINES = 6000
+MAX_VALUES = 5000
+
+
+def is_text(v):
+    try:
+        return isinstance(v, basestring)
+    except NameError:
+        return isinstance(v, str)
+
+
+def by_name(p, name):
+    """Element id for an ElementId parameter given by name: same class as the current value, else levels, materials,
+    phases and element types. (id, None) or (None, reason)."""
+    cur = None
+    try:
+        i = eid(p.AsElementId())
+        if i > 0:
+            cur = doc.GetElement(ElementId(i))
+    except Exception:
+        cur = None
+    hits = None
+    if cur is not None:
+        try:
+            hits = [x for x in FilteredElementCollector(doc).OfClass(type(cur)) if element_name(x) == name]
+        except Exception:
+            hits = None
+    if hits is None or not hits:
+        hits = []
+        for cls_name in ("Level", "Material", "Phase"):
+            cls = globals().get(cls_name)
+            if cls is None:
+                continue
+            try:
+                hits.extend([x for x in FilteredElementCollector(doc).OfClass(cls) if element_name(x) == name])
+            except Exception:
+                pass
+        try:
+            hits.extend([x for x in FilteredElementCollector(doc).WhereElementIsElementType() if element_name(x) == name])
+        except Exception:
+            pass
+    ids = []
+    for x in hits:
+        if eid(x) not in ids:
+            ids.append(eid(x))
+    if not ids:
+        return None, "no element named '%s' was found for this parameter" % name
+    if len(ids) > 1:
+        return None, "%d elements are named '%s' (ids %s); give the integer id instead" % (len(ids), name, ",".join([str(i) for i in ids[:10]]))
+    return ids[0], None
+
+
+def convert(p, spec):
+    """(internal value, None) or (None, reason) for the requested value and unit."""
+    st = storage_of(p)
+    sp = spec_of(p)
+    unit = spec.get("unit") or ""
+    v = spec.get("value")
+    if st == "Double":
+        if unit == "":
+            return None, "is a number parameter (%s); give a unit: %s" % (sp, unit_hint(p) if sp != "unknown" else "mm, m, deg or number")
+        if unit in ("mm", "m"):
+            if sp not in ("length", "unknown"):
+                return None, "unit %s needs a length parameter, this one is %s" % (unit, sp)
+            return (v / MM_PER_FT if unit == "mm" else v / FT_TO_M), None
+        if unit == "deg":
+            if sp not in ("angle", "unknown"):
+                return None, "unit deg needs an angle parameter, this one is %s" % sp
+            return v * math.pi / 180.0, None
+        if unit == "number":
+            if sp in ("length", "angle"):
+                return None, "is a %s parameter; give %s" % (sp, "mm or m" if sp == "length" else "deg")
+            return float(v), None
+        return None, "unit '%s' does not fit a number parameter" % unit
+    if st == "Integer":
+        if sp == "yesno":
+            if unit in ("bool", "") and isinstance(v, bool):
+                return (1 if v else 0), None
+            if unit == "int" and not isinstance(v, bool) and v in (0, 1):
+                return int(v), None
+            return None, "is a Yes/No parameter; give true or false with unit bool"
+        if isinstance(v, bool) or is_text(v) or v is None or unit not in ("int", "") or v != int(v):
+            return None, "is an integer parameter; give a whole number with unit int"
+        return int(v), None
+    if st == "String":
+        if unit not in ("text", "") or not is_text(v):
+            return None, "is a text parameter; give text with unit text"
+        return v, None
+    if st == "ElementId":
+        if unit != "elementid":
+            return None, "is an element parameter; give the element's name (or integer id) with unit elementid"
+        if isinstance(v, bool):
+            return None, "an element parameter takes a name or an integer id"
+        if is_text(v):
+            return by_name(p, v)
+        if doc.GetElement(ElementId(int(v))) is None:
+            return None, "element id %s does not exist" % v
+        return int(v), None
+    return None, "has no value storage (%s) that this tool can write" % st
+
+
+def plan_param(target, name, spec, scope, source):
+    """A planned change dict, or (None, reason)."""
+    found = params_named(target, name)
+    if not found:
+        hint = ""
+        other, _ = target_of(source, "instance" if scope == "type" else "type")
+        if other is not None and other is not target and params_named(other, name):
+            hint = "; it is a%s parameter: use scope '%s'" % ((" type", "type") if scope != "type" else ("n instance", "instance"))
+        return None, "parameter '%s' was not found on element %d (this tool never creates parameters)%s" % (name, eid(target), hint)
+    if len(found) > 1:
+        return None, "%d parameters are named '%s' on element %d; this tool will not guess which one" % (len(found), name, eid(target))
+    p = found[0]
+    why = critical_reason(p)
+    if why:
+        return None, "parameter '%s' is refused: %s" % (name, why)
+    if p.IsReadOnly:
+        return None, "parameter '%s' is read-only on element %d" % (name, eid(target))
+    new_raw, why = convert(p, spec)
+    if why:
+        return None, "parameter '%s' %s" % (name, why)
+    return {"name": name, "storage": storage_of(p), "unit": spec.get("unit") or unit_hint(p), "old": raw_value(p),
+            "new": new_raw, "asked": spec.get("value"), "old_text": value_string(p)}, None
+
+
+def shown(storage, unit, raw):
+    if storage == "ElementId":
+        return name_of_id(raw)
+    return show(to_unit(raw, unit))
+
+
+def emit(entry, c, status, reason, back=None):
+    st = c.get("storage", "") if c else ""
+    unit = c.get("unit", "") if c else ""
+    pairs = [("kind", "param"), ("id", entry["tid"]), ("element_id", entry["source"]), ("scope", entry["scope"]),
+             ("param", c["name"] if c else "")]
+    if c:
+        pairs += [("storage", st), ("unit", unit), ("old", shown(st, unit, c["old"])), ("new", shown(st, unit, c["new"])),
+                  ("read_back", shown(st, unit, back) if back is not None else ""), ("old_raw", show(c["old"])),
+                  ("new_raw", show(c["new"])), ("old_text", c.get("old_text", ""))]
+    pairs += [("status", status), ("reason", reason)]
+    item(pairs)
+
+
+def main():
+    doc_meta()
+    items = ARGS["items"]
+    cap = ARGS.get("max_elements") or 500
+    resolved, kind, msg, bad_ids = resolve_items(items, cap)
+    if resolved is None:
+        refuse(kind, msg, bad_ids)
+        return
+
+    # one entry per element that is written (two instances with scope 'type' share their type)
+    entries = []
+    by_tid = {}
+    refused = []
+    for idx, e, scope in resolved:
+        t, why = target_of(e, scope)
+        if t is None:
+            refused.append(({"tid": eid(e), "source": eid(e), "scope": scope}, why))
+            continue
+        tid = eid(t)
+        entry = by_tid.get(tid)
+        if entry is None:
+            entry = {"tid": tid, "source": eid(e), "scope": scope, "el": t, "src": e, "specs": {}, "order": []}
+            by_tid[tid] = entry
+            entries.append(entry)
+        for name in sorted(items[idx]["params"].keys()):
+            spec = items[idx]["params"][name]
+            old = entry["specs"].get(name)
+            if old is not None and (old.get("value") != spec.get("value") or old.get("unit") != spec.get("unit")):
+                refuse("conflicting_values", "element %d gets two different values for '%s' in this call" % (tid, name), [tid])
+                return
+            if old is None:
+                entry["specs"][name] = spec
+                entry["order"].append(name)
+    if sum([len(en["order"]) for en in entries]) > MAX_VALUES:
+        refuse("too_many_values", "more than %d parameter values in one call; split it" % MAX_VALUES)
+        return
+
+    plans = []
+    for entry in entries:
+        changes = []
+        reasons = []
+        for name in entry["order"]:
+            c, why = plan_param(entry["el"], name, entry["specs"][name], entry["scope"], entry["src"])
+            if c is None:
+                reasons.append(why)
+            else:
+                changes.append(c)
+        if reasons:
+            refused.append((entry, "; ".join(reasons)))
+        else:
+            plans.append((entry, changes))
+
+    on_error = ARGS.get("on_error") or "abort"
+    if refused and on_error == "abort":
+        for entry, why in refused:
+            emit(entry, None, "refused", why)
+        refuse("parameter_refused", "%d element(s) cannot be written as asked, nothing was changed. First: element %d: %s" % (
+            len(refused), refused[0][0]["tid"], refused[0][1]), [en["tid"] for en, _ in refused])
+        return
+
+    run = Runner("AEC set parameters", on_error)
+    for entry, why in refused:
+        run.failed_steps.append("refused %d" % entry["tid"])
+        run.failed_ids.append(entry["tid"])
+        fail("PARAM_REFUSED", "element %d: %s" % (entry["tid"], why))
+        emit(entry, None, "refused", why)
+    counts = {"set": 0, "unchanged": 0, "elements": 0}
+    done = []
+    try:
+        for entry, changes in plans:
+            todo = [c for c in changes if not same_value(c["storage"], c["old"], c["new"])]
+            if not todo:
+                done.append((entry, changes, [], "unchanged"))
+                continue
+
+            def work(entry=entry, todo=todo):
+                for c in todo:
+                    p = params_named(entry["el"], c["name"])[0]
+                    value = ElementId(int(c["new"])) if c["storage"] == "ElementId" else c["new"]
+                    if p.Set(value) is False:
+                        raise StepError("Revit refused to set '%s' to %s" % (c["name"], show(c["asked"])), [entry["tid"]])
+                return True
+
+            try:
+                ok = run.step("Set parameters of element %d" % entry["tid"], work, ids=[entry["tid"]])
+            except Abort:
+                done.append((entry, changes, todo, "failed"))
+                raise
+            if ok is None:
+                done.append((entry, changes, todo, "failed"))
+                continue
+            run.changed.append(entry["tid"])
+            # post-check inside the group: re-read every value that was written
+            fresh = doc.GetElement(ElementId(entry["tid"]))
+            backs = {}
+            bad = []
+            for c in todo:
+                found = params_named(fresh, c["name"]) if fresh is not None else []
+                back = raw_value(found[0]) if found else None
+                backs[c["name"]] = back
+                if not same_value(c["storage"], back, c["new"]):
+                    bad.append("'%s' wanted %s, read back %s" % (c["name"], shown(c["storage"], c["unit"], c["new"]), shown(c["storage"], c["unit"], back)))
+            post("readback:%d" % entry["tid"], not bad, "; ".join(bad) if bad else "%d value(s) read back as written" % len(todo))
+            done.append((entry, changes, todo, backs))
+    finally:
+        aborted = run.on_error == "abort" and (bool(run.failed_steps) or run.post_failed > 0)
+        ok_status = "would_set" if run.dry_run else "set"
+        for entry, changes, todo, state in done:
+            written = [c["name"] for c in todo]
+            if state != "unchanged" and state != "failed":
+                counts["elements"] += 1
+            for c in changes:
+                if c["name"] not in written:
+                    counts["unchanged"] += 1
+                    emit(entry, c, "unchanged", "already has this value", c["old"])
+                elif state == "failed":
+                    emit(entry, c, "failed", "the transaction of this element was rolled back")
+                else:
+                    counts["set"] += 1
+                    emit(entry, c, "rolled_back" if aborted else ok_status, "the call was rolled back" if aborted else "", state.get(c["name"]))
+        summary("%d parameter value(s) %s on %d element(s), %d already had the value, %d element(s) refused" % (
+            counts["set"], "rolled back" if aborted else ("would be set" if run.dry_run else "set"), counts["elements"],
+            counts["unchanged"], len(refused)))
+
+
+__output__ = run_write(main)
