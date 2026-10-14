@@ -19,7 +19,7 @@ def test_factory_has_no_unchecked_or_raw_transactions():
     source = (BRIDGE / "BridgeCommandFactory.cs").read_text(encoding="utf-8")
     assert not re.search(r"\b(?:trans|tx)\.Commit\(", source)
     assert "new Transaction(" not in source
-    assert source.count(".CommitChecked();") >= 60
+    assert source.count(".CommitChecked();") >= 59  # place_door/place_window share one commit in PlaceHostedOpening
     assert "BridgeTransactionResults.AppendWarnings(result, _currentTransactionMessages)" in source
     assert "_currentTransactionMessages = null;" in source
 

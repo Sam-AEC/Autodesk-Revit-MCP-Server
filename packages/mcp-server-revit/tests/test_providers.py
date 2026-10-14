@@ -282,3 +282,47 @@ async def test_revit_preview_elements_maps_arguments(tmp_path):
     cleared = await provider.execute_tool("revit_clear_preview", {})
     assert cleared["tool"] == "revit.clear_preview"
     assert cleared["payload"] == {}
+
+
+def test_revit_opening_tools_forward_swing_flips(tmp_path):
+    workspace = WorkspaceMonitor([tmp_path])
+    provider = RevitProvider(workspace=workspace, mode=BridgeMode.mock)
+
+    for tool_name in ("revit_place_window", "revit_place_door"):
+        _, build_payload = provider._tool_mapping[tool_name]
+        payload = build_payload({"wall_id": 7, "x": 1, "y": 2, "hand_flipped": True, "facing_flipped": False})
+        assert payload["hand_flipped"] is True
+        assert payload["facing_flipped"] is False
+        # Omitted flips stay None so the add-in leaves the family default alone.
+        bare = build_payload({"wall_id": 7, "x": 1, "y": 2})
+        assert bare["hand_flipped"] is None and bare["facing_flipped"] is None
+        assert bare["family_name"] is None and bare["type_name"] is None
+
+
+def test_revit_opening_and_clash_schemas_describe_new_inputs(tmp_path):
+    workspace = WorkspaceMonitor([tmp_path])
+    provider = RevitProvider(workspace=workspace, mode=BridgeMode.mock)
+    tools = {tool.name: tool for tool in provider.get_capabilities()}
+
+    for name in ("revit_place_door", "revit_place_window"):
+        props = tools[name].input_schema["properties"]
+        assert props["hand_flipped"]["type"] == "boolean"
+        assert props["facing_flipped"]["type"] == "boolean"
+        assert "first loaded" in props["family_name"]["description"]
+
+    props = tools["revit_check_clashes"].input_schema["properties"]
+    assert props["max_pairs"]["default"] == 200000
+    assert props["time_budget_s"]["default"] == 20
+    assert "feet" in props["tolerance"]["description"]
+
+
+def test_revit_check_clashes_forwards_budget(tmp_path):
+    workspace = WorkspaceMonitor([tmp_path])
+    provider = RevitProvider(workspace=workspace, mode=BridgeMode.mock)
+    _, build_payload = provider._tool_mapping["revit_check_clashes"]
+
+    default = build_payload({"category1": "walls", "category2": "doors"})
+    assert default["max_pairs"] == 200000 and default["time_budget_s"] == 20
+
+    custom = build_payload({"category1": "walls", "category2": "doors", "max_pairs": 500, "time_budget_s": 3.5})
+    assert custom["max_pairs"] == 500 and custom["time_budget_s"] == 3.5

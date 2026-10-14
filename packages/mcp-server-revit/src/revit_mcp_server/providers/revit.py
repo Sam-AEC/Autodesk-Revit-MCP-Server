@@ -429,6 +429,8 @@ class RevitProvider(AECProvider):
                     "family_name": args.get("family_name"),
                     "type_name": args.get("type_name"),
                     "location": self._placement_location(args),
+                    "hand_flipped": args.get("hand_flipped"),
+                    "facing_flipped": args.get("facing_flipped"),
                 },
             ),
             "revit_place_window": (
@@ -438,6 +440,8 @@ class RevitProvider(AECProvider):
                     "family_name": args.get("family_name"),
                     "type_name": args.get("type_name"),
                     "location": self._placement_location(args),
+                    "hand_flipped": args.get("hand_flipped"),
+                    "facing_flipped": args.get("facing_flipped"),
                 },
             ),
             "revit_list_families": ("revit.list_families", lambda args: {}),
@@ -761,6 +765,8 @@ class RevitProvider(AECProvider):
                     "category1": args.get("category1"),
                     "category2": args.get("category2"),
                     "tolerance": args.get("tolerance", 0.01),
+                    "max_pairs": args.get("max_pairs", 200000),
+                    "time_budget_s": args.get("time_budget_s", 20),
                 },
             ),
             "revit_create_material": (
@@ -1082,7 +1088,11 @@ class RevitProvider(AECProvider):
         ),
         ProviderTool(
             name="revit_place_door",
-            description="Place a door in a wall",
+            description=(
+                "Place a door in a wall. Coordinates are in feet (project units). Refuses, naming the wall id and the "
+                "numbers in mm, when the door is wider than the wall at that point or taller than the wall; "
+                "returns host_wall_id and volume_delta_m3."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1099,8 +1109,19 @@ class RevitProvider(AECProvider):
                         },
                         "required": ["x", "y"],
                     },
-                    "family_name": {"type": "string"},
-                    "type_name": {"type": "string"},
+                    "family_name": {
+                        "type": "string",
+                        "description": "Family name. Omit family_name and type_name to use the first loaded door type (the result reports which one).",
+                    },
+                    "type_name": {"type": "string", "description": "Type name inside the family."},
+                    "hand_flipped": {
+                        "type": "boolean",
+                        "description": "Flip the hand (swing side) after placing. Fails if the family cannot flip.",
+                    },
+                    "facing_flipped": {
+                        "type": "boolean",
+                        "description": "Flip the facing (inside/outside) after placing. Fails if the family cannot flip.",
+                    },
                 },
                 "required": ["wall_id"],
                 "oneOf": [{"required": ["x", "y"]}, {"required": ["location"]}],
@@ -1108,7 +1129,11 @@ class RevitProvider(AECProvider):
         ),
         ProviderTool(
             name="revit_place_window",
-            description="Place a window in a wall",
+            description=(
+                "Place a window in a wall. Coordinates are in feet (project units); z is the sill. Refuses, naming the "
+                "wall id and the numbers in mm, when the window does not fit the wall width or height; "
+                "returns host_wall_id and volume_delta_m3."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1125,8 +1150,19 @@ class RevitProvider(AECProvider):
                         },
                         "required": ["x", "y"],
                     },
-                    "family_name": {"type": "string"},
-                    "type_name": {"type": "string"},
+                    "family_name": {
+                        "type": "string",
+                        "description": "Family name. Omit family_name and type_name to use the first loaded window type (the result reports which one).",
+                    },
+                    "type_name": {"type": "string", "description": "Type name inside the family."},
+                    "hand_flipped": {
+                        "type": "boolean",
+                        "description": "Flip the hand (swing side) after placing. Fails if the family cannot flip.",
+                    },
+                    "facing_flipped": {
+                        "type": "boolean",
+                        "description": "Flip the facing (inside/outside) after placing. Fails if the family cannot flip.",
+                    },
                 },
                 "required": ["wall_id"],
                 "oneOf": [{"required": ["x", "y"]}, {"required": ["location"]}],
@@ -1778,13 +1814,29 @@ class RevitProvider(AECProvider):
         ),
         ProviderTool(
             name="revit_check_clashes",
-            description="Check clashes between categories",
+            description=(
+                "Check clashes between categories by bounding-box overlap (false positives likely). "
+                "Stops at max_pairs or time_budget_s and then returns truncated=true with the counts examined."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "category1": {"type": "string"},
                     "category2": {"type": "string"},
-                    "tolerance": {"type": "number", "default": 0.01},
+                    "tolerance": {"type": "number", "default": 0.01, "description": "Box expansion in feet."},
+                    "max_pairs": {
+                        "type": "integer",
+                        "default": 200000,
+                        "minimum": 1,
+                        "description": "Stop after this many bounding-box pairs examined (a count, not a length).",
+                    },
+                    "time_budget_s": {
+                        "type": "number",
+                        "default": 20,
+                        "minimum": 0.5,
+                        "maximum": 25,
+                        "description": "Stop after this many seconds (default 20, capped at 25; the bridge waits 30 s).",
+                    },
                 },
                 "required": ["category1", "category2"],
             },

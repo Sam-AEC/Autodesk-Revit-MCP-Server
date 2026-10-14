@@ -749,90 +749,281 @@ public static partial class BridgeCommandFactory
 
     [BridgeCommand("revit.place_door", IsMutating = true)]
     private static object ExecutePlaceDoor(UIApplication app, JsonElement payload)
-    {
-        var doc = app.ActiveUIDocument?.Document;
-        if (doc == null)
-            throw new InvalidOperationException("No active document");
-
-        var wallId = payload.GetProperty("wall_id").GetInt32();
-        var location = ParseXYZ(payload.GetProperty("location"));
-        var familyName = payload.TryGetProperty("family_name", out var fn) ? fn.GetString() : "Single-Flush";
-        var typeName = payload.TryGetProperty("type_name", out var tn) ? tn.GetString() : "0915 x 2134mm";
-
-        using (var trans = BridgeCommandFactory.CreateTransaction(doc, "Place Door"))
-        {
-            trans.Start();
-
-            var wall = doc.GetElement(new ElementId((long)wallId)) as Wall;
-            if (wall == null)
-                throw new ArgumentException($"Wall with ID {wallId} not found");
-
-            var familySymbol = GetFamilySymbolByName(doc, familyName, typeName);
-
-            if (!familySymbol.IsActive)
-            {
-                familySymbol.Activate();
-                doc.Regenerate();
-            }
-
-            var door = doc.Create.NewFamilyInstance(location, familySymbol, wall, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
-
-            trans.CommitChecked();
-
-            return new
-            {
-                door_id = door.Id.Value,
-                family = familyName,
-                type = typeName,
-                wall_id = wallId
-            };
-        }
-    }
+        => PlaceHostedOpening(app, payload, BuiltInCategory.OST_Doors, "Door", "Place Door");
 
     [BridgeCommand("revit.place_window", IsMutating = true)]
     private static object ExecutePlaceWindow(UIApplication app, JsonElement payload)
+        => PlaceHostedOpening(app, payload, BuiltInCategory.OST_Windows, "Window", "Place Window");
+
+    private const double OpeningFitToleranceFt = 0.005;   // about 1.5 mm
+    private const double FeetToMm = 304.8;
+    private const double CubicFeetToCubicMetres = 0.028316846592;
+
+    /// <summary>
+    /// Shared door/window placement. All checks that can refuse run before the transaction opens, so a
+    /// refusal never touches the model. One transaction per call; the host is re-verified before and after commit.
+    /// </summary>
+    private static object PlaceHostedOpening(UIApplication app, JsonElement payload,
+        BuiltInCategory category, string label, string transactionName)
     {
         var doc = app.ActiveUIDocument?.Document;
         if (doc == null)
             throw new InvalidOperationException("No active document");
 
-        var wallId = payload.GetProperty("wall_id").GetInt32();
+        var isWindow = category == BuiltInCategory.OST_Windows;
+        var wallId = payload.GetProperty("wall_id").GetInt64();
         var location = ParseXYZ(payload.GetProperty("location"));
-        var familyName = payload.TryGetProperty("family_name", out var fn) ? fn.GetString() : "Fixed";
-        var typeName = payload.TryGetProperty("type_name", out var tn) ? tn.GetString() : "1200 x 1500mm";
+        var wall = doc.GetElement(new ElementId(wallId)) as Wall;
+        if (wall == null)
+            throw new ArgumentException($"Wall with ID {wallId} not found");
 
-        using (var trans = BridgeCommandFactory.CreateTransaction(doc, "Place Window"))
+        var familyName = OptionalString(payload, "family_name");
+        var typeName = OptionalString(payload, "type_name");
+        var wantHandFlipped = OptionalBool(payload, "hand_flipped");
+        var wantFacingFlipped = OptionalBool(payload, "facing_flipped");
+
+        var symbol = ResolveOpeningSymbol(doc, category, label, familyName, typeName, out var symbolSource);
+        var level = GetPlacementLevel(doc, wall, location);
+        var fit = CheckOpeningFit(wall, wallId, symbol, label, location, level, isWindow);
+
+        var volumeBefore = WallVolumeCubicFeet(wall);
+        FamilyInstance instance;
+        using (var trans = BridgeCommandFactory.CreateTransaction(doc, transactionName))
         {
             trans.Start();
 
-            var wall = doc.GetElement(new ElementId((long)wallId)) as Wall;
-            if (wall == null)
-                throw new ArgumentException($"Wall with ID {wallId} not found");
-
-            var familySymbol = GetFamilySymbolByName(doc, familyName, typeName);
-
-            if (!familySymbol.IsActive)
+            if (!symbol.IsActive)
             {
-                familySymbol.Activate();
+                symbol.Activate();
                 doc.Regenerate();
             }
 
-            var level = GetPlacementLevel(doc, wall, location);
-            var window = doc.Create.NewFamilyInstance(location, familySymbol, wall, level, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
-            SetWindowSillHeight(window, location, level);
+            instance = isWindow
+                ? doc.Create.NewFamilyInstance(location, symbol, wall, level, StructuralType.NonStructural)
+                : doc.Create.NewFamilyInstance(location, symbol, wall, StructuralType.NonStructural);
+            if (isWindow)
+                SetWindowSillHeight(instance, location, level);
+
+            ApplyFlip(instance, wantHandFlipped, instance.CanFlipHand, instance.HandFlipped,
+                () => instance.flipHand(), "hand_flipped", label, wallId);
+            ApplyFlip(instance, wantFacingFlipped, instance.CanFlipFacing, instance.FacingFlipped,
+                () => instance.flipFacing(), "facing_flipped", label, wallId);
+
+            doc.Regenerate();
+            VerifyOpeningHost(doc, instance.Id, wallId, label, committed: false);
 
             trans.CommitChecked();
-
-            return new
-            {
-                window_id = window.Id.Value,
-                family = familyName,
-                type = typeName,
-                wall_id = wallId,
-                level = level.Name,
-                sill_height = location.Z - level.Elevation
-            };
         }
+
+        var placed = VerifyOpeningHost(doc, instance.Id, wallId, label, committed: true);
+        var volumeAfter = WallVolumeCubicFeet(wall);
+        double? volumeDeltaM3 = volumeBefore.HasValue && volumeAfter.HasValue
+            ? Math.Round((volumeAfter.Value - volumeBefore.Value) * CubicFeetToCubicMetres, 6)
+            : (double?)null;
+
+        var result = new Dictionary<string, object?>
+        {
+            [isWindow ? "window_id" : "door_id"] = placed.Id.Value,
+            ["family"] = symbol.Family.Name,
+            ["type"] = symbol.Name,
+            ["symbol_source"] = symbolSource,
+            ["wall_id"] = wallId,
+            ["host_wall_id"] = placed.Host?.Id.Value,
+            ["level"] = level.Name,
+            ["hand_flipped"] = placed.HandFlipped,
+            ["facing_flipped"] = placed.FacingFlipped,
+            ["fit_check"] = fit,
+            ["volume_delta_m3"] = volumeDeltaM3
+        };
+        if (isWindow)
+            result["sill_height"] = location.Z - level.Elevation;
+        return result;
+    }
+
+    private static string? OptionalString(JsonElement payload, string name)
+    {
+        if (!payload.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String)
+            return null;
+        var text = value.GetString();
+        return string.IsNullOrWhiteSpace(text) ? null : text;
+    }
+
+    private static bool? OptionalBool(JsonElement payload, string name)
+    {
+        if (!payload.TryGetProperty(name, out var value)) return null;
+        return value.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Null => (bool?)null,
+            _ => throw new ArgumentException($"{name} must be a boolean")
+        };
+    }
+
+    /// <summary>Exact family+type when both are given; otherwise the first loaded symbol of the category (reported).</summary>
+    private static FamilySymbol ResolveOpeningSymbol(Document doc, BuiltInCategory category, string label,
+        string? familyName, string? typeName, out string source)
+    {
+        var symbols = new FilteredElementCollector(doc)
+            .OfCategory(category)
+            .OfClass(typeof(FamilySymbol))
+            .Cast<FamilySymbol>()
+            .OrderBy(s => s.Family.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (symbols.Count == 0)
+            throw new InvalidOperationException(
+                $"No {label.ToLowerInvariant()} family type is loaded in this project. Load a {label.ToLowerInvariant()} family first.");
+
+        var candidates = symbols
+            .Where(s => familyName == null || s.Family.Name.Equals(familyName, StringComparison.OrdinalIgnoreCase))
+            .Where(s => typeName == null || s.Name.Equals(typeName, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            var sample = string.Join("; ", symbols.Take(8).Select(s => $"{s.Family.Name}: {s.Name}"));
+            throw new ArgumentException(
+                $"No loaded {label.ToLowerInvariant()} type matches family '{familyName ?? "(any)"}' / type '{typeName ?? "(any)"}'. " +
+                $"Available ({symbols.Count}): {sample}");
+        }
+
+        source = familyName != null && typeName != null ? "requested" : "first_available";
+        return candidates[0];
+    }
+
+    private static double? ReadSymbolLength(FamilySymbol symbol, BuiltInParameter builtIn, params string[] names)
+    {
+        var p = symbol.get_Parameter(builtIn);
+        if (p != null && p.HasValue && p.StorageType == StorageType.Double && p.AsDouble() > 0)
+            return p.AsDouble();
+        foreach (var name in names)
+        {
+            p = symbol.LookupParameter(name);
+            if (p != null && p.HasValue && p.StorageType == StorageType.Double && p.AsDouble() > 0)
+                return p.AsDouble();
+        }
+        return null;
+    }
+
+    /// <summary>Refuses with the wall id and the numbers when the opening cannot fit; returns the numbers on success.</summary>
+    private static object CheckOpeningFit(Wall wall, long wallId, FamilySymbol symbol, string label,
+        XYZ location, Level level, bool isWindow)
+    {
+        var width = isWindow
+            ? ReadSymbolLength(symbol, BuiltInParameter.WINDOW_WIDTH, "Width", "Rough Width")
+            : ReadSymbolLength(symbol, BuiltInParameter.DOOR_WIDTH, "Width", "Rough Width");
+        var height = isWindow
+            ? ReadSymbolLength(symbol, BuiltInParameter.WINDOW_HEIGHT, "Height", "Rough Height")
+            : ReadSymbolLength(symbol, BuiltInParameter.DOOR_HEIGHT, "Height", "Rough Height");
+
+        var who = $"{label} '{symbol.Family.Name}: {symbol.Name}' in wall {wallId}";
+        var notes = new List<string>();
+        double? wallLength = null, distAlong = null, wallBottom = null, wallTop = null;
+
+        if (wall.Location is LocationCurve lc && lc.Curve != null && lc.Curve.IsBound)
+        {
+            var curve = lc.Curve;
+            var proj = curve.Project(location);
+            if (proj != null)
+            {
+                wallLength = curve.Length;
+                distAlong = curve.ComputeNormalizedParameter(proj.Parameter) * curve.Length;
+                var offWall = proj.Distance;
+                if (offWall > wall.Width + 0.5)
+                    throw new ArgumentException(
+                        $"{who}: location is {offWall * FeetToMm:0} mm from the wall line (wall thickness {wall.Width * FeetToMm:0} mm). " +
+                        "Pick a point on the wall.");
+            }
+        }
+        else
+        {
+            notes.Add("wall has no bounded location curve; width check skipped");
+        }
+
+        var bb = wall.get_BoundingBox(null);
+        if (bb != null)
+        {
+            wallBottom = bb.Min.Z;
+            wallTop = bb.Max.Z;
+        }
+        else
+        {
+            notes.Add("wall has no bounding box; height check skipped");
+        }
+
+        // Windows are placed with location.Z as the sill; doors sit at the placement level.
+        var sillZ = isWindow ? location.Z : level.Elevation;
+        double? headZ = height.HasValue ? sillZ + height.Value : (double?)null;
+
+        if (width.HasValue && wallLength.HasValue && distAlong.HasValue)
+        {
+            var from = distAlong.Value - width.Value / 2;
+            var to = distAlong.Value + width.Value / 2;
+            if (from < -OpeningFitToleranceFt || to > wallLength.Value + OpeningFitToleranceFt)
+                throw new ArgumentException(
+                    $"{who} does not fit: opening width {width.Value * FeetToMm:0} mm centred {distAlong.Value * FeetToMm:0} mm along a wall " +
+                    $"{wallLength.Value * FeetToMm:0} mm long would span {from * FeetToMm:0} to {to * FeetToMm:0} mm. " +
+                    "Move the location inboard or use a narrower type.");
+        }
+        else if (!width.HasValue)
+        {
+            notes.Add("type has no readable width parameter; width check skipped");
+        }
+
+        if (height.HasValue && wallBottom.HasValue && wallTop.HasValue)
+        {
+            if (sillZ < wallBottom.Value - OpeningFitToleranceFt || headZ!.Value > wallTop.Value + OpeningFitToleranceFt)
+                throw new ArgumentException(
+                    $"{who} does not fit vertically: sill at {sillZ * FeetToMm:0} mm and head at {headZ!.Value * FeetToMm:0} mm " +
+                    $"(opening height {height.Value * FeetToMm:0} mm) against wall extent {wallBottom.Value * FeetToMm:0} to {wallTop.Value * FeetToMm:0} mm (project Z).");
+        }
+        else if (!height.HasValue)
+        {
+            notes.Add("type has no readable height parameter; height check skipped");
+        }
+
+        return new
+        {
+            checked_width = width.HasValue && wallLength.HasValue,
+            checked_height = height.HasValue && wallBottom.HasValue,
+            opening_width_mm = width.HasValue ? Math.Round(width.Value * FeetToMm, 1) : (double?)null,
+            opening_height_mm = height.HasValue ? Math.Round(height.Value * FeetToMm, 1) : (double?)null,
+            wall_length_mm = wallLength.HasValue ? Math.Round(wallLength.Value * FeetToMm, 1) : (double?)null,
+            distance_along_wall_mm = distAlong.HasValue ? Math.Round(distAlong.Value * FeetToMm, 1) : (double?)null,
+            wall_z_min_mm = wallBottom.HasValue ? Math.Round(wallBottom.Value * FeetToMm, 1) : (double?)null,
+            wall_z_max_mm = wallTop.HasValue ? Math.Round(wallTop.Value * FeetToMm, 1) : (double?)null,
+            notes
+        };
+    }
+
+    private static void ApplyFlip(FamilyInstance instance, bool? wanted, bool canFlip, bool current,
+        Action flip, string name, string label, long wallId)
+    {
+        if (!wanted.HasValue || wanted.Value == current) return;
+        if (!canFlip)
+            throw new InvalidOperationException(
+                $"{label} {instance.Id.Value} in wall {wallId} cannot be flipped ({name} was requested but this family does not support it).");
+        flip();
+    }
+
+    private static FamilyInstance VerifyOpeningHost(Document doc, ElementId id, long wallId, string label, bool committed)
+    {
+        var placed = doc.GetElement(id) as FamilyInstance;
+        var phase = committed ? "after commit" : "before commit";
+        if (placed == null)
+            throw new InvalidOperationException($"{label} {id.Value} does not exist {phase}; placement into wall {wallId} failed.");
+        if (placed.Host == null || placed.Host.Id.Value != wallId)
+            throw new InvalidOperationException(
+                $"{label} {id.Value} {phase} is hosted by {(placed.Host == null ? "nothing" : placed.Host.Id.Value.ToString())}, not wall {wallId}.");
+        return placed;
+    }
+
+    private static double? WallVolumeCubicFeet(Wall wall)
+    {
+        var p = wall.get_Parameter(BuiltInParameter.HOST_VOLUME_COMPUTED);
+        return p != null && p.HasValue ? p.AsDouble() : (double?)null;
     }
 
     [BridgeCommand("revit.list_families", IsMutating = false)]
@@ -3395,62 +3586,83 @@ public static partial class BridgeCommandFactory
 
         var category1Name = payload.GetProperty("category1").GetString();
         var category2Name = payload.GetProperty("category2").GetString();
-        var tolerance = payload.TryGetProperty("tolerance", out var tol) ? tol.GetDouble() : 0.01; // Default 0.01 ft
+        var tolerance = payload.TryGetProperty("tolerance", out var tol) && tol.ValueKind == JsonValueKind.Number
+            ? tol.GetDouble() : 0.01; // Default 0.01 ft
+        // Budgets keep a big model from holding the Revit UI thread; the bridge itself waits only 30 s.
+        var maxPairs = payload.TryGetProperty("max_pairs", out var mp) && mp.ValueKind == JsonValueKind.Number
+            ? Math.Max(1L, Math.Min(mp.GetInt64(), 100000000L)) : 200_000L;
+        var timeBudgetS = payload.TryGetProperty("time_budget_s", out var tb) && tb.ValueKind == JsonValueKind.Number
+            ? Math.Max(0.5, Math.Min(tb.GetDouble(), 25.0)) : 20.0;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
 
         // Get built-in categories
         var cat1 = GetBuiltInCategoryByName(category1Name);
         var cat2 = GetBuiltInCategoryByName(category2Name);
+        var sameCategory = cat1 == cat2;
 
-        // Collect elements from both categories
-        var elements1 = new FilteredElementCollector(doc)
-            .OfCategory(cat1)
-            .WhereElementIsNotElementType()
-            .ToList();
-
-        var elements2 = new FilteredElementCollector(doc)
-            .OfCategory(cat2)
-            .WhereElementIsNotElementType()
-            .ToList();
+        // Cache each element's bounding box once, outside the pair loop (elements without one cannot clash).
+        var list1 = CollectClashCandidates(doc, cat1);
+        var list2 = sameCategory ? list1 : CollectClashCandidates(doc, cat2);
+        // Sorted by MinX so a sweep over list2 can stop as soon as MinX passes the expanded box.
+        var sorted2 = list2.OrderBy(c => c.MinX).ToArray();
 
         var clashes = new List<object>();
-
-        // Check for clashes using bounding box intersection
-        foreach (var elem1 in elements1)
+        var nameCache = new Dictionary<long, (string? Name, string? Category)>();
+        (string? Name, string? Category) Describe(Element e)
         {
-            var bb1 = elem1.get_BoundingBox(null);
-            if (bb1 == null) continue;
-
-            foreach (var elem2 in elements2)
+            if (!nameCache.TryGetValue(e.Id.Value, out var info))
             {
-                if (elem1.Id == elem2.Id) continue;
+                info = (e.Name, e.Category?.Name);
+                nameCache[e.Id.Value] = info;
+            }
+            return info;
+        }
 
-                var bb2 = elem2.get_BoundingBox(null);
-                if (bb2 == null) continue;
+        long pairsExamined = 0;
+        int firstChecked = 0;
+        string? truncatedReason = null;
 
-                // Expand bounding boxes by tolerance
-                var expandedBB1 = new BoundingBoxXYZ
+        foreach (var a in list1)
+        {
+            if (truncatedReason != null) break;
+            if (clock.Elapsed.TotalSeconds >= timeBudgetS) { truncatedReason = "time_budget_s"; break; }
+            firstChecked++;
+            var loX = a.MinX - tolerance; var hiX = a.MaxX + tolerance;
+            var loY = a.MinY - tolerance; var hiY = a.MaxY + tolerance;
+            var loZ = a.MinZ - tolerance; var hiZ = a.MaxZ + tolerance;
+
+            foreach (var b in sorted2)
+            {
+                if (b.MinX > hiX) break; // everything after this starts beyond the box
+                if (pairsExamined >= maxPairs) { truncatedReason = "max_pairs"; break; }
+                if ((pairsExamined & 1023) == 0 && clock.Elapsed.TotalSeconds >= timeBudgetS)
                 {
-                    Min = new XYZ(bb1.Min.X - tolerance, bb1.Min.Y - tolerance, bb1.Min.Z - tolerance),
-                    Max = new XYZ(bb1.Max.X + tolerance, bb1.Max.Y + tolerance, bb1.Max.Z + tolerance)
-                };
-
-                // Check if bounding boxes intersect
-                if (BoundingBoxesIntersect(expandedBB1, bb2))
-                {
-                    clashes.Add(new
-                    {
-                        element1_id = elem1.Id.Value,
-                        element1_name = elem1.Name,
-                        element1_category = elem1.Category?.Name,
-                        element2_id = elem2.Id.Value,
-                        element2_name = elem2.Name,
-                        element2_category = elem2.Category?.Name,
-                        clash_type = "bounding_box_intersection"
-                    });
+                    truncatedReason = "time_budget_s";
+                    break;
                 }
+                pairsExamined++;
+
+                if (a.Element.Id == b.Element.Id) continue;
+                // One category against itself: report each pair once.
+                if (sameCategory && a.Element.Id.Value > b.Element.Id.Value) continue;
+                if (b.MaxX < loX || b.MinY > hiY || b.MaxY < loY || b.MinZ > hiZ || b.MaxZ < loZ) continue;
+
+                var d1 = Describe(a.Element);
+                var d2 = Describe(b.Element);
+                clashes.Add(new
+                {
+                    element1_id = a.Element.Id.Value,
+                    element1_name = d1.Name,
+                    element1_category = d1.Category,
+                    element2_id = b.Element.Id.Value,
+                    element2_name = d2.Name,
+                    element2_category = d2.Category,
+                    clash_type = "bounding_box_intersection"
+                });
             }
         }
 
+        var truncated = truncatedReason != null;
         return new
         {
             clashes,
@@ -3458,9 +3670,42 @@ public static partial class BridgeCommandFactory
             category1 = category1Name,
             category2 = category2Name,
             tolerance_ft = tolerance,
-            elements_checked_cat1 = elements1.Count,
-            elements_checked_cat2 = elements2.Count
+            elements_checked_cat1 = list1.Count,
+            elements_checked_cat2 = list2.Count,
+            truncated,
+            truncated_reason = truncatedReason,
+            pairs_examined = pairsExamined,
+            elements_of_cat1_examined = firstChecked,
+            max_pairs = maxPairs,
+            time_budget_s = timeBudgetS,
+            elapsed_s = Math.Round(clock.Elapsed.TotalSeconds, 2),
+            note = truncated
+                ? "Budget reached: the clash list is partial. Narrow the categories or raise max_pairs / time_budget_s."
+                : null
         };
+    }
+
+    private sealed class ClashCandidate
+    {
+        public Element Element = null!;
+        public double MinX, MinY, MinZ, MaxX, MaxY, MaxZ;
+    }
+
+    private static List<ClashCandidate> CollectClashCandidates(Document doc, BuiltInCategory category)
+    {
+        var list = new List<ClashCandidate>();
+        foreach (var element in new FilteredElementCollector(doc).OfCategory(category).WhereElementIsNotElementType())
+        {
+            var bb = element.get_BoundingBox(null);
+            if (bb == null) continue;
+            list.Add(new ClashCandidate
+            {
+                Element = element,
+                MinX = bb.Min.X, MinY = bb.Min.Y, MinZ = bb.Min.Z,
+                MaxX = bb.Max.X, MaxY = bb.Max.Y, MaxZ = bb.Max.Z
+            });
+        }
+        return list;
     }
 
     // Helper method for bounding box intersection
