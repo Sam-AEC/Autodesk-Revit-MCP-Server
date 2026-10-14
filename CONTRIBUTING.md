@@ -1,5 +1,7 @@
 # Contributing
 
+Status: on the dev branch, not yet released.
+
 Thanks for improving AEC Model Bridge.
 
 ## Licensing

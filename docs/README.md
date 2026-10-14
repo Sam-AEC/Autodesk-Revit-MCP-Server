@@ -1,10 +1,13 @@
 # Documentation index
 
+Status: on the dev branch, not yet released.
+
 Start with the [installation guide](install.md). The main [README](../README.md) covers what the project is and how to connect a client.
 
 ## Guides and reference
 
 - [install.md](install.md): install the Revit add-in and the MCP server.
+- [first-check.md](first-check.md): from install to ready, using the panel's Setup check card.
 - [VS Code extension](../extensions/vscode/README.md): build and install the extension locally.
 - [configuration-reference.md](configuration-reference.md): environment variables, package metadata and runtime settings.
 - [tools-generated.md](tools-generated.md): the tool catalog, generated from the server (do not edit by hand).
@@ -16,10 +19,12 @@ Start with the [installation guide](install.md). The main [README](../README.md)
 - Client setup guides (snippets not yet tested on live installs): [Visual Studio](clients/visual-studio.md), [JetBrains](clients/jetbrains.md), [Codex](clients/codex.md), [Gemini CLI](clients/gemini-cli.md), [Windsurf](clients/windsurf.md), [Cline](clients/cline.md).
 - [versioning.md](versioning.md): version numbers, release tags and release assets.
 - [clash-triage.md](clash-triage.md): read-only matching of Navisworks clashes to Revit elements, with a confidence label (unverified on live projects).
-- [revit-mcp-behaviour-and-improvements.md](revit-mcp-behaviour-and-improvements.md): measured behaviour of Revit through the bridge, Revit traps with their rules, and ranked improvements.
-- [upgrade-plan-hands-and-eyes.md](upgrade-plan-hands-and-eyes.md): phased upgrade and bug-fix plan to make the bridge the hands and eyes of an AI in Revit (plan only, nothing shipped).
-- [prompts/revit-agent-preflight-and-verify.md](prompts/revit-agent-preflight-and-verify.md): copy-paste prompt with the pre-flight and verification checks an AI runs while building in live Revit.
 - [roadmap.md](roadmap.md): coordinator workflows, demo scope and the next fixes.
+- [revit-mcp-behaviour-and-improvements.md](revit-mcp-behaviour-and-improvements.md): measured bridge behaviour, Revit traps and ranked improvements.
+- [upgrade-plan-hands-and-eyes.md](upgrade-plan-hands-and-eyes.md): phased bridge upgrade and remaining acceptance work.
+- [prompts/revit-agent-preflight-and-verify.md](prompts/revit-agent-preflight-and-verify.md): preflight and verification checks for live Revit work.
+- [bridge-upgrade-handoff.md](bridge-upgrade-handoff.md): implemented Dev mode, QA and documentation changes with build and test evidence.
+- [revit-addin-live-validation-2026-10-14.md](revit-addin-live-validation-2026-10-14.md): bounded Revit 2024 read-only checks; mutating acceptance remains pending.
 - [demo-runbook.md](demo-runbook.md): step-by-step script for the missing-door-Mark demo, with expected counts and a rejected-plan run.
 
 ## For contributors
@@ -29,6 +34,7 @@ Start with the [installation guide](install.md). The main [README](../README.md)
 - [target-frameworks-and-dependencies.md](target-frameworks-and-dependencies.md): Python and .NET targets per component.
 - [revit-addin-lifecycle.md](revit-addin-lifecycle.md): how the Revit add-in starts up and runs commands.
 - [design/tokens.md](design/tokens.md): design tokens for the add-in and panel UI ([design/review.html](design/review.html) is the visual review page).
+- [design/readme-visuals/README.md](design/readme-visuals/README.md): README artwork sources, rendering and demo assets.
 - [release-checklist.md](release-checklist.md): ordered ship-ready checklist, what CI proves and what still needs a live Revit.
 - [release-retirement.md](release-retirement.md): reviewed release inventory and future cleanup procedure.
 - [examples/hermes-desktop.json](examples/hermes-desktop.json): sample client config for Hermes Desktop.
@@ -48,6 +54,7 @@ Start with the [installation guide](install.md). The main [README](../README.md)
 - [0015](0015-navisworks-bcf-loop.md): proposal (scoping only) for the Navisworks clash to Revit fix loop, and BCF.
 - [0016](0016-cerberus-multi-agent-review.md): Proposed, not built. Cerberus, a multi-head read-only model review with cross-checking and one approved plan.
 - [0017](0017-approval-document-binding-and-expiry.md): proposal to bind approvals to a Revit document and expire them.
+- [0018](0018-explicit-development-mode.md): implemented explicit panel Dev mode, trusted revocation, audit logging and its remaining limits.
 
 Numbers 0003 to 0006 are not in this repository.
 

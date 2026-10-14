@@ -20,7 +20,7 @@ Revit 2024 – 2027 向けのオープンソースの MCP サーバーとネイ�
 </div>
 
 <p align="center">
-  <img src="../images/readme/demo.gif" alt="デモ：Revit パネルの横に建物の 3D モデルが表示されています。AI アシスタントが Mark のない 12 枚のドアを見つけて計画を作成します。計画は Revit パネルで承認を待ち、承認後に値を読み戻して確認します。値は例で、セッションはシミュレーションです。" width="900">
+  <img src="../images/readme/revit-villa-panel.png" alt="Dev モードが有効な AEC Model Bridge パネルの横に表示された Revit のヴィラモデル。" width="900">
 </p>
 
 AEC Model Bridge は、Claude、Codex、Cursor などの AI アシスタントが、開いている Revit モデルを読み取り・編集できるようにするオープンソースの Revit MCP サーバーです。変更はすべて、先にあなたが承認します。Python 製の MCP サーバーとネイティブの Revit アドインで構成され、読み取り専用ツールはすぐにモデルを調査でき、モデルの変更にはデフォルトで承認済みのプランが必要です。[承認フローを見る](#承認の仕組み)。
@@ -151,13 +151,13 @@ MCP クライアントは 1 つの Python ハブと通信します。ハブは�
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../images/approval-flow-dark.png">
-    <img src="../images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. After verifying, you can also use rollback_plan, which may skip actions with no recorded before-value. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
+    <img src="../images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
   </picture>
 </p>
 
 <sub>図のソース：[approval-flow.mmd](../diagrams/approval-flow.mmd)。画像は `python scripts/render_diagrams.py` で再生成できます。</sub>
 
-プランが誤りだと分かった場合は、Revit の Ctrl+Z で元に戻してください。パラメータの書き込みはそれぞれ個別の名前付きトランザクションなので、1 つのプランで複数回押す必要があることがあります。プラン全体を 1 ステップで元に戻す機能は計画中で、まだ実装されていません。`rollback_plan` は記録された変更前の値を逆順に書き戻しますが、変更前の値が記録されていないアクションはスキップすることがあるため、警告を確認してください。どちらの方法も、実際の Revit セッションではまだ検証されていません（UNVERIFIED）。ファイル出力など元に戻せない操作はどちらの方法でも戻せず、再度の確認もまだ求めません（計画中）。パネルの Plans 一覧に表示されるのは保留中のプランだけです。`aec-model-bridge-approve show <plan_id>` はどの状態のプランでも使えますが、`proofs/` のバンドルは実行された（または実行を試みた）プランにしか存在しません。ライフサイクルは [ADR 0008](../0008-approval-gate-lifecycle.md) をご覧ください。
+プランが誤りだと分かった場合は、Revit の Ctrl+Z で元に戻してください。パラメータの書き込みはそれぞれ個別の名前付きトランザクションなので、1 つのプランで複数回押す必要があることがあります。プラン全体を 1 ステップで元に戻す機能は計画中で、まだ実装されていません。もう 1 つの方法は取り消しプランです。アシスタントが実行済みプランの証跡から `plan_revert` で作成し、ほかのプランと同様に承認します。`rollback_plan` は人専用で、ボタンでもコマンドでもないため、あてにしないでください。これらのいずれの方法も、実際の Revit セッションではまだ検証されていません（UNVERIFIED）。ファイル出力など元に戻せない操作はどの方法でも戻せず、再度の確認もまだ求めません（計画中）。パネルの Plans 一覧に表示されるのは保留中のプランだけです。`aec-model-bridge-approve show <plan_id>` はどの状態のプランでも使えますが、`proofs/` のバンドルは実行された（または実行を試みた）プランにしか存在しません。ライフサイクルは [ADR 0008](../0008-approval-gate-lifecycle.md) をご覧ください。
 
 無人で動かすパイプラインでは `MCP_REVIT_APPROVAL_MODE=auto` を設定できます。これは人による確認を無効にするため、管理された環境でのみ使ってください。
 

@@ -1,5 +1,7 @@
 # Configuration reference
 
+Status: on the dev branch, not yet released.
+
 This page lists the environment variables, package files and runtime modes of the Revit MCP server.
 
 ## Runtime modes

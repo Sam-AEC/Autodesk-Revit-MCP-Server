@@ -20,7 +20,7 @@ Servidor MCP de código abierto y complemento nativo para Revit 2024 – 2027. F
 </div>
 
 <p align="center">
-  <img src="../images/readme/demo.gif" alt="Demostración: un asistente de IA encuentra 12 puertas sin Mark y redacta un plan. El plan espera en el panel de Revit hasta que lo apruebes; después se leen los valores para comprobarlos. Valores de ejemplo, sesión simulada." width="900">
+  <img src="../images/readme/revit-villa-panel.png" alt="Modelo de una villa en Revit junto al panel de AEC Model Bridge con el modo Dev activado." width="900">
 </p>
 
 AEC Model Bridge es el servidor MCP de código abierto para Revit que permite a Claude,
@@ -196,7 +196,7 @@ y las acciones de parámetros y de edición del modelo van cada una en su propia
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../images/approval-flow-dark.png">
-    <img src="../images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. After verifying, you can also use rollback_plan, which may skip actions with no recorded before-value. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
+    <img src="../images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
   </picture>
 </p>
 
@@ -205,11 +205,7 @@ y las acciones de parámetros y de edición del modelo van cada una en su propia
 Si un plan resulta ser erróneo, deshazlo con Ctrl+Z en Revit. Cada escritura de parámetro
 es su propia transacción con nombre, así que un plan puede requerir varias pulsaciones.
 Un deshacer en un solo paso para un plan completo está planificado, no construido.
-`rollback_plan` vuelve a escribir los valores previos registrados en orden inverso y
-puede omitir una acción si no se registró un valor previo, así que lee sus advertencias.
-Ninguna de las dos vías está verificada todavía en una sesión real de Revit (UNVERIFIED).
-Las operaciones que no se pueden revertir, como la escritura de archivos, no se deshacen
-por ninguna de las dos vías y todavía no piden una segunda confirmación (planificado). La lista Plans del panel muestra solo los planes pendientes; `aec-model-bridge-approve show <plan_id>` funciona con un plan en cualquier estado, mientras que los paquetes de `proofs/` solo existen para los planes que se ejecutaron (o se intentaron). El ciclo de vida está descrito en
+Una segunda vía es un plan de reversión: el asistente lo redacta con `plan_revert` a partir de la prueba de un plan ejecutado, y tú lo apruebas como cualquier otro plan. `rollback_plan` es solo para personas y no es un botón ni un comando, así que no cuentes con él. Ninguna de estas vías está verificada todavía en una sesión real de Revit (UNVERIFIED). Las operaciones que no se pueden revertir, como la escritura de archivos, no se deshacen por ninguna de ellas y todavía no piden una segunda confirmación (planificado). La lista Plans del panel muestra solo los planes pendientes; `aec-model-bridge-approve show <plan_id>` funciona con un plan en cualquier estado, mientras que los paquetes de `proofs/` solo existen para los planes que se ejecutaron (o se intentaron). El ciclo de vida está descrito en
 [ADR 0008](../0008-approval-gate-lifecycle.md).
 
 Para pipelines desatendidos puedes definir `MCP_REVIT_APPROVAL_MODE=auto`. Eso desactiva

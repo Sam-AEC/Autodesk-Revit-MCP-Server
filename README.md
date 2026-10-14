@@ -18,15 +18,36 @@ Open-source MCP server and native add-in for Revit 2024 – 2027. Works with Cla
 
 </div>
 
+Status: on the dev branch, not yet released.
+
 <p align="center">
-  <img src="docs/images/readme/demo.gif" alt="Demo: a 3D model of a building sits beside the Revit panel. An AI assistant finds 12 doors with no Mark and drafts a plan. The plan waits in the Revit panel until you approve it, then the values are read back. Example values, simulated session." width="900">
+  <img src="docs/images/readme/revit-villa-panel.png" alt="Revit villa model beside the AEC Model Bridge panel with Dev mode enabled." width="900">
 </p>
 
 AEC Model Bridge is the open-source Revit MCP server that lets Claude, Codex,
-Cursor and other AI assistants read and edit your open Revit model. You approve
-every change first. It has two parts: a Python MCP server and a native Revit
-add-in. Read-only tools inspect the model straight away. Model changes need an
-approved plan by default. [See the approval flow](#how-approval-works).
+Cursor and other AI assistants read and edit your open Revit model. By default
+you approve every change first. It has two parts: a Python MCP server and a
+native Revit add-in. Read-only tools inspect the model straight away. Model
+changes need an approved plan by default.
+[See the approval flow](#how-approval-works).
+
+**Who it is for.** BIM coordinators and managers who want an AI assistant to
+check model quality, find affected elements and prepare parameter fixes, while a
+person stays in control of every change. You do not need to write scripts.
+
+**Status and limits.** This is pre-release software.
+
+- Nothing in this product has been verified in a live Revit session yet. The
+  Python server is tested with mock providers, and CI compiles the add-in for
+  Revit 2024 to 2027 but does not start Revit. Treat every Revit behaviour
+  described here as UNVERIFIED until a person has checked it. The ordered list
+  is in the [release checklist](docs/release-checklist.md).
+- This page describes the dev branch. The latest GitHub release may not include
+  everything described here.
+- Try it on a copy of a project first. Approving a plan changes the open model.
+- Some limits are known and listed under [How approval works](#how-approval-works)
+  and in [docs/security.md](docs/security.md).
+- The dev branch registers more tools (241 in mock mode at the time of writing; see the dev branch).
 
 <p align="center">
   <img src="docs/images/readme/works-with.svg" alt="Works with: Claude Desktop, VS Code with GitHub Copilot, Cursor and Codex have documented setup. Other MCP clients such as Claude Code, Windsurf, Cline, Continue, Zed and Gemini CLI should work too. Applications: Revit 2024 to 2027, Rhino, Grasshopper, Navisworks (in progress). Data: IFC, Speckle, Excel, SQLite. Protocol: MCP over stdio with an approval gate." width="900">
@@ -76,11 +97,27 @@ without Revit.
 
 The snapshot QA/QC and report modules need a compatible saved snapshot. The
 handoff from Revit to these modules currently needs the filename and workspace
-to match. If you leave out `snapshot_id`, they can return generated sample
-data. For live inspection, use the direct Revit tools above.
+to match. If you leave out `snapshot_id`, most of these modules now refuse in
+bridge mode with a clear message, and return generated sample data only in mock
+mode. Not every module has that guard yet (`model_bloat` does not), so always
+pass `snapshot_id`. For live inspection, use the direct Revit tools above.
 [Planned fixes and demo](docs/roadmap.md).
 
 ## Quick start
+
+**In 60 seconds, without Revit (mock mode)**
+
+1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/).
+2. Add the server to your client with the JSON under Manual setup and set
+   `"MCP_REVIT_MODE": "mock"`. The one-click buttons below start in `bridge`
+   mode, which needs Revit.
+3. Restart the client and ask it to list the AEC Model Bridge tools.
+4. Ask it to read the active document. Mock mode returns generated sample
+   data, never your model, so the answers are a way to see the tools and the
+   approval flow before you connect Revit.
+5. For your own model, install the Revit add-in
+   ([install steps](#install-the-revit-add-in)) and switch the mode to
+   `bridge`.
 
 **One-click install**
 
@@ -184,10 +221,27 @@ shapes are data and external services.
 
 ### How approval works
 
+In plain words:
+
+- **Two modes you will use.** `look_only` lets the assistant read but refuses
+  every tool that changes the model. `ask_first` (the default, also written
+  `required`) lets it draft changes, but nothing runs until a person approves.
+  A third value, `auto`, switches the check off and is meant only for
+  controlled pipelines.
+- **Only a person approves.** Approving, rejecting and rolling back plans are
+  not offered to AI clients. A person approves in the Revit panel or with the
+  `aec-model-bridge-approve` command.
+- **Nothing applies on its own.** A change runs only if it matches an approved
+  action of an approved plan, once.
+- **Undo is per action.** Revit's Ctrl+Z undoes one action per press.
+
 The hub stops any tool call that changes the model unless it carries an
-approved plan. The default mode is `required`. The AI proposes a plan, you
-review it in the Revit side panel, and the add-in runs it on Revit's main
-thread. Parameter and model-edit actions each run in their own named
+approved plan. The AI proposes a plan, you review it, and the add-in runs it on
+Revit's main thread. The panel's Plans list shows each pending plan's tools,
+arguments and, when one was captured, the before-value. For the full review of
+a plan, including any reasoning and warnings the assistant attached, run
+`aec-model-bridge-approve show <plan_id>`; the panel does not show that review
+text. Parameter and model-edit actions each run in their own named
 transaction; some actions (save, sync, scripts) do not, so Ctrl+Z does not
 cover them.
 
@@ -201,7 +255,7 @@ cover them.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/approval-flow-dark.png">
-    <img src="docs/images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. After verifying, you can also use rollback_plan, which may skip actions with no recorded before-value. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
+    <img src="docs/images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
   </picture>
 </p>
 
@@ -209,11 +263,14 @@ cover them.
 
 If a plan turns out wrong, undo it with Revit's Ctrl+Z. Each parameter write is
 its own named transaction, so one plan can take several presses. A one-step undo
-for a whole plan is planned, not built. `rollback_plan` writes the recorded
-before-values back in reverse order, and it can skip an action when no
-before-value was recorded, so read its warnings. Neither path is verified in a
-live Revit session yet (UNVERIFIED). Operations that cannot be reversed, such as
-file output, are not undone by either path and do not get a second confirmation
+for a whole plan is planned, not built. A second route is a revert plan: the
+assistant drafts one with `plan_revert` from the proof of an executed plan, and
+you approve it like any other plan. `rollback_plan` also writes the recorded
+before-values back in reverse order and can skip an action when no before-value
+was recorded, but it is for people only and has no panel button or command-line
+command yet, so do not count on it. None of these paths is verified in a live
+Revit session yet (UNVERIFIED). Operations that cannot be reversed, such as
+file output, are not undone by any of them and do not get a second confirmation
 yet (planned). The panel's Plans list shows pending plans only; `aec-model-bridge-approve show <plan_id>`
 works for a plan in any state, while `proofs/` bundles exist only for plans that
 were executed (or attempted). The lifecycle is in
@@ -230,6 +287,9 @@ the human check off, so use it only in a controlled environment.
 | 2025 | .NET 8 for Windows | .NET 8 SDK |
 | 2026 | .NET 8 for Windows | .NET 8 SDK |
 | 2027 | .NET 10 for Windows | .NET 10 SDK |
+
+These are the build targets. CI compiles the add-in for all four years, but no
+year has been verified in a live Revit session yet.
 
 You also need Windows 10 or 11, Python 3.11 or later, and a licensed Revit
 installation for the version you use. Mock mode runs the server without Revit,
@@ -376,7 +436,11 @@ and About.
 - The Revit bridge listens on localhost only.
 - The server reads and writes only inside the folders in
   `MCP_REVIT_ALLOWED_DIRECTORIES`.
-- Mutating tools need an approved plan unless you turn approval off.
+- Mutating tools need an approved plan unless you turn approval off, and
+  `look_only` mode refuses them outright.
+- Approval is recorded with the channel (panel or command line) and your
+  operating-system account. It does not prove who is typing, so do not give an
+  AI client a shell on the account you approve plans with.
 - Tool calls are written to an audit log, and secrets are redacted.
 
 Details are in [docs/security.md](docs/security.md). To report a
@@ -404,8 +468,10 @@ are installed. See [ADR 0012](docs/0012-native-agent-chat-backend.md).
 ### Can the AI change my model without asking?
 
 Not in the default mode. Tools that change the model are blocked until a plan
-is approved in the Revit panel. Read-only tools run without approval. If you
-set `MCP_REVIT_APPROVAL_MODE=auto`, approval is skipped.
+is approved by a person, in the Revit panel or with the
+`aec-model-bridge-approve` command. Read-only tools run without approval. In
+`look_only` mode nothing that changes the model runs at all. If you set
+`MCP_REVIT_APPROVAL_MODE=auto`, approval is skipped.
 
 ### Does it send my model to the cloud?
 
@@ -459,6 +525,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 - [MCP clients and registry](docs/marketplaces.md)
 - [Versioning and releases](docs/versioning.md)
 - [Release checklist](docs/release-checklist.md)
+- [First check after install](docs/first-check.md)
+- [Demo runbook](docs/demo-runbook.md)
+- [Proof bundles and revert plans](docs/proof-and-revert.md)
+- [Privacy](docs/privacy.md)
+- [Roadmap](docs/roadmap.md)
 - [All documentation](docs/README.md)
 - [Contributing](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Contributors](CONTRIBUTORS.md)

@@ -6,8 +6,8 @@ We actively support and provide security updates for the following versions:
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 1.x     | ✅ Active support  |
-| < 1.0   | ❌ Not supported   |
+| 1.x     | Supported          |
+| < 1.0   | Not supported      |
 
 Security fixes go into the latest 1.x release. For the Revit and Python versions that are built and tested, see the table below and the [deprecation policy](docs/deprecation-policy.md).
 
@@ -57,33 +57,29 @@ We follow **coordinated disclosure**:
 
 ### For Users
 
-✅ **Keep localhost-only** - Never bind to `0.0.0.0` without enterprise hardening
-✅ **Update regularly** - Apply security patches within 30 days
-✅ **Enable audit logs** - Monitor `%APPDATA%\AECModelBridge\Logs\bridge.jsonl`
-✅ **Workspace sandboxing** - Only allow trusted project directories
-✅ **Enterprise mode** - Follow [docs/security.md](docs/security.md) for HTTPS/OAuth
+- **Keep the bridges on localhost.** They bind to `127.0.0.1` only. Do not expose them through a reverse proxy or port forward. There is no HTTPS, OAuth or rate limiting on the local bridges; they rely on the localhost boundary and, in the default Revit mode, a session token (see [docs/security.md](docs/security.md)).
+- **Keep approval on.** Leave `MCP_REVIT_APPROVAL_MODE` at its default (`required`). Setting `auto` turns the approval check off.
+- **Limit the workspace.** Set `MCP_REVIT_WORKSPACE_DIR` and `MCP_REVIT_ALLOWED_DIRECTORIES` to the folders you need.
+- **Check the logs.** The server writes `audit.log` (see [docs/logging-and-audit.md](docs/logging-and-audit.md)) and the Revit add-in writes `%APPDATA%\AECModelBridge\Logs\bridge.jsonl`. Restrict access to both.
+- **Update regularly.** Apply security releases within 30 days.
+- **Do not give an AI client a shell on the account you approve plans with.** The panel authenticates a local process, not a person.
 
 ### For Developers
 
-✅ **Input validation** - All inputs validated against schemas
-✅ **No secrets in code** - Use environment variables
-✅ **Least privilege** - No privilege elevation
-✅ **Exception handling** - Sanitize before returning to client
+- Tool arguments are validated against schemas before they reach a provider.
+- Keep secrets out of code; use environment variables or a keyring.
+- Audit entries and tool responses are redacted for secrets and local paths.
 
-## Security Hardening Checklist
+## Hardening Checklist
 
-Before production deployment:
+Before relying on a deployment:
 
-- [ ] Bridge binds to `127.0.0.1` only
-- [ ] Workspace directories limited
-- [ ] Audit logging enabled
-- [ ] HTTPS configured (if remote access)
-- [ ] OAuth2 enabled (if external clients)
-- [ ] Rate limiting configured
-- [ ] Security reviews scheduled
+- [ ] Bridges bind to `127.0.0.1` only and are not behind a port forward
+- [ ] Workspace directories are limited to the folders you need
+- [ ] `MCP_REVIT_APPROVAL_MODE` is not `auto`
+- [ ] Access to `audit.log` and `bridge.jsonl` is restricted
+- [ ] No AI client has a shell on the account used to approve plans
+
+The dev build passed scoped read-only smoke checks in Revit 2024; model writes, rollback and export acceptance remain pending. See the [live-validation report](docs/revit-addin-live-validation-2026-10-14.md) and [release checklist](docs/release-checklist.md).
 
 Full guide: [docs/security.md](docs/security.md)
-
----
-
-**Last Updated**: 2026-01-07

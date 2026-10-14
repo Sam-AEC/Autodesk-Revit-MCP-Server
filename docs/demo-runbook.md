@@ -1,5 +1,7 @@
 # Demo runbook: missing door Marks
 
+Status: on the dev branch, not yet released.
+
 This is the script for the core demo: ask, plan, preview, approve in Revit,
 verify, undo. It runs on a synthetic fixture with 12 doors that have no Mark
 and 3 rooms that have no Number. It also covers a run where the plan is
@@ -7,9 +9,10 @@ rejected and nothing changes.
 
 **Writes are untested in a real Revit.** An architecture review found that
 `BridgeCommandFactory.CreateTransaction(Document, string)` in the add-in called
-itself, so on `main` every model write (including `revit_set_parameter_value`)
-would recurse until Revit crashes. The fix, hotfix PR #95, is merged into `dev`
-but has never run in live Revit. Build the add-in from `dev` (or a release that
+itself, so builds without hotfix PR #95 could recurse on every model write
+(including `revit_set_parameter_value`) until Revit crashes. The fix is merged
+into `dev`; the current build passed read-only smoke checks, but its mutating
+path has not passed live acceptance. Build the add-in from `dev` (or a release that
 contains #95), do not run Step 6 or the undo steps against anything you care
 about, and treat the first real write on a throwaway copy as a test in its own
 right. Steps 1 to 5 and the rejected-plan run do not write to the model.
@@ -17,7 +20,9 @@ right. Steps 1 to 5 and the rejected-plan run do not write to the model.
 This runbook matches `dev`, not the last release. The test plan for `dev` is
 [dev-test-plan.md](dev-test-plan.md); it also lists the known limits.
 
-Nobody has run this end to end against live Revit yet. The expected counts come
+Bounded read-only Revit 2024 checks passed on 14 October 2026; see
+[the live validation report](revit-addin-live-validation-2026-10-14.md).
+Nobody has run this demo end to end against live Revit yet. The expected counts come
 from the [seeded defect manifest](../fixtures/canonical-model/seeded-defects.json)
 and the rule pack, not from a recorded session. Record what you actually see
 and treat any difference as a finding. Background on why the demo looks like
@@ -30,7 +35,8 @@ this is in the [roadmap](roadmap.md).
 - **UNVERIFIED (live Revit)**: it needs a running Revit session with the
   add-in. Nothing in this runbook has been confirmed that way.
 - **UNVERIFIED (not in a release)**: it is merged into `dev` but not yet in a
-  release or on `main`. Preview in the model (#64), the write-path crash fix
+  release. This describes the current dev checkout; presence on `main` alone
+  does not establish release or live acceptance. Preview in the model (#64), the write-path crash fix
   (#95) and approval v2 (#99, #105, #109) are in this group. They are tagged
   "checked in code" or "UNVERIFIED (live Revit)" below, as appropriate. Proof
   bundles, `plan_revert` (#62) and the draft-plan gate fix (#63) are merged.
@@ -41,7 +47,8 @@ this is in the [roadmap](roadmap.md).
   installed. See the [install guide](install.md).
 - The MCP server connected to an MCP client, and the Revit side panel open.
 - A throwaway copy of the fixture. Never run this on a project model.
-- Approval mode left at its default, `ask_first` (the older name `required`
+- In Settings, switch Dev off and leave timed Auto off for this approval demo.
+  Approval mode is its default, `ask_first` (the older name `required`
   means the same). Do not set `MCP_REVIT_APPROVAL_MODE=auto`; that turns the
   human check off. `look_only` refuses every model change; use it only to show
   that writes are blocked. An unknown value falls back to `ask_first`.
@@ -214,9 +221,12 @@ Approve as the person, in one of two ways.
 
 The assistant cannot approve its own plan: `approve_plan`, `reject_plan` and
 `rollback_plan` are not listed to MCP clients, are denied to the panel chat, and
-are refused on every other path a model can reach. The approval is bound to
-exactly what was shown. If the plan file changed after you looked at it, the
-approval is refused. The plan records `approved_via` (`panel` or `cli`) and
+are refused on every other path a model can reach. The approval is bound to a
+content hash of the plan. If the plan file changed after you looked at it, the
+approval is refused. The dev panel shows tools, arguments, before-values and
+validated review text when you open the plan review. Malformed, unsupported or
+oversized reviews block approval. Compare with
+`aec-model-bridge-approve show <plan_id>` if anything is unclear. The plan records `approved_via` (`panel` or `cli`) and
 `approved_by` (your account name).
 
 Expected: the plan leaves the Plans list. The panel lists pending plans only, so
@@ -297,12 +307,12 @@ There are two ways back. Use whichever you can show honestly.
    `executed`, and it writes each recorded before-value back, only for
    `revit_set_parameter_value` actions. One catch: it skips an action when no
    before-value was recorded, and reports that as a warning. It skips any other
-   tool with a "No rollback handler" warning. Rollback is for a person to run
-   from the client, not the assistant. These doors started empty. If the before-state is stored as empty,
+   tool with a "No rollback handler" warning. Rollback is for a person, not the
+   assistant, and on `dev` it has no panel button or `aec-model-bridge-approve`
+   command, so there is no everyday way to run it. These doors started empty. If the before-state is stored as empty,
    rollback may skip all 12 and leave the Marks in place. Read the warnings in
    the result and verify with a new snapshot. If it skipped them, use Ctrl+Z
-   instead. UNVERIFIED (live Revit). The model-facing chat cannot call rollback;
-   a person does it from the client.
+   instead. UNVERIFIED (live Revit). The model-facing chat cannot call rollback.
 3. **`plan_revert` (checked in code, merged in #62)**. It drafts a new pending
    plan from the proof bundle; you still approve and execute it. It refuses when
    an element has no recorded before-value, and an empty value counts as not
@@ -347,11 +357,11 @@ file, the audit log and both snapshot ids.
 | Counts are not 12 and 3 | The baseline is off; I am not going to hide that. | Rebuild the fixture, retake the snapshot, record both runs. |
 | Error naming a missing or unapproved `plan_id` | The gate is blocking an unapproved write. | Create or approve the plan. |
 | Approve does nothing in the panel | I will confirm the plan state before going on. | Refresh, look for an `Error:` entry in the Run Log, check the plan state. |
-| Revit crashes or hangs on the first write | Known risk: this is the first real write, and #95 has never run in live Revit. | Stop. Check the add-in was built from `dev`, record the log, report it. |
+| Revit crashes or hangs on the first write | Mutating acceptance is pending; confirm the installed build contains the #95 recursion fix. | Stop. Check the add-in was built from `dev`, record the log, report it. |
 | "Look only mode: this tool changes the model..." | The mode is Look only on purpose; nothing can change the model. | Set `MCP_REVIT_APPROVAL_MODE` to `ask_first` and restart, if you meant to write. |
 | Approval refused, plan changed | The plan on disk no longer matches what you were shown. | Run `show` again, check the hash, reject or redraft the plan. |
 | Assistant says it cannot approve | Correct: only a person approves. | Approve in the panel or with `aec-model-bridge-approve`. |
-| An action stays `running` | Submit to Revit may have failed; it will not rerun. | Check the model, then ask for a new plan. |
+| An action stays `running` | Submit to Revit may have failed; it will not rerun. | Check in Revit what it changed, mark it with `aec-model-bridge-approve recover <plan_id> --reason "..."`, then ask for a new plan. |
 | Some actions failed on execute | This is a partial result, not a finished fix. | Read the per-action errors, verify with a new snapshot. |
 | Door count after is not 0 | Not everything was fixed. | List the remaining issues, match them to failed actions. |
 | Rollback skipped actions | Rollback could not restore empty values. | Use Revit Undo, then verify with a new snapshot. |
@@ -359,14 +369,16 @@ file, the audit log and both snapshot ids.
 
 ## Known limits
 
-- The panel hub (port 8787) has no token yet. Any local program can call it,
-  including to approve a plan. Treat the machine as trusted-local.
+- The panel hub (port 8787) needs a per-user token, but the token only proves a
+  process running as your Windows user. Any such program can read it and call
+  the hub, including to approve a plan. Treat the machine as trusted-local.
 - Approvals are not bound to a document or view and never expire.
-- Actions can stay `running` after a failed submit.
+- Actions can stay `running` after a failed submit or a crash. A person can abandon them with `aec-model-bridge-approve recover`; nothing recovers automatically.
 - Some Navisworks and proxy tools are still outside the approval gate.
 - The add-in's snapshot extractor does not carry every field, so some checks say
   "not enough data".
-- Nothing here has run in live Revit, and the first real write is unverified.
+- The demo and mutating acceptance remain unverified in live Revit. The separate
+  14 October 2026 read-only smoke checks do not establish this workflow.
 - Undo is Ctrl+Z once per action. There is no one-step undo for a plan.
 
 The fuller list, with how to check each, is in

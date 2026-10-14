@@ -20,7 +20,7 @@ Revit 2024 – 2027용 오픈소스 MCP 서버와 네이티브 애드인. Claude
 </div>
 
 <p align="center">
-  <img src="../images/readme/demo.gif" alt="데모: Revit 패널 옆에 건물의 3D 모델이 놓여 있습니다. AI 어시스턴트가 Mark가 없는 문 12개를 찾아 계획을 작성합니다. 계획은 승인할 때까지 Revit 패널에서 대기하고, 승인 후 값을 다시 읽어 확인합니다. 예시 값, 시뮬레이션된 세션입니다." width="900">
+  <img src="../images/readme/revit-villa-panel.png" alt="Dev 모드가 활성화된 AEC Model Bridge 패널 옆의 Revit 빌라 모델." width="900">
 </p>
 
 AEC Model Bridge는 Claude, Codex, Cursor 등의 AI 어시스턴트가 현재 열려 있는 Revit 모델을 읽고 편집할 수 있게 해 주는 오픈소스 Revit MCP 서버이며, 모든 변경은 먼저 사용자가 승인해야 적용됩니다. Python MCP 서버와 네이티브 Revit 애드인으로 구성됩니다. 읽기 전용 도구는 모델을 즉시 조회하며, 모델 변경에는 기본적으로 승인된 계획이 필요합니다. [승인 흐름 보기](#승인-방식).
@@ -151,13 +151,13 @@ MCP 클라이언트는 하나의 Python 허브와 통신합니다. 허브는 각
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../images/approval-flow-dark.png">
-    <img src="../images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. After verifying, you can also use rollback_plan, which may skip actions with no recorded before-value. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
+    <img src="../images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
   </picture>
 </p>
 
 <sub>다이어그램 소스: [approval-flow.mmd](../diagrams/approval-flow.mmd). 이미지는 `python scripts/render_diagrams.py`로 다시 생성합니다.</sub>
 
-계획이 잘못된 것으로 드러나면 Revit의 Ctrl+Z로 되돌리세요. 매개변수 쓰기는 각각 이름이 붙은 별도 트랜잭션이므로, 계획 하나를 되돌리려면 여러 번 눌러야 할 수 있습니다. 계획 전체를 한 번에 되돌리는 기능은 계획 단계이며 아직 구현되지 않았습니다. `rollback_plan`은 기록된 이전 값을 역순으로 다시 쓰며, 이전 값이 기록되지 않은 작업은 건너뛸 수 있으므로 경고를 확인하세요. 두 방법 모두 실제 Revit 세션에서는 아직 검증되지 않았습니다(UNVERIFIED). 파일 출력처럼 되돌릴 수 없는 작업은 두 방법 모두로 되돌릴 수 없으며, 한 번 더 확인하는 기능은 아직 없습니다(계획 단계). 패널의 Plans 목록에는 대기 중인 계획만 표시됩니다. `aec-model-bridge-approve show <plan_id>`는 어떤 상태의 계획에도 사용할 수 있지만, `proofs/` 번들은 실행된(또는 실행을 시도한) 계획에만 존재합니다. 전체 수명 주기는 [ADR 0008](../0008-approval-gate-lifecycle.md)에 있습니다.
+계획이 잘못된 것으로 드러나면 Revit의 Ctrl+Z로 되돌리세요. 매개변수 쓰기는 각각 이름이 붙은 별도 트랜잭션이므로, 계획 하나를 되돌리려면 여러 번 눌러야 할 수 있습니다. 계획 전체를 한 번에 되돌리는 기능은 계획 단계이며 아직 구현되지 않았습니다. 두 번째 방법은 되돌리기 계획입니다. 어시스턴트가 실행된 계획의 증빙으로 `plan_revert`를 사용해 초안을 만들고, 다른 계획과 똑같이 사용자가 승인합니다. `rollback_plan`은 사람 전용이며 버튼도 명령도 아니므로 기대하지 마세요. 이 방법들은 모두 실제 Revit 세션에서 아직 검증되지 않았습니다(UNVERIFIED). 파일 출력처럼 되돌릴 수 없는 작업은 어떤 방법으로도 되돌릴 수 없으며, 한 번 더 확인하는 기능은 아직 없습니다(계획 단계). 패널의 Plans 목록에는 대기 중인 계획만 표시됩니다. `aec-model-bridge-approve show <plan_id>`는 어떤 상태의 계획에도 사용할 수 있지만, `proofs/` 번들은 실행된(또는 실행을 시도한) 계획에만 존재합니다. 전체 수명 주기는 [ADR 0008](../0008-approval-gate-lifecycle.md)에 있습니다.
 
 무인 파이프라인에서는 `MCP_REVIT_APPROVAL_MODE=auto`를 설정할 수 있습니다. 사람의 확인을 끄는 설정이므로 통제된 환경에서만 사용하세요.
 

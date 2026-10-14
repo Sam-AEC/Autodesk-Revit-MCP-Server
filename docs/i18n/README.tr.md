@@ -20,7 +20,7 @@ Revit 2024 – 2027 için açık kaynaklı MCP sunucusu ve yerel eklenti. Claude
 </div>
 
 <p align="center">
-  <img src="../images/readme/demo.gif" alt="Demo: Bir binanın 3B modeli Revit panelinin yanında durur. Bir yapay zekâ asistanı Mark değeri olmayan 12 kapıyı bulur ve bir plan hazırlar. Plan, siz onaylayana kadar Revit panelinde bekler; ardından değerler doğrulama için geri okunur. Örnek değerler, simüle edilmiş oturum." width="900">
+  <img src="../images/readme/revit-villa-panel.png" alt="Dev modu açık AEC Model Bridge panelinin yanında Revit villa modeli." width="900">
 </p>
 
 AEC Model Bridge, Claude, Codex, Cursor ve diğer yapay zekâ asistanlarının açık Revit modelinizi okumasını ve düzenlemesini sağlayan açık kaynaklı Revit MCP sunucusudur; her değişikliği önce siz onaylarsınız. Python tabanlı bir MCP sunucusunu yerel bir Revit eklentisiyle birleştirir: salt okunur araçlar modeli hemen inceler, model değişiklikleri ise varsayılan olarak onaylanmış bir plan gerektirir. [Onay akışına bakın](#onay-nasıl-çalışır).
@@ -151,13 +151,13 @@ Hub, onaylanmış bir plan taşımayan ve modeli değiştiren her araç çağrı
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../images/approval-flow-dark.png">
-    <img src="../images/approval-flow-light.png" alt="Onay akışı: yapay zekâ asistanı plan_actions ile bir plan taslağı hazırlar, yan panel önerilen değişiklikleri (sayılar, kapsam, önce ve sonra) gösterir ve bir insan bunu panelde ya da aec-model-bridge-approve CLI ile onaylar; onay asla MCP üzerinden verilmez. Hub, planın onaylanan araç ve argümanlarla eşleştiğini yalnızca bir kez denetler. Ardından Revit her eylemi kendi transaction'ında çalıştırır, bu yüzden Ctrl+Z her basışta bir eylemi geri alır. Doğrulamadan sonra, kaydedilmiş önceki değeri olmayan eylemleri atlayabilen rollback_plan da kullanılabilir. Planı reddederseniz veya hiç onaylamazsanız çağrı engellenir ve model olduğu gibi kalır." width="900">
+    <img src="../images/approval-flow-light.png" alt="Onay akışı: yapay zekâ asistanı plan_actions ile bir plan taslağı hazırlar, yan panel önerilen değişiklikleri (sayılar, kapsam, önce ve sonra) gösterir ve bir insan bunu panelde ya da aec-model-bridge-approve CLI ile onaylar; onay asla MCP üzerinden verilmez. Hub, planın onaylanan araç ve argümanlarla eşleştiğini yalnızca bir kez denetler. Ardından Revit her eylemi kendi transaction'ında çalıştırır, bu yüzden Ctrl+Z her basışta bir eylemi geri alır. Planı reddederseniz veya hiç onaylamazsanız çağrı engellenir ve model olduğu gibi kalır." width="900">
   </picture>
 </p>
 
 <sub>Diyagram kaynağı: [approval-flow.mmd](../diagrams/approval-flow.mmd). Görselleri `python scripts/render_diagrams.py` ile yeniden oluşturun.</sub>
 
-Bir plan hatalı çıkarsa Revit'te Ctrl+Z ile geri alın. Her parametre yazımı kendi adlandırılmış işlemidir, bu yüzden tek bir plan için birkaç kez basmanız gerekebilir. Tüm plan için tek adımda geri alma planlanmıştır, henüz yapılmamıştır. `rollback_plan` kaydedilen önceki değerleri ters sırayla geri yazar ve önceki değer kaydedilmemişse bir eylemi atlayabilir; bu yüzden uyarılarını okuyun. İki yol da henüz gerçek bir Revit oturumunda doğrulanmadı (UNVERIFIED). Dosya çıktısı gibi geri alınamayan işlemler bu iki yolla da geri alınamaz ve henüz ikinci bir onay istemez (planlanmıştır). Panelin Plans listesi yalnızca bekleyen planları gösterir; `aec-model-bridge-approve show <plan_id>` her durumdaki bir plan için çalışır, `proofs/` paketleri ise yalnızca yürütülen (veya yürütülmeye çalışılan) planlar için vardır. Yaşam döngüsü [ADR 0008](../0008-approval-gate-lifecycle.md) belgesindedir.
+Bir plan hatalı çıkarsa Revit'te Ctrl+Z ile geri alın. Her parametre yazımı kendi adlandırılmış işlemidir, bu yüzden tek bir plan için birkaç kez basmanız gerekebilir. Tüm plan için tek adımda geri alma planlanmıştır, henüz yapılmamıştır. İkinci yol bir geri alma planıdır: asistan, yürütülmüş bir planın kanıtından `plan_revert` ile bir taslak hazırlar ve siz onu diğer planlar gibi onaylarsınız. `rollback_plan` yalnızca insanlar içindir; ne bir düğmedir ne de bir komut, bu yüzden ona güvenmeyin. Bu yolların hiçbiri henüz gerçek bir Revit oturumunda doğrulanmadı (UNVERIFIED). Dosya çıktısı gibi geri alınamayan işlemler bunların hiçbiriyle geri alınamaz ve henüz ikinci bir onay istemez (planlanmıştır). Panelin Plans listesi yalnızca bekleyen planları gösterir; `aec-model-bridge-approve show <plan_id>` her durumdaki bir plan için çalışır, `proofs/` paketleri ise yalnızca yürütülen (veya yürütülmeye çalışılan) planlar için vardır. Yaşam döngüsü [ADR 0008](../0008-approval-gate-lifecycle.md) belgesindedir.
 
 Gözetimsiz pipeline'lar için `MCP_REVIT_APPROVAL_MODE=auto` ayarlayabilirsiniz. Bu, insan denetimini kapatır; bu yüzden yalnızca kontrollü bir ortamda kullanın.
 

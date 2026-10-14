@@ -1,5 +1,7 @@
 # pyRevit Bridge module
 
+Status: on the dev branch, not yet released.
+
 The built-in `pyrevit_bridge` module lets existing pyRevit pushbutton scripts be discovered and run as tools behind the [approval gate](0008-approval-gate-lifecycle.md), without rewriting them.
 
 > **Status: Python side only.** Running a script inside Revit needs a provider tool `revit_run_pyrevit_script` and an add-in handler for the bridge call `revit.run_pyrevit_script`. Neither exists, and the add-in side is **NOT implemented and UNVERIFIED**. Nothing here has been tested against a live Revit or pyRevit install. Until the runner exists, `run_pyrevit_script` performs every check and then returns `status: "bridge_unavailable"` with `executed: false`.

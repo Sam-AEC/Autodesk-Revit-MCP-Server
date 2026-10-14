@@ -20,7 +20,7 @@ Server MCP sumber terbuka dan add-in native untuk Revit 2024 – 2027. Bekerja d
 </div>
 
 <p align="center">
-  <img src="../images/readme/demo.gif" alt="Demo: model 3D sebuah gedung berada di samping panel Revit. Asisten AI menemukan 12 pintu tanpa Mark dan menyusun rencana. Rencana menunggu di panel Revit sampai Anda menyetujuinya, lalu nilainya dibaca ulang untuk diperiksa. Nilai contoh, sesi simulasi." width="900">
+  <img src="../images/readme/revit-villa-panel.png" alt="Model vila di Revit di samping panel AEC Model Bridge dengan mode Dev aktif." width="900">
 </p>
 
 AEC Model Bridge adalah server MCP Revit sumber terbuka yang memungkinkan Claude, Codex, Cursor, dan asisten AI lain membaca dan mengedit model Revit yang sedang Anda buka, dengan setiap perubahan Anda setujui lebih dulu. Proyek ini menggabungkan server MCP berbasis Python dengan add-in Revit native: tool hanya baca langsung memeriksa model, sedangkan perubahan pada model secara default memerlukan rencana yang sudah disetujui. [Lihat alur persetujuan](#cara-kerja-persetujuan).
@@ -151,13 +151,13 @@ Hub menghentikan setiap panggilan tool yang mengubah model kecuali panggilan itu
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../images/approval-flow-dark.png">
-    <img src="../images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. After verifying, you can also use rollback_plan, which may skip actions with no recorded before-value. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
+    <img src="../images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
   </picture>
 </p>
 
 <sub>Sumber diagram: [approval-flow.mmd](../diagrams/approval-flow.mmd). Buat ulang gambar dengan `python scripts/render_diagrams.py`.</sub>
 
-Jika sebuah rencana ternyata keliru, batalkan dengan Ctrl+Z di Revit. Setiap penulisan parameter adalah transaksi bernama tersendiri, jadi satu rencana bisa memerlukan beberapa kali penekanan. Undo satu langkah untuk seluruh rencana masih direncanakan, belum dibangun. `rollback_plan` menulis kembali nilai sebelumnya yang tercatat dalam urutan terbalik, dan dapat melewati sebuah aksi bila nilai sebelumnya tidak tercatat, jadi baca peringatannya. Kedua jalur ini belum diverifikasi di sesi Revit yang sebenarnya (UNVERIFIED). Operasi yang tidak dapat dibatalkan, seperti keluaran file, tidak dibatalkan oleh kedua jalur ini dan belum meminta konfirmasi kedua (direncanakan). Daftar Plans di panel hanya menampilkan rencana yang tertunda; `aec-model-bridge-approve show <plan_id>` berfungsi untuk rencana dalam status apa pun, sedangkan bundel `proofs/` hanya ada untuk rencana yang dieksekusi (atau dicoba). Siklus hidupnya ada di [ADR 0008](../0008-approval-gate-lifecycle.md).
+Jika sebuah rencana ternyata keliru, batalkan dengan Ctrl+Z di Revit. Setiap penulisan parameter adalah transaksi bernama tersendiri, jadi satu rencana bisa memerlukan beberapa kali penekanan. Undo satu langkah untuk seluruh rencana masih direncanakan, belum dibangun. Jalur kedua adalah rencana pembalikan: asisten menyusunnya dengan `plan_revert` dari bukti rencana yang sudah dieksekusi, dan Anda menyetujuinya seperti rencana lainnya. `rollback_plan` hanya untuk manusia dan bukan tombol maupun perintah, jadi jangan mengandalkannya. Belum ada jalur ini yang diverifikasi di sesi Revit yang sebenarnya (UNVERIFIED). Operasi yang tidak dapat dibatalkan, seperti keluaran file, tidak dibatalkan oleh jalur mana pun dan belum meminta konfirmasi kedua (direncanakan). Daftar Plans di panel hanya menampilkan rencana yang tertunda; `aec-model-bridge-approve show <plan_id>` berfungsi untuk rencana dalam status apa pun, sedangkan bundel `proofs/` hanya ada untuk rencana yang dieksekusi (atau dicoba). Siklus hidupnya ada di [ADR 0008](../0008-approval-gate-lifecycle.md).
 
 Untuk pipeline tanpa pengawasan, Anda dapat mengatur `MCP_REVIT_APPROVAL_MODE=auto`. Ini mematikan pemeriksaan manusia, jadi gunakan hanya di lingkungan yang terkendali.
 

@@ -20,7 +20,7 @@ Máy chủ MCP mã nguồn mở và add-in gốc cho Revit 2024 – 2027. Hoạt
 </div>
 
 <p align="center">
-  <img src="../images/readme/demo.gif" alt="Demo: mô hình 3D của một tòa nhà nằm cạnh bảng Revit. Trợ lý AI tìm 12 cửa không có Mark và soạn một kế hoạch. Kế hoạch chờ trong bảng Revit cho đến khi bạn phê duyệt, sau đó các giá trị được đọc lại để kiểm tra. Giá trị minh họa, phiên mô phỏng." width="900">
+  <img src="../images/readme/revit-villa-panel.png" alt="Mô hình biệt thự trong Revit bên cạnh bảng AEC Model Bridge với chế độ Dev được bật." width="900">
 </p>
 
 AEC Model Bridge là máy chủ MCP mã nguồn mở cho Revit, cho phép Claude, Codex, Cursor và các trợ lý AI khác đọc và chỉnh sửa mô hình Revit bạn đang mở, với mọi thay đổi đều do bạn phê duyệt trước. Công cụ này kết hợp máy chủ MCP viết bằng Python với add-in Revit gốc: các công cụ chỉ đọc kiểm tra mô hình ngay lập tức, còn thay đổi trên mô hình mặc định cần một kế hoạch đã được phê duyệt. [Xem luồng phê duyệt](#cách-phê-duyệt-hoạt-động).
@@ -151,13 +151,13 @@ Hub chặn mọi lệnh gọi công cụ làm thay đổi mô hình nếu không
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../images/approval-flow-dark.png">
-    <img src="../images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. After verifying, you can also use rollback_plan, which may skip actions with no recorded before-value. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
+    <img src="../images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
   </picture>
 </p>
 
 <sub>Nguồn sơ đồ: [approval-flow.mmd](../diagrams/approval-flow.mmd). Tạo lại hình ảnh bằng `python scripts/render_diagrams.py`.</sub>
 
-Nếu một kế hoạch hóa ra sai, hãy hoàn tác bằng Ctrl+Z trong Revit. Mỗi lần ghi tham số là một giao dịch có tên riêng, nên một kế hoạch có thể cần nhấn nhiều lần. Hoàn tác cả kế hoạch chỉ trong một bước đã được lên kế hoạch nhưng chưa được xây dựng. `rollback_plan` ghi lại các giá trị trước đó đã được ghi nhận theo thứ tự ngược, và có thể bỏ qua một hành động nếu không có giá trị trước đó được ghi nhận, vì vậy hãy đọc các cảnh báo của nó. Cả hai cách đều chưa được xác minh trong một phiên Revit thực tế (UNVERIFIED). Các thao tác không thể đảo ngược, chẳng hạn xuất tệp, không thể hoàn tác bằng cả hai cách và hiện chưa yêu cầu xác nhận lần hai (đã lên kế hoạch). Danh sách Plans của bảng điều khiển chỉ hiển thị các kế hoạch đang chờ; `aec-model-bridge-approve show <plan_id>` dùng được cho kế hoạch ở bất kỳ trạng thái nào, còn các gói `proofs/` chỉ tồn tại cho những kế hoạch đã được thực thi (hoặc đã thử thực thi). Vòng đời được mô tả trong [ADR 0008](../0008-approval-gate-lifecycle.md).
+Nếu một kế hoạch hóa ra sai, hãy hoàn tác bằng Ctrl+Z trong Revit. Mỗi lần ghi tham số là một giao dịch có tên riêng, nên một kế hoạch có thể cần nhấn nhiều lần. Hoàn tác cả kế hoạch chỉ trong một bước đã được lên kế hoạch nhưng chưa được xây dựng. Cách thứ hai là kế hoạch hoàn nguyên: trợ lý soạn một kế hoạch bằng `plan_revert` từ bằng chứng của một kế hoạch đã thực thi, và bạn phê duyệt nó như mọi kế hoạch khác. `rollback_plan` chỉ dành cho con người và không phải là nút hay lệnh, vì vậy đừng trông cậy vào nó. Chưa cách nào trong số này được xác minh trong một phiên Revit thực tế (UNVERIFIED). Các thao tác không thể đảo ngược, chẳng hạn xuất tệp, không thể hoàn tác bằng cách nào trong số đó và hiện chưa yêu cầu xác nhận lần hai (đã lên kế hoạch). Danh sách Plans của bảng điều khiển chỉ hiển thị các kế hoạch đang chờ; `aec-model-bridge-approve show <plan_id>` dùng được cho kế hoạch ở bất kỳ trạng thái nào, còn các gói `proofs/` chỉ tồn tại cho những kế hoạch đã được thực thi (hoặc đã thử thực thi). Vòng đời được mô tả trong [ADR 0008](../0008-approval-gate-lifecycle.md).
 
 Với các pipeline chạy tự động, bạn có thể đặt `MCP_REVIT_APPROVAL_MODE=auto`. Thiết lập này tắt bước kiểm tra của con người, vì vậy chỉ dùng trong môi trường được kiểm soát.
 

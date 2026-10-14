@@ -1,5 +1,7 @@
 # ADR 0017: Binding approvals to a Revit document, and expiring them
 
+Status: on the dev branch, not yet released.
+
 ## Status
 Proposed. Nothing in this record is implemented.
 

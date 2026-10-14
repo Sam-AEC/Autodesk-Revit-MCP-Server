@@ -1,5 +1,7 @@
 # MCP Marketplaces and Client Distribution
 
+Status: on the dev branch, not yet released.
+
 This project is prepared for the major MCP discovery paths that can be handled from a public GitHub repository.
 
 Distribution files added for listings are marked UNVERIFIED where they come from documentation read from memory or from a search summary. Treat those as a checklist to confirm, not as tested facts.

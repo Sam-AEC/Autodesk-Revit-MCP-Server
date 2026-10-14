@@ -1,6 +1,6 @@
 # Brand
 
-There are two things to keep apart. The product is **AEC Model Bridge** and it has one mark, the Pier. **Cerberus** is a feature inside the product and has its own sub-mark, the Ember mesh. The Ember mesh is never the logo of the product or the repository.
+There are two things to keep apart. The product is **AEC Model Bridge** and it has one mark, the Pier. **Cerberus** is a planned feature inside the product and has its own sub-mark, the Ember mesh. The Ember mesh is never the logo of the product or the repository.
 
 ## 1. Product brand: AEC Model Bridge, the Pier mark
 
@@ -16,11 +16,11 @@ The Pier is an isometric model cube with a bridge arch cut through each side fac
 | `extensions/vscode/media/icon.png` | VS Code extension icon (512x512) |
 | `scripts/make_brand_assets.py` | Regenerates `icon.ico`, `logo-mark-512.png` and the two installer bitmaps from the Pier geometry |
 
-The repository has no social preview image file. GitHub takes the link-card image from repository settings, not from the tree.
+The README artwork includes [the social preview image](../images/readme/social-preview.png). GitHub takes the link-card image from repository settings; a maintainer must upload this file there. There is no `assets/social-preview.png`.
 
 ## 2. Cerberus: feature name and sub-mark
 
-Cerberus is the name of a tool inside AEC Model Bridge. Its mark is the "Ember mesh": three jackal heads inside an ouroboros ring, built from flat triangular facets with ember-orange eyes. All files are in `assets/cerberus/`.
+Cerberus is the name of a planned feature inside AEC Model Bridge ([ADR 0016](../0016-cerberus-multi-agent-review.md), Proposed, not built). The artwork exists; the feature does not. Its mark is the "Ember mesh": three jackal heads inside an ouroboros ring, built from flat triangular facets with ember-orange eyes. All files are in `assets/cerberus/`.
 
 ### Usage
 
@@ -40,14 +40,14 @@ Cerberus is the name of a tool inside AEC Model Bridge. Its mark is the "Ember m
 
 | File | Purpose |
 | --- | --- |
-| `mark.svg` | Full-colour master |
-| `mark-512.png`, `mark-1024.png` | Rasters, transparent |
-| `mark-16.svg`, `mark-32.svg` | Small-size variants |
-| `mark-mono.svg` | One colour (`fill="currentColor"`) |
-| `mark-mono-badge.svg` | Near-black disc with a white mark; works on any background |
-| `mark-dark-disc.svg` | Full mark on its own dark disc, for dark UIs |
-| `cerberus.ico` | 16, 24, 32, 48, 64, 128, 256 px |
-| `cerberus-hero.png` | 1280x640 feature artwork. It is not the repository social preview |
+| [`mark.svg`](../../assets/cerberus/mark.svg) | Full-colour master |
+| [`mark-512.png`](../../assets/cerberus/mark-512.png), [`mark-1024.png`](../../assets/cerberus/mark-1024.png) | Rasters, transparent |
+| [`mark-16.svg`](../../assets/cerberus/mark-16.svg), [`mark-32.svg`](../../assets/cerberus/mark-32.svg) | Small-size variants |
+| [`mark-mono.svg`](../../assets/cerberus/mark-mono.svg) | One colour (`fill="currentColor"`) |
+| [`mark-mono-badge.svg`](../../assets/cerberus/mark-mono-badge.svg) | Near-black disc with a white mark; works on any background |
+| [`mark-dark-disc.svg`](../../assets/cerberus/mark-dark-disc.svg) | Full mark on its own dark disc, for dark UIs |
+| [`cerberus.ico`](../../assets/cerberus/cerberus.ico) | 16, 24, 32, 48, 64, 128, 256 px |
+| [`cerberus-hero.png`](../../assets/cerberus/cerberus-hero.png) | 1280x640 feature artwork. It is not the repository social preview |
 
 ### Do not
 

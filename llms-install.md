@@ -28,7 +28,7 @@ Do these steps in order. Stop and tell the person if a step fails. Do not guess.
 }
 ```
 
-4. Do not set `MCP_REVIT_APPROVAL_MODE`. The default, `required`, blocks every model change until a person approves a plan. Never turn it off.
+4. Do not set `MCP_REVIT_APPROVAL_MODE`. The default, `ask_first` (older name `required`), blocks every model change until a person approves a plan. `look_only` blocks them entirely. Never turn it off. Explicit panel Dev mode and timed Auto also skip per-change approvals; ask the person to switch them off for this workflow.
 5. Ask the person to restart the server in Cline, then list the tools to check it started.
 
 Using the tools safely: read first, draft a plan for any change, then stop and ask the person to approve the plan themselves in the AEC Bridge panel in Revit. Never approve a plan yourself. Do not say a change was made until the result confirms it. More: https://github.com/Sam-AEC/aec-model-bridge/blob/main/plugin/skills/revit-review/SKILL.md

@@ -20,7 +20,7 @@
 </div>
 
 <p align="center">
-  <img src="../images/readme/demo.gif" alt="示範：Revit 面板旁有一棟建築的 3D 模型。AI 助理找出 12 扇沒有標記（Mark）的門並擬定計畫。計畫會在 Revit 面板中等待你核准，核准後再讀回數值進行檢查。範例數值，模擬的工作階段。" width="900">
+  <img src="../images/readme/revit-villa-panel.png" alt="Revit 別墅模型位於 AEC Model Bridge 面板旁，Dev 模式已開啟。" width="900">
 </p>
 
 AEC Model Bridge 是開源的 Revit MCP 伺服器，讓 Claude、Codex、Cursor 等 AI 助理讀取並編輯你開啟中的 Revit 模型，且每一項變更都須先經你核准。它結合 Python MCP 伺服器與原生 Revit 增益集：唯讀工具可立即檢查模型，而模型的任何變更預設都必須有已核准的計畫。[查看核准流程](#核准如何運作)。
@@ -151,13 +151,13 @@ MCP 用戶端與一個 Python hub 溝通。hub 會把每次呼叫轉送給擁有
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../images/approval-flow-dark.png">
-    <img src="../images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. After verifying, you can also use rollback_plan, which may skip actions with no recorded before-value. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
+    <img src="../images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
   </picture>
 </p>
 
 <sub>圖表來源：[approval-flow.mmd](../diagrams/approval-flow.mmd)。使用 `python scripts/render_diagrams.py` 重新產生圖片。</sub>
 
-若計畫有誤，請在 Revit 中用 Ctrl+Z 復原。每次參數寫入都是各自獨立的具名交易，因此一個計畫可能需要按多次。整個計畫一步復原的功能已列入規劃，尚未實作。`rollback_plan` 會依相反順序寫回已記錄的原值，若某個動作沒有記錄原值，它可能會略過該動作，請查看其警告。這兩種方式目前都尚未在真實的 Revit 工作階段中驗證（UNVERIFIED）。無法復原的操作（例如檔案輸出）這兩種方式都無法復原，目前也尚未要求再次確認（已列入規劃）。面板的 Plans 清單只顯示待處理的計畫；`aec-model-bridge-approve show <plan_id>` 適用於任何狀態的計畫，而 `proofs/` 套件只存在於已執行（或嘗試執行）的計畫。完整生命週期請見 [ADR 0008](../0008-approval-gate-lifecycle.md)。
+若計畫有誤，請在 Revit 中用 Ctrl+Z 復原。每次參數寫入都是各自獨立的具名交易，因此一個計畫可能需要按多次。整個計畫一步復原的功能已列入規劃，尚未實作。第二種方式是還原計畫：助理根據已執行計畫的憑證，以 `plan_revert` 起草一個新計畫，再像核准其他計畫一樣核准它。`rollback_plan` 僅供人使用，既不是按鈕也不是指令，因此不要指望它。這些方式目前都尚未在真實的 Revit 工作階段中驗證（UNVERIFIED）。無法復原的操作（例如檔案輸出）這些方式都無法復原，目前也尚未要求再次確認（已列入規劃）。面板的 Plans 清單只顯示待處理的計畫；`aec-model-bridge-approve show <plan_id>` 適用於任何狀態的計畫，而 `proofs/` 套件只存在於已執行（或嘗試執行）的計畫。完整生命週期請見 [ADR 0008](../0008-approval-gate-lifecycle.md)。
 
 對於無人值守的流程，可以設定 `MCP_REVIT_APPROVAL_MODE=auto`。這會關閉人工檢查，因此請只在受控環境中使用。
 

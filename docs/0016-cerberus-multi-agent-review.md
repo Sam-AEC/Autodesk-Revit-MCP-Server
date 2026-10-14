@@ -1,5 +1,7 @@
 # ADR 0016: Cerberus, a multi-head read-only model review
 
+Status: on the dev branch, not yet released.
+
 ## Status
 Proposed. Not accepted. Nothing in this record is built. Only throwaway spikes exist, using fake models and fixture data, outside this repository. One real Claude CLI head ran once on synthetic fixture data (about 14 s, about $0.03).
 

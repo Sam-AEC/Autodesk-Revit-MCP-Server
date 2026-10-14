@@ -20,7 +20,7 @@ Server MCP open source e add-in nativo per Revit 2024 – 2027. Funziona con Cla
 </div>
 
 <p align="center">
-  <img src="../images/readme/demo.gif" alt="Demo: un assistente IA trova 12 porte senza Mark e prepara un piano. Il piano attende nel pannello di Revit finché non lo approvi, poi i valori vengono riletti per verifica. Valori di esempio, sessione simulata." width="900">
+  <img src="../images/readme/revit-villa-panel.png" alt="Modello di una villa in Revit accanto al pannello AEC Model Bridge con la modalità Dev attivata." width="900">
 </p>
 
 AEC Model Bridge è il server MCP open source per Revit che permette a Claude, Codex, Cursor e ad altri assistenti IA di leggere e modificare il modello Revit che hai aperto, con ogni modifica approvata prima da te. Unisce un server MCP in Python a un add-in Revit nativo: gli strumenti di sola lettura ispezionano subito il modello, mentre le modifiche al modello richiedono, per impostazione predefinita, un piano approvato. [Vedi il flusso di approvazione](#come-funziona-lapprovazione).
@@ -151,13 +151,13 @@ L'hub blocca qualsiasi chiamata a uno strumento che modifica il modello, a meno 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../images/approval-flow-dark.png">
-    <img src="../images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. After verifying, you can also use rollback_plan, which may skip actions with no recorded before-value. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
+    <img src="../images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
   </picture>
 </p>
 
 <sub>Sorgente del diagramma: [approval-flow.mmd](../diagrams/approval-flow.mmd). Rigenera le immagini con `python scripts/render_diagrams.py`.</sub>
 
-Se un piano si rivela sbagliato, annullalo con Ctrl+Z in Revit. Ogni scrittura di parametro è una transazione con nome a sé, quindi un piano può richiedere più pressioni. Un annullamento in un solo passaggio per un intero piano è pianificato, non realizzato. `rollback_plan` riscrive i valori precedenti registrati in ordine inverso e può saltare un'azione se non è stato registrato alcun valore precedente, quindi leggi i suoi avvisi. Nessuno dei due percorsi è ancora verificato in una sessione Revit reale (UNVERIFIED). Le operazioni che non si possono annullare, come la scrittura di file, non vengono annullate da nessuno dei due percorsi e non chiedono ancora una seconda conferma (pianificato). L'elenco Plans del pannello mostra solo i piani in sospeso; `aec-model-bridge-approve show <plan_id>` funziona per un piano in qualsiasi stato, mentre i pacchetti `proofs/` esistono solo per i piani eseguiti (o tentati). Il ciclo di vita è descritto nell'[ADR 0008](../0008-approval-gate-lifecycle.md).
+Se un piano si rivela sbagliato, annullalo con Ctrl+Z in Revit. Ogni scrittura di parametro è una transazione con nome a sé, quindi un piano può richiedere più pressioni. Un annullamento in un solo passaggio per un intero piano è pianificato, non realizzato. Una seconda via è un piano di ripristino: l'assistente ne redige uno con `plan_revert` a partire dalla prova di un piano eseguito, e tu lo approvi come qualsiasi altro piano. `rollback_plan` è solo per le persone e non è né un pulsante né un comando, quindi non contarci. Nessuna di queste vie è ancora verificata in una sessione Revit reale (UNVERIFIED). Le operazioni che non si possono annullare, come la scrittura di file, non vengono annullate da nessuna di esse e non chiedono ancora una seconda conferma (pianificato). L'elenco Plans del pannello mostra solo i piani in sospeso; `aec-model-bridge-approve show <plan_id>` funziona per un piano in qualsiasi stato, mentre i pacchetti `proofs/` esistono solo per i piani eseguiti (o tentati). Il ciclo di vita è descritto nell'[ADR 0008](../0008-approval-gate-lifecycle.md).
 
 Per le pipeline non presidiate puoi impostare `MCP_REVIT_APPROVAL_MODE=auto`. Questo disattiva il controllo da parte di una persona, quindi usalo solo in un ambiente controllato.
 

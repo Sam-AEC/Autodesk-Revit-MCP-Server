@@ -20,7 +20,7 @@
 </div>
 
 <p align="center">
-  <img src="../images/readme/demo.gif" alt="演示：建筑的 3D 模型位于 Revit 面板旁。AI 助手找出 12 个没有标记（Mark）的门并起草计划。计划会在 Revit 面板中等待你批准，批准后再读回数值进行核对。示例数值，模拟会话。" width="900">
+  <img src="../images/readme/revit-villa-panel.png" alt="Revit 别墅模型位于 AEC Model Bridge 面板旁，Dev 模式已开启。" width="900">
 </p>
 
 AEC Model Bridge 是开源的 Revit MCP 服务器，让 Claude、Codex、Cursor 等 AI 助手读取并编辑你正在打开的 Revit 模型，且每一项变更都须先经你批准。它由 Python MCP 服务器和原生 Revit 插件组成：只读工具可立即检查模型，而默认情况下，模型变更必须有已批准的计划。[查看审批流程](#审批如何运作)。
@@ -152,13 +152,13 @@ hub 会拦截任何会修改模型的工具调用，除非它附带已批准的�
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../images/approval-flow-dark.png">
-    <img src="../images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. After verifying, you can also use rollback_plan, which may skip actions with no recorded before-value. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
+    <img src="../images/approval-flow-light.png" alt="Approval flow: the AI assistant drafts a plan with plan_actions, the side panel shows the proposed changes (counts, scope, before and after), and a human approves in the panel or with the aec-model-bridge-approve CLI, never over MCP. The hub checks that the plan matches the approved tool and arguments, once only. Revit then runs each action in its own transaction, so Ctrl+Z undoes one action per press. If you reject or never approve, the call is blocked and the model stays untouched." width="900">
   </picture>
 </p>
 
 <sub>图表源文件：[approval-flow.mmd](../diagrams/approval-flow.mmd)。使用 `python scripts/render_diagrams.py` 重新生成图片。</sub>
 
-如果计划有误，请在 Revit 中用 Ctrl+Z 撤销。每次参数写入都是各自独立的命名事务，因此一个计划可能需要按多次。整个计划一步撤销的功能已列入计划，尚未实现。`rollback_plan` 会按相反顺序写回已记录的原值，如果某个操作没有记录原值，它可能会跳过该操作，请查看其警告。这两种方式目前都尚未在真实的 Revit 会话中验证（UNVERIFIED）。无法撤销的操作（例如文件输出）这两种方式都无法撤销，目前也尚未要求再次确认（已列入计划）。面板的 Plans 列表只显示待处理的计划；`aec-model-bridge-approve show <plan_id>` 适用于任何状态的计划，而 `proofs/` 包只存在于已执行（或尝试执行）的计划。完整生命周期见 [ADR 0008](../0008-approval-gate-lifecycle.md)。
+如果计划有误，请在 Revit 中用 Ctrl+Z 撤销。每次参数写入都是各自独立的命名事务，因此一个计划可能需要按多次。整个计划一步撤销的功能已列入计划，尚未实现。第二种方式是还原计划：助手根据已执行计划的凭证，用 `plan_revert` 起草一个新计划，再像批准其他计划一样批准它。`rollback_plan` 仅供人使用，既不是按钮也不是命令，因此不要指望它。这些方式目前都尚未在真实的 Revit 会话中验证（UNVERIFIED）。无法撤销的操作（例如文件输出）这些方式都无法撤销，目前也尚未要求再次确认（已列入计划）。面板的 Plans 列表只显示待处理的计划；`aec-model-bridge-approve show <plan_id>` 适用于任何状态的计划，而 `proofs/` 包只存在于已执行（或尝试执行）的计划。完整生命周期见 [ADR 0008](../0008-approval-gate-lifecycle.md)。
 
 对于无人值守的流水线，可以设置 `MCP_REVIT_APPROVAL_MODE=auto`。这会关闭人工检查，因此请仅在受控环境中使用。
 

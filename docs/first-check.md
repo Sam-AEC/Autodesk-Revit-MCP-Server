@@ -1,5 +1,7 @@
 # First check: from install to ready
 
+Status: on the dev branch, not yet released.
+
 This page is for a BIM coordinator setting up AEC Model Bridge for the first
 time. You do not need to use a terminal for the installer path. For the full
 install options, see [install](install.md).
@@ -49,10 +51,11 @@ bridge log named above.
 The same data is available from the hub:
 
 ```powershell
-Invoke-RestMethod "http://127.0.0.1:8787/diagnostics"
+$panelToken = (Get-Content "$env:LOCALAPPDATA\AECModelBridge\panel-hub.token" -Raw).Trim()
+Invoke-RestMethod "http://127.0.0.1:8787/diagnostics" -Headers @{"X-AMB-Token" = $panelToken}
 ```
 
 It returns `{ "ok": <all checks passed>, "approval_mode": "look_only|ask_first|auto", "approval_mode_note": "<one line>", "checks": [ { "id", "ok", "detail", "next_step" } ] }`.
 `next_step` is empty for passing checks. The `approval_mode` check is
 informational for `look_only` and `ask_first` and fails for `auto`, because
-`auto` skips approvals. `/health` stays a minimal status payload.
+`auto` skips approvals. The response also includes `dev_mode` and `auto_expires_at`: explicit Dev mode skips approvals until switched off and has no expiry, while panel Auto is timed. `/health` stays a minimal status payload and does not require the token. See [ADR 0018](0018-explicit-development-mode.md).

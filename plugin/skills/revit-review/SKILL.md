@@ -5,8 +5,14 @@ description: Safe flow for reviewing and fixing an open Revit model with AEC Mod
 
 # Review a Revit model safely
 
+Status: on the dev branch, not yet released.
+
 AEC Model Bridge lets you read the Revit model the person has open. Changes are
-different: they only happen after a person approves a plan. Follow these steps in order.
+different: in Ask me first mode they only happen after a person approves a plan.
+This skill follows that approval workflow. If the person explicitly enabled Dev
+mode for the current task, follow their authorized scope and keep every change
+audited and verified; do not describe Dev writes as individually approved. Do
+not switch the mode yourself. Follow these steps in order.
 
 ## 1. Find out which mode you are in
 

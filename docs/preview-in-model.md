@@ -1,5 +1,7 @@
 # Preview in model
 
+Status: on the dev branch, not yet released.
+
 Lets a coordinator who does not script see which elements a proposed change
 affects before approving it. Two read-only tools:
 
@@ -28,8 +30,8 @@ resolve are counted in `not_found_count` and skipped.
 
 ## UNVERIFIED
 
-- The C# was not compiled locally (no dotnet SDK). Compilation is checked only
-  by the CI add-in jobs for Revit 2024-2027; see the PR.
+- The Revit 2024 Release build passed on 14 October 2026 (zero errors); see
+  [the upgrade handoff](bridge-upgrade-handoff.md). Other target builds still need release verification.
 - Not run in a live Revit session. Actual on-screen behaviour is unobserved.
 - Workshared models: whether the small transactions behave well (no
   checkout/ownership side effects, no sync prompts) is unknown.

@@ -20,7 +20,7 @@ Otwartoźródłowy serwer MCP i natywny dodatek do Revit 2024 – 2027. Działa 
 </div>
 
 <p align="center">
-  <img src="../images/readme/demo.gif" alt="Demo: trójwymiarowy model budynku obok panelu Revit. Asystent AI znajduje 12 drzwi bez Mark i przygotowuje plan. Plan czeka w panelu Revit, aż go zatwierdzisz, a potem wartości są odczytywane ponownie w celu sprawdzenia. Przykładowe wartości, symulowana sesja." width="900">
+  <img src="../images/readme/revit-villa-panel.png" alt="Model willi w Revit obok panelu AEC Model Bridge z włączonym trybem Dev." width="900">
 </p>
 
 AEC Model Bridge to otwartoźródłowy serwer MCP dla Revit, który pozwala Claude, Codex, Cursorowi i innym asystentom AI odczytywać i edytować otwarty model Revit, przy czym każdą zmianę najpierw zatwierdzasz Ty. Łączy serwer MCP w Pythonie z natywnym dodatkiem do Revit: narzędzia tylko do odczytu od razu sprawdzają model, a zmiany w modelu domyślnie wymagają zatwierdzonego planu. [Zobacz, jak działa zatwierdzanie](#jak-działa-zatwierdzanie).
@@ -151,13 +151,13 @@ Hub zatrzymuje każde wywołanie narzędzia zmieniającego model, jeśli nie tow
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../images/approval-flow-dark.png">
-    <img src="../images/approval-flow-light.png" alt="Przepływ zatwierdzania: asystent AI tworzy plan przez plan_actions, panel boczny pokazuje proponowane zmiany (liczby, zakres, przed i po), a człowiek zatwierdza w panelu lub poleceniem CLI aec-model-bridge-approve, nigdy przez MCP. Hub sprawdza, czy plan zgadza się z zatwierdzonym narzędziem i argumentami, tylko jeden raz. Revit wykonuje każdą akcję w osobnej transakcji, więc Ctrl+Z cofa jedną akcję na naciśnięcie. Po weryfikacji można też użyć rollback_plan, który może pominąć akcje bez zapisanej wartości sprzed zmiany. Jeśli odrzucisz plan lub nigdy go nie zatwierdzisz, wywołanie jest blokowane, a model pozostaje nietknięty." width="900">
+    <img src="../images/approval-flow-light.png" alt="Przepływ zatwierdzania: asystent AI tworzy plan przez plan_actions, panel boczny pokazuje proponowane zmiany (liczby, zakres, przed i po), a człowiek zatwierdza w panelu lub poleceniem CLI aec-model-bridge-approve, nigdy przez MCP. Hub sprawdza, czy plan zgadza się z zatwierdzonym narzędziem i argumentami, tylko jeden raz. Revit wykonuje każdą akcję w osobnej transakcji, więc Ctrl+Z cofa jedną akcję na naciśnięcie. Jeśli odrzucisz plan lub nigdy go nie zatwierdzisz, wywołanie jest blokowane, a model pozostaje nietknięty." width="900">
   </picture>
 </p>
 
 <sub>Źródło diagramu: [approval-flow.mmd](../diagrams/approval-flow.mmd). Obrazy wygenerujesz ponownie poleceniem `python scripts/render_diagrams.py`.</sub>
 
-Jeśli plan okaże się błędny, cofnij go skrótem Ctrl+Z w Revit. Każdy zapis parametru to osobna nazwana transakcja, więc jeden plan może wymagać kilku naciśnięć. Cofnięcie całego planu jednym krokiem jest planowane, ale jeszcze nie zbudowane. `rollback_plan` zapisuje z powrotem zarejestrowane wartości sprzed zmiany w odwrotnej kolejności i może pominąć akcję, jeśli nie zarejestrowano wartości poprzedniej, więc przeczytaj jego ostrzeżenia. Żadna z tych dróg nie została jeszcze zweryfikowana w prawdziwej sesji Revit (UNVERIFIED). Operacje, których nie da się cofnąć, np. zapis plików, nie są cofane żadną z tych dróg i nie wymagają jeszcze drugiego potwierdzenia (planowane). Lista Plans w panelu pokazuje tylko plany oczekujące; `aec-model-bridge-approve show <plan_id>` działa dla planu w dowolnym stanie, natomiast pakiety `proofs/` istnieją tylko dla planów, które wykonano (lub próbowano wykonać). Cykl życia opisuje [ADR 0008](../0008-approval-gate-lifecycle.md).
+Jeśli plan okaże się błędny, cofnij go skrótem Ctrl+Z w Revit. Każdy zapis parametru to osobna nazwana transakcja, więc jeden plan może wymagać kilku naciśnięć. Cofnięcie całego planu jednym krokiem jest planowane, ale jeszcze nie zbudowane. Drugą drogą jest plan cofnięcia: asystent sporządza go za pomocą `plan_revert` na podstawie dowodu wykonanego planu, a zatwierdzasz go jak każdy inny plan. `rollback_plan` jest tylko dla ludzi i nie jest ani przyciskiem, ani poleceniem, więc nie licz na niego. Żadna z tych dróg nie została jeszcze zweryfikowana w prawdziwej sesji Revit (UNVERIFIED). Operacje, których nie da się cofnąć, np. zapis plików, nie są cofane żadną z nich i nie wymagają jeszcze drugiego potwierdzenia (planowane). Lista Plans w panelu pokazuje tylko plany oczekujące; `aec-model-bridge-approve show <plan_id>` działa dla planu w dowolnym stanie, natomiast pakiety `proofs/` istnieją tylko dla planów, które wykonano (lub próbowano wykonać). Cykl życia opisuje [ADR 0008](../0008-approval-gate-lifecycle.md).
 
 W potokach działających bez nadzoru możesz ustawić `MCP_REVIT_APPROVAL_MODE=auto`. To wyłącza kontrolę człowieka, więc używaj tego tylko w kontrolowanym środowisku.
 
