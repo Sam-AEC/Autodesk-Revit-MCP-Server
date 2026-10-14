@@ -33,7 +33,10 @@ Safety of the write commands (same rules as revit_docs):
     'skip' keeps what worked and lists the rest; Revit warnings are dismissed and listed in ``info``;
   * a call replaces only elements that carry its own Extensible Storage tag (tag + key) and never deletes anything else;
     a replacement that would delete foreign dependents is refused;
-  * results carry ``changed_ids``, ``post_check`` and ``verified``, and are never ``ok: true`` when a post-check fails.
+  * results carry ``changed_ids``, ``post_check`` and ``verified``, and are never ``ok: true`` when a post-check fails;
+  * ``dry_run`` (route, connect, circuit): the whole call runs inside the group as normal, its own post-checks included,
+    then the group is always rolled back (the shared revit_docs Runner). The result says ``dry_run: true``,
+    ``committed: false`` and ``would_change``; revit_system_report is skipped because nothing is left to report on.
 
 Post-check: the script verifies its own work inside the group (pieces exist and carry the tag, requested connectors are
 connected, no unplanned open end, sizes and system class as asked, circuit membership/panel/name). After the group is
@@ -59,12 +62,14 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from revit_mcp_server.check_contract import (
+    DRY_RUN_HINT,
     PageSpec,
     ScriptOutput,
     assemble_result,
     error_result,
     mock_result,
     parse_script_output,
+    write_run_fields,
 )
 
 MODULE_DIR = Path(__file__).resolve().parent
@@ -148,6 +153,7 @@ _HINTS = {
     "post_check_failed": "The model changed but a check afterwards failed (see post_check). Inspect the listed ids with revit_system_report, or run the call again to replace what this tool made.",
     "script_exception": "The embedded script failed inside Revit; any open transaction group was rolled back, so the model should be unchanged (verify with revit_warnings_delta).",
     "timeout_running": "Revit may still be running the script. Call revit_get_result with the request_id, and do not repeat a write until it has finished.",
+    "dry_run_not_honoured": "A dry run reported committed changes. Check the model with revit_system_report before doing anything else.",
 }
 
 
@@ -398,6 +404,15 @@ def _choice(value: Any, allowed: Tuple[str, ...], what: str, default: Optional[s
     return str(value)
 
 
+def _flag(value: Any, what: str) -> bool:
+    """A strict boolean (None means false): the string 'false' must never turn into a real write or a dry run."""
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ValueError(f"{what} must be true or false")
+    return value
+
+
 def _bad_input(tool: str, exc: Exception) -> Dict[str, Any]:
     return error_result(tool, "invalid_input", str(exc), hint=_HINTS["invalid_input"])
 
@@ -525,6 +540,7 @@ def _finish_write(
     extra: Optional[Dict[str, Any]] = None,
     extra_checks: Optional[List[Dict[str, Any]]] = None,
     unverified: Optional[str] = None,
+    dry_run: bool = False,
 ) -> Dict[str, Any]:
     outcome = parsed.meta.get("outcome", "ok")
     changed = _ints(parsed.meta.get("changed_ids"))
@@ -561,15 +577,23 @@ def _finish_write(
     }
     if extra:
         fields.update(extra)
-    ok = outcome == "ok" and post_check["ok"] and not parsed.fails and parsed.counts.get("fail", 0) == 0
+    run_fields, violation = write_run_fields(parsed, outcome, items, dry_run=dry_run)
+    fields.update(run_fields)
+    if violation:
+        synthetic.fails.insert(0, violation)
+        outcome = "dry_run_not_honoured"
+        fields["outcome"] = outcome
+    ok = outcome == "ok" and post_check["ok"] and not synthetic.fails and parsed.counts.get("fail", 0) == 0
     summary = parsed.summary
     failed_checks_text = [c for c in checks if not c["ok"]]
     if not ok:
-        first = parsed.fails[0] if parsed.fails else (
+        first = synthetic.fails[0] if synthetic.fails else (
             ("%s: %s" % (failed_checks_text[0]["check"], failed_checks_text[0]["detail"])) if failed_checks_text else outcome)
         summary = f"FAILED ({outcome}): {first}"
         if outcome == "rolled_back":
             summary += " The whole call was rolled back; the model is unchanged."
+    if dry_run:
+        summary = "DRY RUN, nothing was changed: " + (summary or "")
     result = assemble_result(
         tool,
         synthetic,
@@ -583,14 +607,16 @@ def _finish_write(
     if not ok:
         result["ok"] = False
         result["kind"] = outcome if outcome != "ok" else "post_check_failed"
-        if parsed.fails:
-            result["message"] = parsed.fails[0]
+        if synthetic.fails:
+            result["message"] = synthetic.fails[0]
         elif failed_checks_text:
             result["message"] = "%s: %s" % (failed_checks_text[0]["check"], failed_checks_text[0]["detail"])
         else:
             result["message"] = f"outcome: {outcome}"
         result["element_ids"] = failed_ids
         result["hint"] = _HINTS.get(result["kind"], "")
+    if dry_run and not violation:
+        result["hint"] = (DRY_RUN_HINT + " " + result.get("hint", "")).strip()
     return result
 
 
@@ -719,6 +745,7 @@ class RevitMepModule:
         routes: Any = None,
         transition_m: Any = 0.15,
         on_error: Any = None,
+        dry_run: Any = False,
         workspace: Any = None,
         approved_executor: Optional[ToolExecutor] = None,
         **_: Any,
@@ -734,6 +761,7 @@ class RevitMepModule:
                 "system_type_name": _name(system_type_name, "system_type_name") if system_type_name not in (None, "") else "",
                 "transition_m": _positive(transition_m if transition_m is not None else 0.15, "transition_m", 2.0),
                 "on_error": _on_error(on_error),
+                "dry_run": _flag(dry_run, "dry_run"),
             }
             if not isinstance(routes, list) or not 1 <= len(routes) <= 25:
                 raise ValueError("routes must be a list of 1 to 25 routes")
@@ -824,6 +852,7 @@ class RevitMepModule:
         connections: Any = None,
         tolerance_mm: Any = 5.0,
         on_error: Any = None,
+        dry_run: Any = False,
         workspace: Any = None,
         approved_executor: Optional[ToolExecutor] = None,
         **_: Any,
@@ -837,6 +866,7 @@ class RevitMepModule:
                 "system": normalize_system(system, k),
                 "tolerance_mm": _positive(tolerance_mm if tolerance_mm is not None else 5.0, "tolerance_mm", 50.0),
                 "on_error": _on_error(on_error),
+                "dry_run": _flag(dry_run, "dry_run"),
             }
             if not isinstance(connections, list) or not 1 <= len(connections) <= 50:
                 raise ValueError("connections must be a list of 1 to 50 connections")
@@ -866,6 +896,7 @@ class RevitMepModule:
         system: Any = "power",
         circuits: Any = None,
         on_error: Any = None,
+        dry_run: Any = False,
         workspace: Any = None,
         approved_executor: Optional[ToolExecutor] = None,
         **_: Any,
@@ -876,6 +907,7 @@ class RevitMepModule:
                 "tag": _tag(tag),
                 "system": normalize_system(system if system not in (None, "") else "power", "elec"),
                 "on_error": _on_error(on_error),
+                "dry_run": _flag(dry_run, "dry_run"),
             }
             if not isinstance(circuits, list) or not 1 <= len(circuits) <= 50:
                 raise ValueError("circuits must be a list of 1 to 50 circuits")
@@ -922,11 +954,14 @@ class RevitMepModule:
         checks: List[Dict[str, Any]] = []
         extra: Dict[str, Any] = {}
         unverified: Optional[str] = None
-        if report and parsed.meta.get("outcome", "ok") == "ok":
+        dry = bool(args.get("dry_run"))
+        if dry and report:
+            extra["system_report"] = {"ran": False, "reason": "dry run: the trial elements were rolled back, so there was nothing to report on"}
+        elif report and parsed.meta.get("outcome", "ok") == "ok":
             ids = _ints(parsed.meta.get("changed_ids") if script_name == "route.ipy" else parsed.meta.get("report_ids"))
             allow = _ints(parsed.meta.get("free_end_ids"))
             checks, extra, unverified = _system_check(ids, allow, hard_codes, approved_executor, workspace)
-        return _finish_write(tool, parsed, elapsed, workspace, extra=extra, extra_checks=checks, unverified=unverified)
+        return _finish_write(tool, parsed, elapsed, workspace, extra=extra, extra_checks=checks, unverified=unverified, dry_run=dry)
 
 
 # Codes of revit_system_report that make a call fail. Equipment ports that stay unconnected and separate groups of

@@ -39,7 +39,10 @@ Safety of the write command:
   * Revit warnings are dismissed and listed (INFO REVIT_WARNING_DISMISSED);
   * after the load the existing read-only ``revit_probe_family`` (modules/revit, through its own seam) runs for each loaded
     family. Its verdict (nested instances, category, connector list) is merged into ``post_check``; the result is never
-    ``ok: true`` when a script check or a probe check failed.
+    ``ok: true`` when a script check or a probe check failed;
+  * ``dry_run``: each family document is built and checked as normal, then closed unsaved. No folder or .rfa file is
+    written, nothing is loaded, the project group is rolled back, the probe does not run, and the rows name the file a
+    real run would write. It is approval-gated like a real run. UNVERIFIED in a live Revit like the rest.
 
 Everything that needs a running Revit is UNVERIFIED here: the scripts are syntax-checked and exercised against stubs of
 the Revit API in the tests (tests/test_revit_family.py, tests/test_revit_family_scripts.py), not against Revit. In
@@ -58,12 +61,14 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from revit_mcp_server.check_contract import (
+    DRY_RUN_HINT,
     PageSpec,
     ScriptOutput,
     assemble_result,
     error_result,
     mock_result,
     parse_script_output,
+    write_run_fields,
 )
 
 MODULE_DIR = Path(__file__).resolve().parent
@@ -115,6 +120,7 @@ _HINTS = {
     "post_check_failed": "The families were loaded but a check afterwards failed (see post_check). Inspect them with revit_probe_family, then fix the spec and call again with replace=true.",
     "script_exception": "The embedded script failed inside Revit; any open transaction group was rolled back, so the project should be unchanged (verify with revit_warnings_delta).",
     "timeout_running": "Revit may still be running the script. Call revit_get_result with the request_id, and do not repeat the write until it has finished.",
+    "dry_run_not_honoured": "A dry run reported committed changes. Check the project and the output folder before doing anything else.",
 }
 
 
@@ -450,6 +456,15 @@ def _in_workspace(workspace: Any, candidate: Path) -> Path:
         raise _OutsideWorkspace(str(exc)) from exc
 
 
+def _flag(value: Any, what: str) -> bool:
+    """A strict boolean (None means false): the string 'false' must never turn into a real write or a dry run."""
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ValueError(f"{what} must be true or false")
+    return value
+
+
 def _bad_input(tool: str, exc: Exception) -> Dict[str, Any]:
     return error_result(tool, "invalid_input", str(exc), hint=_HINTS["invalid_input"])
 
@@ -470,6 +485,7 @@ def _finish_write(
     extra_fails: Optional[List[str]] = None,
     extra_infos: Optional[List[str]] = None,
     extra: Optional[Dict[str, Any]] = None,
+    dry_run: bool = False,
 ) -> Dict[str, Any]:
     outcome = parsed.meta.get("outcome", "ok")
     changed = _ints(parsed.meta.get("changed_ids"))
@@ -504,6 +520,12 @@ def _finish_write(
     }
     if extra:
         fields.update(extra)
+    run_fields, violation = write_run_fields(parsed, outcome, items, dry_run=dry_run)
+    fields.update(run_fields)
+    if violation:
+        fails.insert(0, violation)
+        outcome = "dry_run_not_honoured"
+        fields["outcome"] = outcome
     ok = outcome == "ok" and post_check["ok"] and not fails and parsed.fail_total == 0
     summary = parsed.summary
     if not ok:
@@ -511,6 +533,8 @@ def _finish_write(
         summary = f"FAILED ({outcome if outcome != 'ok' else 'post_check_failed'}): {first}"
         if outcome == "rolled_back":
             summary += " The whole call was rolled back; the project is unchanged."
+    if dry_run:
+        summary = "DRY RUN, nothing was changed or written: " + (summary or "")
     result = assemble_result(
         tool,
         synthetic,
@@ -527,6 +551,8 @@ def _finish_write(
         result["message"] = fails[0] if fails else f"outcome: {outcome}"
         result["element_ids"] = failed_ids
         result["hint"] = _HINTS.get(result["kind"], "")
+    if dry_run and not violation:
+        result["hint"] = (DRY_RUN_HINT + " " + result.get("hint", "")).strip()
     return result
 
 
@@ -603,6 +629,7 @@ class RevitFamilyModule:
         template_path: Any = None,
         replace: Any = False,
         on_error: Any = None,
+        dry_run: Any = False,
         workspace: Any = None,
         approved_executor: Optional[ToolExecutor] = None,
         **_: Any,
@@ -628,6 +655,7 @@ class RevitFamilyModule:
                 if not isinstance(template_path, str) or Path(template_path).suffix.lower() != ".rft":
                     raise ValueError("template_path must be the path of a .rft family template file")
                 template = str(_in_workspace(workspace, Path(template_path)))
+            dry = _flag(dry_run, "dry_run")
         except _OutsideWorkspace as exc:
             return error_result(tool, "path_outside_workspace", str(exc), hint=_HINTS["path_outside_workspace"])
         except CategoryMismatch as exc:
@@ -641,6 +669,7 @@ class RevitFamilyModule:
             "template_path": template,
             "replace": bool(replace),
             "on_error": on_error or "abort",
+            "dry_run": dry,
         }
         parsed, elapsed, early = _run_build(tool, args, approved_executor)
         if early is not None or parsed is None:
@@ -651,7 +680,9 @@ class RevitFamilyModule:
         extra_infos: List[str] = []
         verdicts: List[Dict[str, Any]] = []
         outcome = parsed.meta.get("outcome", "ok")
-        if outcome in ("ok", "partial_failure", "post_check_failed"):
+        if dry:
+            extra_infos.append("PROBE_SKIPPED: dry run, no family was saved or loaded, so revit_probe_family did not run")
+        elif outcome in ("ok", "partial_failure", "post_check_failed"):
             loaded = {r.get("name"): r for r in parsed.rows if r.get("row_type") == "item" and r.get("kind") == "family"}
             script_cat_ok = {
                 str(r.get("check", "")).split(":", 1)[1]: r.get("ok") == "1"
@@ -679,6 +710,7 @@ class RevitFamilyModule:
             tool, parsed, elapsed, workspace,
             extra_checks=extra_checks, extra_fails=extra_fails, extra_infos=extra_infos,
             extra={"probe": verdicts, "output_dir": str(target)},
+            dry_run=dry,
         )
         if isinstance(result.get("post_check"), dict):
             result["post_check"]["probe"] = verdicts

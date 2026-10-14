@@ -8,7 +8,17 @@
 #   * the group is always closed (committed or rolled back) before the script returns, even after an exception.
 # Differences: a step may run without a project transaction (txn=False): building a family happens in its own
 # family document, never in the project. A call where nothing was committed is always rolled back, never assimilated.
+# Dry run (ARGS["dry_run"] true): the group is ALWAYS rolled back and META dry_run / committed / would_change_ids are
+# reported; make_family.ipy itself skips SaveAs and LoadFamily, so no file is written.
 RUN = [None]
+
+
+def dry_run_requested():
+    """True when the call asked for a dry run (a missing ARGS means no)."""
+    try:
+        return bool(ARGS.get("dry_run"))
+    except Exception:
+        return False
 
 
 class Abort(Exception):
@@ -44,8 +54,9 @@ class Collector(IFailuresPreprocessor):
 
 
 class Runner(object):
-    def __init__(self, title, on_error):
+    def __init__(self, title, on_error, dry_run=None):
         self.on_error = on_error if on_error in ("abort", "skip") else "abort"
+        self.dry_run = dry_run_requested() if dry_run is None else bool(dry_run)
         self.changed = []
         self.failed_steps = []
         self.failed_ids = []
@@ -107,8 +118,19 @@ class Runner(object):
         self.closed = True
         failed = bool(self.failed_steps) or self.post_failed > 0 or self.crashed
         rollback = failed and (self.on_error == "abort" or self.crashed or self.committed == 0)
+        dry = getattr(self, "dry_run", False)
+        would = [] if rollback else list(self.changed)
         try:
-            if rollback:
+            if dry:
+                if self.group.HasStarted():
+                    if self.group.RollBack() != TransactionStatus.RolledBack:
+                        raise StepError("Revit did not roll back the transaction group of the dry run")
+                self.changed = []
+                if rollback:
+                    self.outcome = "rolled_back"
+                elif failed:
+                    self.outcome = "partial_failure" if self.failed_steps else "post_check_failed"
+            elif rollback:
                 if self.group.HasStarted():
                     if self.group.RollBack() != TransactionStatus.RolledBack:
                         raise StepError("Revit did not roll back the transaction group")
@@ -124,6 +146,10 @@ class Runner(object):
             fail("GROUP_CLOSE_FAILED", "%s: %s" % (ex.__class__.__name__, ex))
         meta("outcome", self.outcome)
         meta("on_error", self.on_error)
+        if dry:
+            meta("dry_run", 1)
+            meta("committed", 0)
+            meta("would_change_ids", ",".join([str(i) for i in would]))
         meta("changed_ids", ",".join([str(i) for i in self.changed]))
         meta("failed_ids", ",".join([str(i) for i in self.failed_ids]))
         seen = []
@@ -153,6 +179,9 @@ def run_write(fn):
 
 def refuse(kind, message, ids=None):
     """Nothing was changed: the request cannot be carried out as asked."""
+    if dry_run_requested():
+        meta("dry_run", 1)
+        meta("committed", 0)
     meta("outcome", kind)
     meta("changed_ids", "")
     meta("failed_ids", ",".join([str(i) for i in (ids or [])]))

@@ -1,5 +1,6 @@
 # revit_export (write mode: it writes files, the model is not changed).
-# ARGS = {format: pdf|dwg|ifc|nwc, folder, name, ext, sheets[], view_ids[], all_sheets, view_id, ifc_version, combine, overwrite}
+# ARGS = {format: pdf|dwg|ifc|nwc, folder, name, ext, sheets[], view_ids[], all_sheets, view_id, ifc_version, combine, overwrite, dry_run}
+# dry_run: check the inputs and report the target path only; nothing is exported and nothing is written to disk.
 # folder was checked against the workspace sandbox on the server before this script was built. The model is not changed: an IFC
 # export runs inside a transaction that is always rolled back, because Revit requires one. The script lists every file that is
 # new or changed under folder\name* afterwards, with its size.
@@ -90,6 +91,23 @@ def main():
         if ids.Count == 0:
             refuse("nothing_to_export", "give sheets, all_sheets or view_ids for a %s export" % fmt)
             return
+    if dry_run_requested():
+        # Dry run: the inputs are checked; nothing is exported, no folder is made and no file is written.
+        if ARGS.get("view_id") is not None and fmt in ("ifc", "nwc"):
+            v = get_by_id(ARGS["view_id"])
+            if v is None or not isinstance(v, View):
+                refuse("view_not_found", "view id %s does not exist" % ARGS["view_id"])
+                return
+        n = ids.Count if ids is not None else 0
+        item([("kind", "would_write"), ("path", target), ("would_write", target), ("bytes", 0), ("exists", 1 if File.Exists(target) else 0)])
+        meta("dry_run", 1)
+        meta("committed", 0)
+        meta("changed_ids", "")
+        meta("would_change_ids", "")
+        meta("failed_ids", "")
+        meta("outcome", "ok")
+        summary("%s export would write %s%s; nothing was exported" % (fmt, target, (" (%d sheets/views)" % n) if ids is not None else ""))
+        return
     Directory.CreateDirectory(folder)
     # Revit may name split PDFs after sheets and DWGs may add view suffixes and
     # sidecars. Export into a fresh private folder, then guard EVERY actual name

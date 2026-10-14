@@ -1,6 +1,8 @@
 # revit_make_family (write mode, a few families per call; the bridge waits 30 s).
 # ARGS = {specs: [{name, category, w, d, h, ports: [{pos, dir, kind, system, dia_mm, flow, label}]}],
-#         output_dir, template_path, replace, on_error}
+#         output_dir, template_path, replace, on_error, dry_run}
+# dry_run: every family document is built and checked as normal, then closed unsaved; no folder or .rfa file is made,
+# nothing is loaded, and the project group is rolled back. The rows say which file a real run would write.
 # Ported from docs/recipes/villa2/m1_mep_families.py, but the family is built from a real family template
 # (Application.NewFamilyDocument) instead of the project's own "Pole" family.
 # Per spec: family document from the template -> category -> body box (extrusion, bottom at z=0, centred on x/y) ->
@@ -251,6 +253,8 @@ def build_family(spec, template, path):
                     got += domains[k]
             if got != want[dom]:
                 raise StepError("the family document has %d %s connectors, the spec has %d" % (got, dom, want[dom]))
+        if dry_run_requested():
+            return total  # dry run: the family document is checked but never saved; it is closed unsaved below
         so = SaveAsOptions()
         so.OverwriteExistingFile = True
         fd.SaveAs(path, so)
@@ -312,6 +316,12 @@ def make_one(run, plan, state):
     if built is None:
         return None
     existed = state["existing"].get(name) is not None
+    if dry_run_requested():
+        # Dry run: nothing is saved, so nothing can be loaded. Report the file that a real run would write.
+        post("connectors_built:" + name, built == len(spec["ports"]), "%d connector elements and 0 nested instances in the family document for %d ports" % (built, len(spec["ports"])))
+        item([("kind", "family"), ("name", name), ("category", spec["category"]), ("template", template), ("template_kind", how),
+              ("file", path), ("would_write", path), ("ports", len(spec["ports"])), ("status", "would_replace" if existed else "would_create")])
+        return True
     fam = run.step("Load family '%s'" % name, lambda: load_family(spec, path))
     if fam is None:
         return None
@@ -368,7 +378,7 @@ def main():
             refuse("family_exists", "a family named '%s' is already in the project (id %d); pass replace=true to load over it or choose another name" % (spec["name"], eid(existing[spec["name"]])), [eid(existing[spec["name"]])])
             return
         plans.append((spec, tpl, how, path))
-    if not Directory.Exists(out_dir):
+    if not Directory.Exists(out_dir) and not dry_run_requested():
         Directory.CreateDirectory(out_dir)
 
     run = Runner("AEC make family", ARGS.get("on_error"))
@@ -384,7 +394,8 @@ def main():
                     remove_file(plan[3], "family '%s' was not loaded" % plan[0]["name"])
             if fam is not None:
                 made += 1
-        summary("%d of %d families made; templates: %s" % (made, len(plans), "; ".join(sorted(set([p[1] for p in plans])))))
+        summary("%d of %d families %s; templates: %s" % (made, len(plans), "built and checked in a dry run (nothing saved or loaded)" if dry_run_requested() else "made",
+                                                          "; ".join(sorted(set([p[1] for p in plans])))))
     except Abort:
         raise
     except Exception:

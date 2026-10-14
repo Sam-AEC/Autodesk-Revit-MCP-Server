@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "schema_version": 1,
   "min_hub_version": "1.2.0",
-  "description": "Documentation automation for a live Revit session: list views, sheets and schedules, check a rendered picture, and make views, sheets and schedules or export PDF, DWG, IFC and NWC. The list and render tools are read-only. The make and export tools are write tools: they need an approved plan, replace only what they made under the same tag, use one transaction per element, and roll back on failure unless on_error is skip.",
+  "description": "Documentation automation for a live Revit session: list views, sheets and schedules, check a rendered picture, and make views, sheets and schedules or export PDF, DWG, IFC and NWC. The list and render tools are read-only. The make and export tools are write tools: they need an approved plan, replace only what they made under the same tag, use one transaction per element, and roll back on failure unless on_error is skip. Every write tool takes dry_run: it runs the call, reports what would change and rolls it all back (still approval-gated).",
   "author": "AEC Model Bridge",
   "license": "GPL-3.0-or-later",
   "requires_providers": [
@@ -256,6 +256,11 @@
             ],
             "default": "abort",
             "description": "abort (default): the first failure rolls the whole call back and nothing is kept. skip: keep what worked and list the failures."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: do the whole call inside Revit exactly as normal (same checks, same post-checks), then roll everything back. The result says dry_run true, committed false and what would change (would_change); changed_ids stays empty. Still needs an approved plan like any write. Use it to test a call before the real one."
           }
         },
         "required": [
@@ -349,6 +354,11 @@
             ],
             "default": "abort",
             "description": "abort (default): the first failure rolls the whole call back and nothing is kept. skip: keep what worked and list the failures."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: do the whole call inside Revit exactly as normal (same checks, same post-checks), then roll everything back. The result says dry_run true, committed false and what would change (would_change); changed_ids stays empty. Still needs an approved plan like any write. Use it to test a call before the real one."
           }
         },
         "required": [
@@ -521,6 +531,11 @@
             ],
             "default": "abort",
             "description": "abort (default): the first failure rolls the whole call back and nothing is kept. skip: keep what worked and list the failures."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: do the whole call inside Revit exactly as normal (same checks, same post-checks), then roll everything back. The result says dry_run true, committed false and what would change (would_change); changed_ids stays empty. Still needs an approved plan like any write. Use it to test a call before the real one."
           }
         },
         "required": [
@@ -601,6 +616,11 @@
             "type": "boolean",
             "default": false,
             "description": "Replace the file when it already exists. Without it an existing file stops the export."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: check the inputs (format, path, sheets, views, existing file) and report the target path only. Nothing is exported and no file or folder is written. Still needs an approved plan like any write."
           }
         },
         "required": [

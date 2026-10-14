@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "schema_version": 1,
   "min_hub_version": "1.2.0",
-  "description": "Make loadable Revit families from data. revit_make_family builds a box family with pipe, duct or electrical connectors from a spec, saves the .rfa inside the workspace, loads it into the project and checks it with revit_probe_family. It is a write tool: it needs an approved plan and rolls back on failure unless on_error is skip.",
+  "description": "Make loadable Revit families from data. revit_make_family builds a box family with pipe, duct or electrical connectors from a spec, saves the .rfa inside the workspace, loads it into the project and checks it with revit_probe_family. It is a write tool: it needs an approved plan and rolls back on failure unless on_error is skip. dry_run builds and checks without saving or loading.",
   "author": "AEC Model Bridge",
   "license": "GPL-3.0-or-later",
   "requires_providers": [
@@ -154,6 +154,11 @@
             ],
             "default": "abort",
             "description": "abort (default): the first failure rolls the whole call back and removes the .rfa files it wrote. skip: keep the families that worked and list the failures."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: build and check every family document as normal, then close it unsaved. No .rfa file or folder is written and nothing is loaded into the project; the rows say which file a real run would write. Still needs an approved plan like any write."
           }
         },
         "required": [

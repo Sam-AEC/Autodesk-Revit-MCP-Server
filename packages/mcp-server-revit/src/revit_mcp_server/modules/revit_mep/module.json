@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "schema_version": 1,
   "min_hub_version": "1.2.0",
-  "description": "Data-driven MEP for a live Revit session: route pipes and ducts with fittings, connect connectors, make electrical circuits, and check first that a family really is MEP for the system. check_elements is read-only. route, connect and circuit are write tools: they need an approved plan, refuse a family whose category or connectors do not match the system before changing anything, replace only what they made under the same tag, use one transaction per route, connection or circuit, and roll back on failure unless on_error is skip. Not yet run against a live Revit.",
+  "description": "Data-driven MEP for a live Revit session: route pipes and ducts with fittings, connect connectors, make electrical circuits, and check first that a family really is MEP for the system. check_elements is read-only. route, connect and circuit are write tools: they need an approved plan, refuse a family whose category or connectors do not match the system before changing anything, replace only what they made under the same tag, use one transaction per route, connection or circuit, and roll back on failure unless on_error is skip. Not yet run against a live Revit. Every write tool takes dry_run: it runs the call, reports what would change and rolls it all back (still approval-gated).",
   "author": "AEC Model Bridge",
   "license": "GPL-3.0-or-later",
   "requires_providers": [
@@ -332,6 +332,11 @@
               "skip"
             ],
             "default": "abort"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: do the whole call inside Revit exactly as normal (same checks, same post-checks), then roll everything back. The result says dry_run true, committed false and what would change (would_change); changed_ids stays empty. Still needs an approved plan like any write. Use it to test a call before the real one."
           }
         },
         "required": [
@@ -504,6 +509,11 @@
               "skip"
             ],
             "default": "abort"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: do the whole call inside Revit exactly as normal (same checks, same post-checks), then roll everything back. The result says dry_run true, committed false and what would change (would_change); changed_ids stays empty. Still needs an approved plan like any write. Use it to test a call before the real one."
           }
         },
         "required": [
@@ -600,6 +610,11 @@
               "skip"
             ],
             "default": "abort"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: do the whole call inside Revit exactly as normal (same checks, same post-checks), then roll everything back. The result says dry_run true, committed false and what would change (would_change); changed_ids stays empty. Still needs an approved plan like any write. Use it to test a call before the real one."
           }
         },
         "required": [
