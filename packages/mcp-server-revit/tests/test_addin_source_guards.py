@@ -77,3 +77,60 @@ def test_hub_is_never_launched_from_the_bundled_python_folder():
     source = (ADDIN_SRC / "Bridge" / "PanelHubLauncher.cs").read_text(encoding="utf-8")
     assert "GetDirectoryName(interpreter)" not in source
     assert "startInfo.WorkingDirectory = workspace" in source
+
+
+# --- door/window fit checks and the clash budget (B-13, B-04) ------------------------------------
+
+def _factory_text() -> str:
+    return FACTORY.read_text(encoding="utf-8")
+
+
+def test_place_door_and_window_share_the_checked_opening_helper():
+    source = _factory_text()
+    for command, category in (("revit.place_door", "OST_Doors"), ("revit.place_window", "OST_Windows")):
+        match = re.search(r'\[BridgeCommand\("' + re.escape(command) + r'"[^\]]*\]\s*private static object \w+\([^)]*\)\s*=>([^;]*);', source)
+        assert match, f"{command} must delegate to the shared helper"
+        assert "PlaceHostedOpening(" in match.group(1) and category in match.group(1)
+
+
+def test_opening_placement_refuses_before_the_transaction_and_verifies_the_host():
+    source = _factory_text()
+    body = _method_body(source, r"private static object PlaceHostedOpening\(")
+    assert body.index("CheckOpeningFit(") < body.index("CreateTransaction("), "fit check must run before any transaction"
+    assert body.index("ResolveOpeningSymbol(") < body.index("CreateTransaction(")
+    assert body.count("CreateTransaction(") == 1, "one transaction per call"
+    assert "CommitChecked()" in body
+    assert body.count("VerifyOpeningHost(") == 2, "host verified before and after commit"
+    assert "host_wall_id" in body and "volume_delta_m3" in body
+    assert "hand_flipped" in body and "facing_flipped" in body
+    assert "flipHand()" in body and "flipFacing()" in body
+
+
+def test_opening_fit_check_names_the_wall_and_reads_width_height_parameters():
+    source = _factory_text()
+    body = _method_body(source, r"private static object CheckOpeningFit\(")
+    assert "wallId" in body and "does not fit" in body
+    for builtin in ("DOOR_WIDTH", "DOOR_HEIGHT", "WINDOW_WIDTH", "WINDOW_HEIGHT"):
+        assert builtin in body
+    assert "throw new ArgumentException" in body
+
+
+def test_opening_symbol_defaults_are_not_hard_coded_names():
+    source = _factory_text()
+    for stale in ('"Single-Flush"', '"0915 x 2134mm"', '"1200 x 1500mm"'):
+        assert stale not in source, f"{stale} does not exist in most projects; pick the first loaded symbol"
+    body = _method_body(source, r"private static FamilySymbol ResolveOpeningSymbol\(")
+    assert "first_available" in body
+    assert "throw new InvalidOperationException" in body, "must fail loudly when no symbol is loaded"
+
+
+def test_check_clashes_has_a_budget_and_does_not_look_names_up_in_the_pair_loop():
+    source = _factory_text()
+    body = _method_body(source, r"private static object ExecuteCheckClashes\(")
+    for token in ("max_pairs", "time_budget_s", "truncated", "pairs_examined", "Stopwatch"):
+        assert token in body, token
+    loop_start = body.index("foreach (var a in list1)")
+    loop = body[loop_start:]
+    assert "get_BoundingBox" not in loop, "bounding boxes must be cached outside the pair loop"
+    assert ".Name" not in loop.replace("d1.Name", "").replace("d2.Name", ""), "Name lookups must go through the cache"
+    assert "WhereElementIsNotElementType" in source[source.index("CollectClashCandidates(Document"):]
