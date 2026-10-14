@@ -42,6 +42,31 @@ class BridgeClient:
         self._http: httpx.Client | None = None
         self._http_key: tuple[Any, ...] | None = None
         self._http_lock = threading.Lock()
+        self._registry_session = None
+
+    def bind_registry_session(self, switch: Any) -> None:
+        """Pin an auto-discovered client to the chosen session, never to another Revit."""
+        self._registry_session = (
+            switch.pid, switch.host_version, switch.started_at,
+            switch.endpoint.rstrip('/'), switch.session_token,
+        )
+
+    def _check_registry_session(self) -> None:
+        if self._registry_session is None:
+            return  # Explicit URLs and legacy ports do not use registry discovery.
+        from .discovery import discover_switch_list
+
+        pid, year, started_at, endpoint, token = self._registry_session
+        for switch in discover_switch_list(prune=False):
+            if (switch.provider_id == "revit" and switch.pid == pid
+                    and switch.host_version == year and switch.started_at == started_at
+                    and switch.endpoint.rstrip('/') == endpoint and switch.session_token == token):
+                return
+        raise BridgeError(
+            f"The selected Revit {year} session (process {pid}) changed or closed. "
+            "Reconnect or restart this MCP client to select the current session. "
+            "No request was sent to a replacement Revit. Check the model before repeating an earlier write."
+        )
 
     def initialize(self) -> None:
         """Check bridge health and fetch tool catalog on startup."""
@@ -66,6 +91,7 @@ class BridgeClient:
         result, so this returns {"status": "running", "request_id": ...}; pass that id to get_result().
         wait_s overrides the soft wait for this one call (a quick probe should not hold for 25 s).
         """
+        self._check_registry_session()
         if self._tool_catalog and tool not in self._tool_catalog:
             raise BridgeError(
                 f"Tool '{tool}' not available in bridge. "
@@ -183,7 +209,8 @@ class BridgeClient:
         if "ok" in response:
             if not response["ok"]:
                 raise CommandFailed(
-                    f"Bridge error: {response.get('message', 'Unknown error')}"
+                    f"Bridge error: {response.get('message', 'Unknown error')}",
+                    payload=response.get("data") if isinstance(response.get("data"), dict) else None,
                 )
             result = response.get("data") or {}
         else:
@@ -194,7 +221,9 @@ class BridgeClient:
                 stack = response.get("stack_trace") or response.get("StackTrace", "N/A")
                 raise CommandFailed(
                     f"Bridge error: {message}\n"
-                    f"Stack: {stack}"
+                    f"Stack: {stack}",
+                    payload=(response.get("result") or response.get("Result"))
+                    if isinstance(response.get("result") or response.get("Result"), dict) else None,
                 )
             # Handle both lowercase and Pascal case for Result
             result = response.get("result") or response.get("Result", {})
@@ -245,11 +274,13 @@ class BridgeClient:
         self.close()
 
     def _get(self, path: str) -> dict[str, Any]:
+        self._check_registry_session()
         resp = self._get_client().get(f"{self.base_url}{path}")
         resp.raise_for_status()
         return resp.json()
 
     def _post(self, path: str, data: dict[str, Any]) -> dict[str, Any]:
+        self._check_registry_session()
         resp = self._get_client().post(f"{self.base_url}{path}", json=data)
         resp.raise_for_status()
         return resp.json()

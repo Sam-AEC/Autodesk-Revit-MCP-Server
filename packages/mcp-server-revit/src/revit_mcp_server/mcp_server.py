@@ -13,7 +13,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, Tool, TextContent
 
-from .errors import BridgeError
+from .errors import BridgeError, CommandFailed
 from .registry_factory import build_registry
 from .security.approval import HUMAN_ONLY_TOOLS
 from .security.dispatch import (
@@ -176,6 +176,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent] | CallToolRe
             )
         return [TextContent(type="text", text=response_text)]
 
+    except CommandFailed as e:
+        return _tool_error("bridge_error", f"Revit Bridge Error: {str(e)}", result=e.payload)
     except BridgeError as e:
         return _tool_error("bridge_error", f"Revit Bridge Error: {str(e)}")
 
@@ -186,13 +188,17 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent] | CallToolRe
 _result_failed = result_failed
 
 
-def _tool_error(kind: str, message: str) -> CallToolResult:
+def _tool_error(kind: str, message: str, result: dict | None = None) -> CallToolResult:
     """Preserve readable diagnostics while telling MCP clients the call failed."""
     message = redact_data(message)
+    structured = {"ok": False, "error": {"kind": kind, "message": message}}
+    if result is not None:
+        structured["result"] = redact_data(result)
+        message += "\n\nResult:\n" + json.dumps(structured["result"], indent=2)
     return CallToolResult(
         isError=True,
         content=[TextContent(type="text", text=message)],
-        structuredContent={"ok": False, "error": {"kind": kind, "message": message}},
+        structuredContent=structured,
     )
 
 async def main():

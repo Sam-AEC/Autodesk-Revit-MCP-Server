@@ -32,12 +32,13 @@ from typing import Any, Dict
 from . import agent_bridge
 from . import agent_native
 from .config import config
-from .errors import RevitMCPError
+from .errors import CommandFailed, RevitMCPError
 from .registry_factory import build_registry
 from .security.approval import HUMAN_ONLY_TOOLS
 from .security.proof import panel_plans_redacted
 from .security.audit import redact_data, redact_for_approval, redact_known_secrets, register_secret_value
 from .security.dispatch import run_gated_tool
+from .security.read_mode import ReadModeViolation
 from .security.dev_mode import set_panel_mode
 from .security.panel_token import TOKEN_HEADER, PanelTokenError, load_or_create_token, read_token
 from .security.workspace import WorkspaceMonitor
@@ -510,6 +511,13 @@ class PanelRequestHandler(BaseHTTPRequestHandler):
             else:
                 result = redact_data(result)
             self._send_json(200, {"ok": True, "result": result})
+        except ReadModeViolation as e:
+            self._send_json(400, {"ok": False, "error": redact_data(str(e))})
+        except CommandFailed as e:
+            failure = {"ok": False, "error": redact_data(str(e))}
+            if e.payload is not None:
+                failure["result"] = redact_data(e.payload)
+            self._send_json(409, failure)
         except RevitMCPError as e:
             self._send_json(409, {"ok": False, "error": redact_data(str(e))})
         except Exception as e:

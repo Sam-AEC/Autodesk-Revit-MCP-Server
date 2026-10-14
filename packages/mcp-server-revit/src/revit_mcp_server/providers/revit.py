@@ -156,6 +156,7 @@ class RevitProvider(AECProvider):
 
             url = self.bridge_url
             token = None
+            switch = None
 
             if not url:
                 switch = select_switch("revit", self.host_version, prune=False)
@@ -196,6 +197,8 @@ class RevitProvider(AECProvider):
 
             bridge_factory = factory or (lambda u, t=None: BridgeClient(u, token=t))
             bridge = bridge_factory(url, token)
+            if switch is not None and hasattr(bridge, "bind_registry_session"):
+                bridge.bind_registry_session(switch)
             if hasattr(bridge, "initialize"):
                 try:
                     bridge.initialize()

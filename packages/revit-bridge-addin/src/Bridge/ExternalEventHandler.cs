@@ -67,11 +67,15 @@ public class RevitCommandExecutor : IExternalEventHandler
         catch (Exception ex)
         {
             Log.Error(ex, "Error executing {Tool} request {RequestId}", request.Tool, request.RequestId);
+            // Reflection commands may wrap the checked-commit exception. Keep its
+            // structured failure in the durable error envelope instead of dropping IDs.
+            var transactionFailure = BridgeTransactionException.Find(ex);
 
             _queue.Complete(request.RequestId, new CommandResponse
             {
                 Status = "error",
                 Tool = request.Tool,
+                Result = transactionFailure?.ToResult(),
                 Message = ex.Message,
                 StackTrace = ex.StackTrace
             });

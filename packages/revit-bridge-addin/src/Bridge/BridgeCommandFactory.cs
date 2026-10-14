@@ -23,17 +23,20 @@ public static partial class BridgeCommandFactory
     [ThreadStatic]
     private static string? _currentActionId;
 
+    [ThreadStatic]
+    private static List<BridgeFailureMessage>? _currentTransactionMessages;
+
     public static string? CurrentActionId
     {
         get => _currentActionId;
         set => _currentActionId = value;
     }
 
-    public static Transaction CreateTransaction(Document doc, string name)
+    public static BridgeTransaction CreateTransaction(Document doc, string name)
     {
         var actionId = CurrentActionId;
         string txName = string.IsNullOrEmpty(actionId) ? $"AMB: {name}" : $"AMB: {name} #{actionId}";
-        return new Transaction(doc, txName);
+        return new BridgeTransaction(doc, txName, messages => _currentTransactionMessages?.AddRange(messages));
     }
 
     static BridgeCommandFactory()
@@ -78,6 +81,7 @@ public static partial class BridgeCommandFactory
         {
             try
             {
+                _currentTransactionMessages = new List<BridgeFailureMessage>();
                 if (payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("action_id", out var actionProp))
                 {
                     CurrentActionId = actionProp.GetString();
@@ -87,7 +91,8 @@ public static partial class BridgeCommandFactory
                     CurrentActionId = null;
                 }
 
-                return handler(app, payload);
+                var result = handler(app, payload);
+                return BridgeTransactionResults.AppendWarnings(result, _currentTransactionMessages);
             }
             catch (System.Reflection.TargetInvocationException ex)
             {
@@ -96,6 +101,7 @@ public static partial class BridgeCommandFactory
             finally
             {
                 CurrentActionId = null;
+                _currentTransactionMessages = null;
             }
         }
         return new { status = "error", message = $"Unknown tool: {tool}" };
@@ -216,7 +222,7 @@ public static partial class BridgeCommandFactory
                 }
             }
 
-            trans.Commit();
+            trans.CommitChecked();
         }
 
         return new { schedules = exported, count = exported.Count };
@@ -421,7 +427,7 @@ public static partial class BridgeCommandFactory
                 }
             }
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -478,7 +484,7 @@ public static partial class BridgeCommandFactory
                 floor = Floor.Create(doc, new List<CurveLoop> { curveLoop }, defaultFloorType.Id, level.Id);
             }
 
-            trans.Commit();
+            trans.CommitChecked();
 
             var area = floor.get_Parameter(BuiltInParameter.HOST_AREA_COMPUTED)?.AsDouble() ?? 0;
 
@@ -526,7 +532,7 @@ public static partial class BridgeCommandFactory
             var modelCurveArray = new ModelCurveArray();
             var footprint = doc.Create.NewFootPrintRoof(curveArray, level, roofType, out modelCurveArray);
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -554,7 +560,7 @@ public static partial class BridgeCommandFactory
             var level = Level.Create(doc, elevation);
             level.Name = name;
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -590,7 +596,7 @@ public static partial class BridgeCommandFactory
                 grid.Name = name;
             }
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -631,7 +637,7 @@ public static partial class BridgeCommandFactory
                 room.Number = roomNumber;
             }
 
-            trans.Commit();
+            trans.CommitChecked();
 
             var area = room.Area;
             var volume = room.Volume;
@@ -690,7 +696,7 @@ public static partial class BridgeCommandFactory
             var id = new ElementId((long)elementId);
             var deletedIds = doc.Delete(id);
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -729,7 +735,7 @@ public static partial class BridgeCommandFactory
 
             var instance = doc.Create.NewFamilyInstance(location, familySymbol, level, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -771,7 +777,7 @@ public static partial class BridgeCommandFactory
 
             var door = doc.Create.NewFamilyInstance(location, familySymbol, wall, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -815,7 +821,7 @@ public static partial class BridgeCommandFactory
             var window = doc.Create.NewFamilyInstance(location, familySymbol, wall, level, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
             SetWindowSillHeight(window, location, level);
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -885,7 +891,7 @@ public static partial class BridgeCommandFactory
                 view.Name = viewName;
             }
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -914,7 +920,7 @@ public static partial class BridgeCommandFactory
             var view3d = View3D.CreateIsometric(doc, viewFamilyType.Id);
             view3d.Name = viewName;
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -960,7 +966,7 @@ public static partial class BridgeCommandFactory
             var section = ViewSection.CreateSection(doc, viewFamilyType.Id, bbox);
             section.Name = viewName;
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -1195,7 +1201,7 @@ public static partial class BridgeCommandFactory
 
             SetParameterValue(parameter, value);
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -1380,7 +1386,7 @@ public static partial class BridgeCommandFactory
                 }
             }
 
-            trans.Commit();
+            trans.CommitChecked();
         }
 
         return new
@@ -1460,7 +1466,7 @@ public static partial class BridgeCommandFactory
 
             SetParameterValue(parameter, value);
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -1628,7 +1634,7 @@ public static partial class BridgeCommandFactory
             sheet.SheetNumber = sheetNumber;
             sheet.Name = sheetName;
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -1663,7 +1669,7 @@ public static partial class BridgeCommandFactory
 
             doc.Delete(new ElementId((long)sheetId));
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -1707,7 +1713,7 @@ public static partial class BridgeCommandFactory
             {
                 var viewport = Viewport.Create(doc, sheet.Id, view.Id, location);
 
-                trans.Commit();
+                trans.CommitChecked();
 
                 return new
                 {
@@ -1795,7 +1801,7 @@ public static partial class BridgeCommandFactory
                 }
             }
 
-            trans.Commit();
+            trans.CommitChecked();
         }
 
         return new
@@ -1850,7 +1856,7 @@ public static partial class BridgeCommandFactory
                 }
             }
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -2029,7 +2035,7 @@ public static partial class BridgeCommandFactory
                 }
             }
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -2099,7 +2105,7 @@ public static partial class BridgeCommandFactory
                 }
             }
 
-            trans.Commit();
+            trans.CommitChecked();
         }
 
         return new
@@ -2180,7 +2186,7 @@ public static partial class BridgeCommandFactory
                 }
             }
 
-            trans.Commit();
+            trans.CommitChecked();
         }
 
         return new
@@ -2230,7 +2236,7 @@ public static partial class BridgeCommandFactory
                 options
             );
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -2301,7 +2307,7 @@ public static partial class BridgeCommandFactory
                 exportError = ex.Message;
             }
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -2389,7 +2395,7 @@ public static partial class BridgeCommandFactory
 
             doc.ExportImage(options);
 
-            trans.Commit();
+            trans.CommitChecked();
 
             var exportedFiles = System.IO.Directory.EnumerateFiles(outputDirectory, filePrefix + "*")
                 .Select(path => new System.IO.FileInfo(path))
@@ -2470,7 +2476,7 @@ public static partial class BridgeCommandFactory
             renderOptions.SetViewsAndSheets(new List<ElementId> { view.Id });
             doc.ExportImage(renderOptions);
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -2592,11 +2598,11 @@ public static partial class BridgeCommandFactory
         var isolated = false;
         if (isolate && view.CanUseTemporaryVisibilityModes())
         {
-            using (var tx = new Transaction(doc, "Preview elements (temporary isolate)"))
+            using (var tx = BridgeCommandFactory.CreateTransaction(doc, "Preview elements (temporary isolate)"))
             {
                 tx.Start();
                 view.IsolateElementsTemporary(ids);
-                tx.Commit();
+                tx.CommitChecked();
             }
             isolated = true;
         }
@@ -2616,11 +2622,11 @@ public static partial class BridgeCommandFactory
 
         if (view.IsInTemporaryViewMode(TemporaryViewMode.TemporaryHideIsolate))
         {
-            using (var tx = new Transaction(doc, "Clear preview (end temporary isolate)"))
+            using (var tx = BridgeCommandFactory.CreateTransaction(doc, "Clear preview (end temporary isolate)"))
             {
                 tx.Start();
                 view.DisableTemporaryViewMode(TemporaryViewMode.TemporaryHideIsolate);
-                tx.Commit();
+                tx.CommitChecked();
             }
             restored = true;
         }
@@ -2644,7 +2650,7 @@ public static partial class BridgeCommandFactory
             trans.Start();
             var view = doc.GetElement(new ElementId((long)viewId)) as View;
             var note = TextNote.Create(doc, view.Id, location, text, new ElementId(BuiltInParameter.TEXT_SIZE)); // Using default type logic simplifiction
-            trans.Commit();
+            trans.CommitChecked();
 
             return new { text_note_id = note.Id.Value, text = note.Text, view_id = view.Id.Value };
         }
@@ -2669,7 +2675,7 @@ public static partial class BridgeCommandFactory
             var element = doc.GetElement(new ElementId((long)elementId));
             if (element == null) throw new ArgumentException($"Element {elementId} not found");
             var tag = IndependentTag.Create(doc, view.Id, new Reference(element), false, TagMode.TM_ADDBY_CATEGORY, TagOrientation.Horizontal, location);
-            trans.Commit();
+            trans.CommitChecked();
             return new { tag_id = tag.Id.Value, tagged_element_id = elementId };
         }
     }
@@ -2695,7 +2701,7 @@ public static partial class BridgeCommandFactory
              if(!symbol.IsActive) { symbol.Activate(); doc.Regenerate(); }
              
              var instance = doc.Create.NewFamilyInstance(location, symbol, level, StructuralType.Column);
-             trans.Commit();
+             trans.CommitChecked();
              
              return new { column_id = instance.Id.Value, family = familyName, type = typeName };
         }
@@ -2722,7 +2728,7 @@ public static partial class BridgeCommandFactory
              
              var line = Line.CreateBound(start, end);
              var instance = doc.Create.NewFamilyInstance(line, symbol, level, StructuralType.Beam);
-             trans.Commit();
+             trans.CommitChecked();
              
              return new { beam_id = instance.Id.Value, family = familyName, type = typeName, length = line.Length };
         }
@@ -2747,7 +2753,7 @@ public static partial class BridgeCommandFactory
              if(!symbol.IsActive) { symbol.Activate(); doc.Regenerate(); }
              
              var instance = doc.Create.NewFamilyInstance(location, symbol, level, StructuralType.Footing);
-             trans.Commit();
+             trans.CommitChecked();
              
              return new { foundation_id = instance.Id.Value, family = familyName, type = typeName };
         }
@@ -2788,7 +2794,7 @@ public static partial class BridgeCommandFactory
              if (ductType == null) throw new ArgumentException("No Duct Type found");
 
              var duct = Duct.Create(doc, mechanicalSystemType.Id, ductType.Id, level.Id, start, end);
-             trans.Commit();
+             trans.CommitChecked();
              
              return new { duct_id = duct.Id.Value, system_type = mechanicalSystemType.Name, duct_type = ductType.Name };
         }
@@ -2825,7 +2831,7 @@ public static partial class BridgeCommandFactory
              if (pipeType == null) throw new ArgumentException("No Pipe Type found");
 
              var pipe = Pipe.Create(doc, pipingSystemType.Id, pipeType.Id, level.Id, start, end);
-             trans.Commit();
+             trans.CommitChecked();
              
              return new { pipe_id = pipe.Id.Value, system_type = pipingSystemType.Name, pipe_type = pipeType.Name };
         }
@@ -2895,7 +2901,7 @@ public static partial class BridgeCommandFactory
         {
             trans.Start();
             ElementTransformUtils.MoveElement(doc, elementId, vector);
-            trans.Commit();
+            trans.CommitChecked();
             return new { status = "success", moved_element_id = elementId.Value };
         }
     }
@@ -2913,7 +2919,7 @@ public static partial class BridgeCommandFactory
         {
             trans.Start();
             var newIds = ElementTransformUtils.CopyElement(doc, elementId, vector);
-            trans.Commit();
+            trans.CommitChecked();
             return new { status = "success", original_id = elementId.Value, new_element_ids = newIds.Select(id => id.Value).ToList() };
         }
     }
@@ -2933,7 +2939,7 @@ public static partial class BridgeCommandFactory
             trans.Start();
             var axis = Line.CreateBound(axisPoint, axisPoint + XYZ.BasisZ); // Default to Z-axis rotation for now
             ElementTransformUtils.RotateElement(doc, elementId, axis, angleRadians);
-            trans.Commit();
+            trans.CommitChecked();
             return new { status = "success", element_id = elementId.Value, angle = angleRadians };
         }
     }
@@ -2957,7 +2963,7 @@ public static partial class BridgeCommandFactory
              trans.Start();
              var plane = Plane.CreateByNormalAndOrigin(planeNormal, planeOrigin);
              ElementTransformUtils.MirrorElement(doc, elementId, plane);
-             trans.Commit();
+             trans.CommitChecked();
              return new { status = "success", element_id = elementId.Value };
         }
     }
@@ -2975,7 +2981,7 @@ public static partial class BridgeCommandFactory
              trans.Start();
              var el = doc.GetElement(elementId);
              if(el != null) el.Pinned = true;
-             trans.Commit();
+             trans.CommitChecked();
              return new { status = "success", element_id = elementId.Value, pinned = true };
         }
     }
@@ -2993,7 +2999,7 @@ public static partial class BridgeCommandFactory
              trans.Start();
              var el = doc.GetElement(elementId);
              if(el != null) el.Pinned = false;
-             trans.Commit();
+             trans.CommitChecked();
              return new { status = "success", element_id = elementId.Value, pinned = false };
         }
     }
@@ -3080,7 +3086,7 @@ public static partial class BridgeCommandFactory
              trans.Start();
              var schedule = ViewSchedule.CreateSchedule(doc, category.Id);
              schedule.Name = name;
-             trans.Commit();
+             trans.CommitChecked();
              
              return new { schedule_id = schedule.Id.Value, name = schedule.Name };
         }
@@ -3202,7 +3208,7 @@ public static partial class BridgeCommandFactory
              {
                  group.GroupType.Name = name;
              }
-             trans.Commit();
+             trans.CommitChecked();
              
              return new { group_id = group.Id.Value, name = group.GroupType.Name };
         }
@@ -3223,7 +3229,7 @@ public static partial class BridgeCommandFactory
              if (group == null) throw new ArgumentException("Group not found");
              
              var memberIds = group.UngroupMembers().Select(id => id.Value).ToList();
-             trans.Commit();
+             trans.CommitChecked();
              
              return new { status = "success", ungrouped_count = memberIds.Count, member_ids = memberIds };
         }
@@ -3354,7 +3360,7 @@ public static partial class BridgeCommandFactory
                 diameterParam.Set(diameter);
             }
 
-            trans.Commit();
+            trans.CommitChecked();
 
             var length = startPoint.DistanceTo(endPoint);
 
@@ -3530,7 +3536,7 @@ public static partial class BridgeCommandFactory
             material.Shininess = shininess;
             material.Smoothness = smoothness;
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -3588,7 +3594,7 @@ public static partial class BridgeCommandFactory
                                 if (currentIndex == faceIndex.Value)
                                 {
                                     doc.Paint(elementId, face, material.Id);
-                                    trans.Commit();
+                                    trans.CommitChecked();
                                     return new
                                     {
                                         element_id = elementId.Value,
@@ -3628,7 +3634,7 @@ public static partial class BridgeCommandFactory
                 }
             }
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -3716,7 +3722,7 @@ public static partial class BridgeCommandFactory
                 }
             }
 
-            trans.Commit();
+            trans.CommitChecked();
 
             return new
             {
@@ -3827,7 +3833,7 @@ public static partial class BridgeCommandFactory
 
             var dim = doc.Create.NewDimension(view, line, refArray);
             
-            trans.Commit();
+            trans.CommitChecked();
 
             return new { dimension_id = dim.Id.Value, value_ft = dim.Value, value_string = dim.ValueString };
         }
@@ -3905,7 +3911,7 @@ public static partial class BridgeCommandFactory
                 }
             }
 
-            trans.Commit();
+            trans.CommitChecked();
             return new { tagged_count = taggedCount, view_name = view.Name, category = categoryName };
         }
     }
@@ -3957,7 +3963,7 @@ public static partial class BridgeCommandFactory
             if (template == null || !template.IsTemplate) throw new ArgumentException("Template not found or not a template");
 
             view.ViewTemplateId = templateId;
-            trans.Commit();
+            trans.CommitChecked();
 
             return new { view_id = viewId.Value, template_name = template.Name, status = "applied" };
         }
@@ -4067,7 +4073,7 @@ public static partial class BridgeCommandFactory
                 object result = ReflectionHelper.InvokeMethod(doc, className, methodName, args, targetId);
                 
                 if (trans.GetStatus() == TransactionStatus.Started)
-                    trans.Commit();
+                    trans.CommitChecked();
                     
                 return result ?? new { status = "void" };
             }
@@ -4134,7 +4140,7 @@ public static partial class BridgeCommandFactory
             }
 
             prop.SetValue(target, value);
-            trans.Commit();
+            trans.CommitChecked();
         }
 
         return new { status = "success", target_id = targetId, property = propertyName };
@@ -4199,7 +4205,7 @@ public static partial class BridgeCommandFactory
                     failed++;
                 }
             }
-            tx.Commit();
+            tx.CommitChecked();
         }
 
         return new { success = true, changed, failed, failed_ids = failedIds };
@@ -4367,7 +4373,7 @@ public static partial class BridgeCommandFactory
                     failed++;
                 }
             }
-            tx.Commit();
+            tx.CommitChecked();
         }
 
         return new { success = true, updated, failed, total = elements.Count };
@@ -4429,7 +4435,7 @@ public static partial class BridgeCommandFactory
                     failed++;
                 }
             }
-            tx.Commit();
+            tx.CommitChecked();
         }
 
         return new { success = true, changed, failed, failed_ids = failedIds };
