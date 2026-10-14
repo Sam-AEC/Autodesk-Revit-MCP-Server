@@ -28,11 +28,13 @@ def _method_body(source: str, signature_re: str) -> str:
 def test_create_transaction_builds_a_real_transaction_and_does_not_call_itself():
     body = _method_body(
         FACTORY.read_text(encoding="utf-8"),
-        r"public static Transaction CreateTransaction\(Document doc, string name\)",
+        r"public static BridgeTransaction CreateTransaction\(Document doc, string name\)",
     )
     assert "BridgeCommandFactory.CreateTransaction(" not in body, "CreateTransaction calls itself"
     assert "CreateTransaction(" not in body, "CreateTransaction calls itself"
-    assert "new Transaction(" in body, "CreateTransaction must construct the Revit Transaction"
+    assert "new BridgeTransaction(" in body, "CreateTransaction must construct the checked BridgeTransaction"
+    wrapper = (ADDIN_SRC / "Bridge" / "BridgeTransaction.cs").read_text(encoding="utf-8")
+    assert "new Transaction(" in wrapper, "BridgeTransaction must construct the Revit Transaction"
 
 
 def test_add_in_constructs_transactions_somewhere():
