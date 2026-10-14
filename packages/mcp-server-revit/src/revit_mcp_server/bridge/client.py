@@ -7,7 +7,7 @@ import time
 import uuid
 from typing import Any
 
-from ..errors import BridgeError
+from ..errors import BridgeError, CommandFailed
 
 DEFAULT_SOFT_WAIT_SECONDS = 25.0
 # Poll gaps after the add-in's own wait: 0.5 s, 1 s, 2 s, then 3 s until the soft wait ends.
@@ -182,7 +182,7 @@ class BridgeClient:
         # Legacy Revit envelope: { Status/status, Tool, Result/result }
         if "ok" in response:
             if not response["ok"]:
-                raise BridgeError(
+                raise CommandFailed(
                     f"Bridge error: {response.get('message', 'Unknown error')}"
                 )
             result = response.get("data") or {}
@@ -192,7 +192,7 @@ class BridgeClient:
             if status == "error":
                 message = response.get("message") or response.get("Message", "Unknown error")
                 stack = response.get("stack_trace") or response.get("StackTrace", "N/A")
-                raise BridgeError(
+                raise CommandFailed(
                     f"Bridge error: {message}\n"
                     f"Stack: {stack}"
                 )

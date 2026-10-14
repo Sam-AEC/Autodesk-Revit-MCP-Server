@@ -140,3 +140,56 @@ def test_both_tools_are_listed_read_only_with_no_approval(tmp_path):
         assert len(listed.description) >= 40
         for key, prop in listed.inputSchema.get("properties", {}).items():
             assert prop.get("description"), f"{name}.{key} needs a description"
+
+
+def test_context_reports_the_live_auto_window_not_just_the_configured_mode(tmp_path, monkeypatch):
+    from revit_mcp_server.security import approval_override as ov
+    from revit_mcp_server.security.approval import ApprovalGate
+
+    monkeypatch.setenv("MCP_PANEL_TOKEN_FILE", str(tmp_path / "panel-hub.token"))
+    token = "A" * 43
+    gate = ApprovalGate(tmp_path / "ws", "ask_first")
+    gate.override_token = token
+    prov = provider(tmp_path, FakeBridge(command=dict(CONTEXT)))
+    prov.approval_state_source = gate.approval_state
+
+    before = run(prov, "revit_get_context")["server"]
+    assert before["approval_mode"] == "ask_first" and before["auto_window"] is None
+
+    window = ov.enable_auto(gate.workspace_dir, 10, token=token)
+    live = run(prov, "revit_get_context")["server"]
+    assert live["approval_mode"] == "auto"
+    assert live["configured_approval_mode"] == "ask_first"
+    assert live["auto_expires_at"] == window["expires_at"]
+    assert live["auto_window"]["expires_at"] == window["expires_at"]
+
+    ov.disable_auto(gate.workspace_dir)
+    assert run(prov, "revit_get_context")["server"]["approval_mode"] == "ask_first"
+
+
+def test_context_never_shows_auto_over_look_only(tmp_path, monkeypatch):
+    from revit_mcp_server.security import approval_override as ov
+    from revit_mcp_server.security.approval import ApprovalGate
+
+    monkeypatch.setenv("MCP_PANEL_TOKEN_FILE", str(tmp_path / "panel-hub.token"))
+    gate = ApprovalGate(tmp_path / "ws", "look_only")
+    gate.override_token = "A" * 43
+    ov.enable_auto(gate.workspace_dir, 10, token="A" * 43)
+    prov = provider(tmp_path, FakeBridge(command=dict(CONTEXT)))
+    prov.approval_state_source = gate.approval_state
+    server = run(prov, "revit_get_context")["server"]
+    assert server["approval_mode"] == "look_only" and server["auto_expires_at"] is None
+
+
+def test_registry_wires_the_context_tool_to_the_live_gate(tmp_path, monkeypatch):
+    from revit_mcp_server.registry_factory import build_registry
+    from revit_mcp_server.security import approval_override as ov
+
+    monkeypatch.setenv("MCP_PANEL_TOKEN_FILE", str(tmp_path / "panel-hub.token"))
+    registry, approval, _jobs, _modules, _ws = build_registry(WorkspaceMonitor([tmp_path]))
+    gate = approval.gate
+    gate.approval_mode, gate.override_token = "ask_first", "A" * 43
+    ov.enable_auto(gate.workspace_dir, 5, token="A" * 43)
+    context_provider = registry.lookup_tool_provider("revit_get_context")
+    server = asyncio.run(context_provider.execute_tool("revit_get_context", {}))["server"]
+    assert server["approval_mode"] == "auto"

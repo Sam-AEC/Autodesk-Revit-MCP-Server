@@ -40,6 +40,7 @@ _RESERVED_EXTRA_KEYS = frozenset({
 
 PLAN_ID_RE = re.compile(r"plan_[0-9a-f]{12}")
 ACTION_ID_RE = re.compile(r"act_[0-9a-f]{12}")
+INFLIGHT_KEY_RE = re.compile(r"[A-Za-z0-9_-]{1,80}")
 
 # Action states. Only "pending" is open; "running", "executed" and "failed" are consumed.
 OPEN_ACTION_STATES = frozenset({"pending", None})
@@ -197,6 +198,18 @@ class ApprovalGate:
         if self._approval_mode == "ask_first":
             return active_override(self.workspace_dir, token=self.override_token)
         return None
+
+    def approval_state(self) -> Dict[str, Any]:
+        """What is in force right now, for read-only reporting: the live mode (including a
+        signed temporary 'auto' window), the mode this process started with, and the window."""
+        window = self.auto_window()
+        mode = self.approval_mode
+        return {
+            "mode": mode,
+            "configured_mode": self.baseline_approval_mode,
+            "auto_window": dict(window) if isinstance(window, dict) else None,
+            "auto_expires_at": window.get("expires_at") if isinstance(window, dict) and mode == "auto" else None,
+        }
 
     def refuse_if_look_only(self) -> None:
         """Raise when the mode is look_only. Called for every mutating tool, on every path."""
@@ -546,9 +559,12 @@ class ApprovalGate:
             self.save_plan(plan)
         return {"plan_id": plan_id, "action_id": action_id}
 
-    def finish_action(self, claim: Optional[Dict[str, str]], ok: bool, error: Optional[str] = None
-                      ) -> Optional[Dict[str, Any]]:
+    def finish_action(self, claim: Optional[Dict[str, str]], ok: bool, error: Optional[str] = None,
+                      only_if_running: bool = False) -> Optional[Dict[str, Any]]:
         """Record how a claimed action ended. Never reopens it.
+
+        ``only_if_running`` leaves an action that is no longer 'running' (already closed, or
+        abandoned by a person) untouched; used when a late result closes an in-flight action.
 
         When no action is left open or running, the plan moves to 'executed' (every
         action succeeded) or 'partial' (some failed), unless a person rejected it.
@@ -565,6 +581,9 @@ class ApprovalGate:
                 if action.get("action_id") == claim["action_id"]:
                     if action.get("state") == "abandoned":
                         continue  # a person gave this action up; a late finish never revives it
+                    if only_if_running and action.get("state") != "running":
+                        continue
+                    action.pop("in_flight_key", None)
                     action["state"] = "executed" if ok else "failed"
                     if not ok and error:
                         action["error"] = str(error)[:500]
@@ -585,6 +604,106 @@ class ApprovalGate:
             except Exception:
                 logger.exception("Failed to write proof bundle for plan %s", plan_id)
         return plan
+
+    # -- in-flight actions: a call that outlived the wait ------------------------------
+    #
+    # A mutating call can come back as {"status": "running", "request_id": ...} while Revit
+    # keeps working. The claim stays consumed (no replay) and the action stays 'running'; the
+    # record below ties the request id to the claim, on disk, so a server restart does not
+    # lose it. revit_get_result (or revit_job_status for a job) closes it when the final
+    # result arrives. A model never names a plan or action id here.
+
+    @property
+    def inflight_dir(self) -> Path:
+        return self.plans_dir / ".inflight"
+
+    def _inflight_path(self, key: Any) -> Path:
+        if not isinstance(key, str) or not INFLIGHT_KEY_RE.fullmatch(key):
+            raise BridgeError("Invalid request id.")
+        return self.inflight_dir / f"{key}.json"
+
+    def mark_in_flight(self, claim: Optional[Dict[str, str]], key: str, tool: str) -> bool:
+        """Record that the claimed action is still running under ``key`` (a request id, or
+        ``job_<id>`` for a background job). Returns False when there is nothing to track."""
+        if not claim:
+            return False
+        path = self._inflight_path(key)
+        record = {
+            "key": key, "plan_id": claim["plan_id"], "action_id": claim["action_id"], "tool": tool,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(record, f)
+            replace_with_retry(tmp, path)
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
+        with self._plan_lock(claim["plan_id"]):
+            plan = self.load_plan(claim["plan_id"])
+            if plan:
+                for action in plan.get("actions", []):
+                    if action.get("action_id") == claim["action_id"] and action.get("state") == "running":
+                        action["in_flight_key"] = key
+                self.save_plan(plan)
+        return True
+
+    def in_flight(self, key: Any) -> Optional[Dict[str, Any]]:
+        try:
+            path = self._inflight_path(key)
+        except BridgeError:
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                record = json.load(f)
+        except (OSError, ValueError):
+            return None
+        return record if isinstance(record, dict) else None
+
+    def in_flight_records(self) -> List[Dict[str, Any]]:
+        out = []
+        for path in sorted(self.inflight_dir.glob("*.json")) if self.inflight_dir.exists() else []:
+            record = self.in_flight(path.stem)
+            if record:
+                out.append(record)
+        return out
+
+    def rekey_in_flight(self, old_key: str, new_key: str) -> bool:
+        """Move a record from a job key to the request id Revit is still running it under."""
+        record = self.in_flight(old_key)
+        if not record:
+            return False
+        claim = {"plan_id": record["plan_id"], "action_id": record["action_id"]}
+        if not self.mark_in_flight(claim, new_key, str(record.get("tool"))):
+            return False
+        with contextlib.suppress(OSError, BridgeError):
+            os.unlink(self._inflight_path(old_key))
+        return True
+
+    def settle_in_flight(self, key: Any, ok: bool, error: Optional[str] = None) -> bool:
+        """Close the action behind ``key`` with its final outcome. Safe to call twice: only the
+        caller that removes the record closes the action. Returns True when it closed one."""
+        record = self.in_flight(key)
+        if not record:
+            return False
+        try:
+            os.unlink(self._inflight_path(key))
+        except FileNotFoundError:
+            return False
+        except OSError:
+            logger.exception("Could not remove the in-flight record %s", key)
+            return False
+        claim = {"plan_id": record.get("plan_id"), "action_id": record.get("action_id")}
+        try:
+            validate_plan_id(claim["plan_id"])
+            self.finish_action(claim, ok=ok, error=error, only_if_running=True)
+        except Exception:
+            logger.exception("Could not close in-flight action %s", claim)
+            return False
+        return True
 
     def recover_running_actions(self, plan_id: str, reason: str, by: Optional[str] = None,
                                 force: bool = False) -> Dict[str, Any]:
@@ -626,6 +745,10 @@ class ApprovalGate:
                 plan["state"] = "partial"
                 plan["executed_at"] = now.isoformat()
             self.save_plan(plan)
+            for record in self.in_flight_records():
+                if record.get("plan_id") == plan_id and record.get("action_id") in ids:
+                    with contextlib.suppress(OSError, BridgeError):
+                        os.unlink(self._inflight_path(record.get("key")))
         if closed:
             try:
                 self.record_proof(plan)

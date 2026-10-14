@@ -16,7 +16,9 @@ from mcp.types import CallToolResult, Tool, TextContent
 from .errors import BridgeError
 from .registry_factory import build_registry
 from .security.approval import HUMAN_ONLY_TOOLS
-from .security.dispatch import gate_after, gate_before
+from .security.dispatch import (
+    gate_after, gate_after_result, gate_before, result_failed, settle_in_flight,
+)
 from .security.audit import redact_data
 from .tool_metadata import enrich_tool
 
@@ -117,12 +119,14 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent] | CallToolRe
             async def run_tool_job(context=None):
                 try:
                     result = await provider.execute_tool(name, arguments)
-                    if _result_failed(result):
-                        raise BridgeError(f"Tool returned failure: {json.dumps(redact_data(result))}")
                 except BaseException as e:
                     gate_after(gate, claim, ok=False, error=str(e) or type(e).__name__)
                     raise
-                gate_after(gate, claim, ok=True)
+                # A 'running' answer keeps the claim consumed and the action in flight until
+                # revit_get_result returns the final result; it is not booked as done here.
+                outcome = gate_after_result(gate, claim, name, result)
+                if outcome.state == "failed":
+                    raise BridgeError(f"Tool returned failure: {json.dumps(redact_data(result))}")
                 return result
 
             job_ref = await job_manager.submit(
@@ -138,11 +142,25 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent] | CallToolRe
             result = await provider.execute_tool(name, arguments)
         except BaseException as e:
             gate_after(gate, claim, ok=False, error=str(e) or type(e).__name__)
+            settle_in_flight(gate, name, arguments, error=e)
             raise
-        failed = _result_failed(result)
-        gate_after(gate, claim, ok=not failed, error="Tool returned an explicit failure" if failed else None)
+        if claim is None:
+            settle_in_flight(gate, name, arguments, result=result)
+        outcome = gate_after_result(gate, claim, name, result)
+        failed = outcome.state == "failed" or _result_failed(result)
 
         redacted_result = redact_data(result)
+
+        if outcome.state == "running":
+            # Not an error and not done: Revit is still working and the approved action stays
+            # consumed (it cannot be replayed) until revit_get_result brings the final result.
+            kept = ("; the approved action stays used and cannot be run again" if claim else "")
+            text = (
+                f"{name} is still running. It has not finished and it has not failed{kept}. "
+                f"Resume with {outcome.resume}. Do not repeat the call.\n\n"
+                f"Result:\n{json.dumps(redacted_result, indent=2)}"
+            )
+            return [TextContent(type="text", text=text)]
 
         # Format the response
         response_text = f"{name} returned a failure\n\n" if failed else f"✓ {name} executed successfully\n\n"
@@ -162,12 +180,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent] | CallToolRe
         return _tool_error("execution_error", f"Error: {str(e)}")
 
 
-def _result_failed(result: Any) -> bool:
-    """Honor explicit provider failure signals without interpreting ordinary data."""
-    return isinstance(result, dict) and (
-        result.get("success") is False or result.get("ok") is False
-        or result.get("status") in ("error", "failed", "failure")
-    )
+_result_failed = result_failed
 
 
 def _tool_error(kind: str, message: str) -> CallToolResult:

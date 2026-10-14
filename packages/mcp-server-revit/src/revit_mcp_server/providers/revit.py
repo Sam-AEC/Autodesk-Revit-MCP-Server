@@ -58,11 +58,23 @@ class RevitProvider(AECProvider):
         self.bridge_url = bridge_url
         self.host_version = host_version
         self._bridge_factory = bridge_factory
+        # Set by build_registry to ApprovalGate.approval_state, so revit_get_context reports the
+        # live mode (with any temporary Auto window), not only the configured one.
+        self.approval_state_source = None
         self._bridge = self._build_bridge(bridge_factory)
         self._routed_bridges: Dict[tuple, Any] = {}
         self._routed_lock = threading.Lock()
         self._init_tool_mapping()
         self._enrich_tool_metadata()
+
+    def _approval_state(self) -> Dict[str, Any] | None:
+        source = self.approval_state_source
+        if source is None:
+            return None
+        try:
+            return source()
+        except Exception:
+            return None
 
     def _enrich_tool_metadata(self) -> None:
         mutating_verbs = {
@@ -236,6 +248,7 @@ class RevitProvider(AECProvider):
                 self._active_bridge(),
                 live=self.mode == BridgeMode.bridge,
                 approval_mode=config.approval_mode,
+                approval=self._approval_state(),
             )
         if name == "revit_get_result":
             if self.mode != BridgeMode.bridge:
