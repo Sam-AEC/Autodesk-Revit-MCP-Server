@@ -58,8 +58,10 @@ def _expected_data_files() -> set[str]:
         if not path.is_file() or "__pycache__" in path.parts:
             continue
         relative = path.relative_to(SRC_PACKAGE.parent).as_posix()
-        if path.name == "module.json" or (
-            path.suffix == ".yaml" and path.parent.name in {"rules", "recipes"}
+        if (
+            path.name == "module.json"
+            or (path.suffix == ".yaml" and path.parent.name in {"rules", "recipes"})
+            or (path.suffix == ".ipy" and path.parent.name == "scripts")
         ):
             expected.add(relative)
     return expected
@@ -70,6 +72,7 @@ def test_wheel_contains_module_manifests_rules_and_recipes(built_wheel: Path) ->
     assert any(p.endswith("/module.json") for p in expected), "no module.json found in the source tree"
     assert any("/rules/" in p for p in expected), "no QA/QC rules found in the source tree"
     assert any("/recipes/" in p for p in expected), "no recipes found in the source tree"
+    assert any(p.endswith(".ipy") for p in expected), "no embedded IronPython scripts found in the source tree"
 
     with zipfile.ZipFile(built_wheel) as wheel:
         shipped = set(wheel.namelist())

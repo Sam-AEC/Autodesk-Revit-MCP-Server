@@ -1,0 +1,288 @@
+{
+  "id": "revit",
+  "name": "Revit Checks (read-only eyes)",
+  "version": "0.1.0",
+  "schema_version": 1,
+  "min_hub_version": "1.2.0",
+  "description": "Read-only measuring tools for a live Revit session: wall joins, solid intersections, warnings baseline and delta, wall orientation. Each runs a vetted embedded script, never opens a transaction, and returns a short summary, FAIL lines, and a detail file for long lists.",
+  "author": "AEC Model Bridge",
+  "license": "GPL-3.0-or-later",
+  "requires_providers": [
+    "revit"
+  ],
+  "permissions": [
+    "model.read",
+    "workspace.write"
+  ],
+  "commands": [
+    {
+      "id": "check_joins",
+      "title": "Check Wall Joins (per wall end)",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Revit ElementIds (integers) to check. Takes precedence over tag and categories."
+          },
+          "tag": {
+            "type": "string",
+            "description": "Prefix of the Comments parameter that marks the elements of one build phase (for example AMB_V2:p3_walls). Elements whose Comments start with it are checked."
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Category names to scan, for example [\"Walls\",\"Floors\"] (OST_ names also work). Used together with tag, or alone to scan one category."
+          },
+          "max_elements": {
+            "type": "integer",
+            "description": "Safety cap on the number of elements selected; the tool refuses larger selections instead of running long.",
+            "default": 3000
+          },
+          "allow_free_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Wall ids whose free ends are intended (for example a freestanding or gable end); they are reported as INFO instead of FAIL."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum rows, FAIL lines and INFO lines returned per list (default 50, maximum 500). The full lists go to detail_file when anything is cut.",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Skip this many rows and lines first, to read the next page of a truncated list.",
+            "default": 0
+          },
+          "count_only": {
+            "type": "boolean",
+            "description": "Return only the summary and the counts (no fails, info or rows). Use for a cheap yes/no after a phase.",
+            "default": false
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Row fields to keep (for example [\"wall_id\",\"status\"]); omit for all fields. Only affects rows."
+          }
+        },
+        "required": []
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "check_intersections",
+      "title": "Check Solid Intersections (volume in m3)",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "set_a": {
+            "type": "object",
+            "description": "Elements to test: an object with ids (list of integers), tag (Comments prefix) and/or categories (list of names). Required."
+          },
+          "set_b": {
+            "type": "object",
+            "description": "Optional second set (same shape as set_a). When given, only pairs with one element in set_a and one in set_b are tested; when omitted, set_a is tested against itself."
+          },
+          "tolerance_m": {
+            "type": "number",
+            "description": "Broad-phase bounding-box tolerance in metres (default 0). Positive widens the candidate test, negative demands penetration of at least that depth.",
+            "default": 0
+          },
+          "min_volume_m3": {
+            "type": "number",
+            "description": "Smallest intersection volume in cubic metres that counts as a FAIL (default 0.0005).",
+            "default": 0.0005
+          },
+          "mode": {
+            "type": "string",
+            "description": "solid (default): measure the boolean intersection volume of the solids. bbox: bounding boxes only, like revit_check_clashes (false positives likely).",
+            "default": "solid"
+          },
+          "max_pairs": {
+            "type": "integer",
+            "description": "Stop after this many bounding-box candidate pairs and report a partial result (default 20000).",
+            "default": 20000
+          },
+          "time_budget_s": {
+            "type": "number",
+            "description": "Stop after this many seconds (default 20, maximum 25) and report a partial result; the bridge itself waits only 30 s.",
+            "default": 20
+          },
+          "skip_hosted": {
+            "type": "boolean",
+            "description": "Ignore a hosted element (door, window) against its own host (default true).",
+            "default": true
+          },
+          "max_elements": {
+            "type": "integer",
+            "description": "Safety cap on the number of elements selected; the tool refuses larger selections instead of running long.",
+            "default": 3000
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum rows, FAIL lines and INFO lines returned per list (default 50, maximum 500). The full lists go to detail_file when anything is cut.",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Skip this many rows and lines first, to read the next page of a truncated list.",
+            "default": 0
+          },
+          "count_only": {
+            "type": "boolean",
+            "description": "Return only the summary and the counts (no fails, info or rows). Use for a cheap yes/no after a phase.",
+            "default": false
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Row fields to keep (for example [\"wall_id\",\"status\"]); omit for all fields. Only affects rows."
+          }
+        },
+        "required": [
+          "set_a"
+        ]
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "warnings_delta",
+      "title": "Warnings Baseline and Delta",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "baseline_id": {
+            "type": "string",
+            "description": "Omit to take a new baseline now (its id is returned). Pass the id from an earlier call to list the warnings that are new and closed since then."
+          },
+          "tag_prefix": {
+            "type": "string",
+            "description": "Comments prefix of your phase (for example AMB_V2). New warnings that touch elements with this prefix are FAIL, other new warnings are INFO. Without it every new warning is a FAIL."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum rows, FAIL lines and INFO lines returned per list (default 50, maximum 500). The full lists go to detail_file when anything is cut.",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Skip this many rows and lines first, to read the next page of a truncated list.",
+            "default": 0
+          },
+          "count_only": {
+            "type": "boolean",
+            "description": "Return only the summary and the counts (no fails, info or rows). Use for a cheap yes/no after a phase.",
+            "default": false
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Row fields to keep (for example [\"wall_id\",\"status\"]); omit for all fields. Only affects rows."
+          }
+        },
+        "required": []
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "check_orientation",
+      "title": "Check Wall Orientation (exterior side probe)",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Revit ElementIds (integers) to check. Takes precedence over tag and categories."
+          },
+          "tag": {
+            "type": "string",
+            "description": "Prefix of the Comments parameter that marks the elements of one build phase (for example AMB_V2:p3_walls). Elements whose Comments start with it are checked."
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Category names to scan, for example [\"Walls\",\"Floors\"] (OST_ names also work). Used together with tag, or alone to scan one category."
+          },
+          "max_elements": {
+            "type": "integer",
+            "description": "Safety cap on the number of elements selected; the tool refuses larger selections instead of running long.",
+            "default": 3000
+          },
+          "scope": {
+            "type": "string",
+            "description": "exterior (default): only walls whose type function is Exterior. all: every wall in the selection.",
+            "default": "exterior"
+          },
+          "distance_m": {
+            "type": "number",
+            "description": "Probe distance along Wall.Orientation from the middle of the location line, in metres (default 0.6).",
+            "default": 0.6
+          },
+          "height_m": {
+            "type": "number",
+            "description": "Height above the wall base at which the probe is taken, in metres (default 1.0).",
+            "default": 1.0
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum rows, FAIL lines and INFO lines returned per list (default 50, maximum 500). The full lists go to detail_file when anything is cut.",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Skip this many rows and lines first, to read the next page of a truncated list.",
+            "default": 0
+          },
+          "count_only": {
+            "type": "boolean",
+            "description": "Return only the summary and the counts (no fails, info or rows). Use for a cheap yes/no after a phase.",
+            "default": false
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Row fields to keep (for example [\"wall_id\",\"status\"]); omit for all fields. Only affects rows."
+          }
+        },
+        "required": []
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    }
+  ]
+}

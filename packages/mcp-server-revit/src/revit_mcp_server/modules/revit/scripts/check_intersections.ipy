@@ -1,0 +1,203 @@
+# revit_check_intersections: scoped solid/solid (or bounding-box only) intersection check, read only.
+# Ported from docs/recipes/toolkit/intersections.py. Needs ARGS = {set_a, set_b, tolerance_m, min_volume_m3, mode,
+# max_pairs, time_budget_s, skip_hosted}. set_a / set_b = {ids, tag, categories}. Without set_b, set_a is tested
+# against itself. Broad phase: bounding boxes (sorted sweep on X, tolerance applied). Narrow phase:
+# BooleanOperationsUtils.ExecuteBooleanOperation(Intersect), volumes in m3.
+from System.Diagnostics import Stopwatch
+
+
+def solids_of(e):
+    """World-space solids (instance geometry resolved) and the number of meshes seen."""
+    out = []
+    state = {"meshes": 0}
+    opt = Options()
+    opt.DetailLevel = ViewDetailLevel.Fine
+    opt.ComputeReferences = False
+    ge = e.get_Geometry(opt)
+    if ge is None:
+        return out, 0
+
+    def walk(g):
+        for o in g:
+            if isinstance(o, Solid):
+                if o.Volume > 1e-9:
+                    out.append(o)
+            elif isinstance(o, GeometryInstance):
+                walk(o.GetInstanceGeometry())
+            elif isinstance(o, Mesh):
+                state["meshes"] += 1
+
+    walk(ge)
+    return out, state["meshes"]
+
+
+def host_id(e):
+    try:
+        h = e.Host
+        if h is not None:
+            return eid(h)
+    except Exception:
+        pass
+    return None
+
+
+def main():
+    doc_meta()
+    max_el = ARGS.get("max_elements") or 3000
+    spec_a = dict(ARGS.get("set_a") or {})
+    spec_a["max_elements"] = max_el
+    set_a = select_elements(spec_a, "set_a")
+    if set_a is None:
+        return
+    spec_b = ARGS.get("set_b")
+    if spec_b:
+        spec_b = dict(spec_b)
+        spec_b["max_elements"] = max_el
+        set_b = select_elements(spec_b, "set_b")
+        if set_b is None:
+            return
+    else:
+        set_b = None
+    mode = ARGS.get("mode") or "solid"
+    tol = float(ARGS.get("tolerance_m") or 0.0) / FT_TO_M
+    min_vol = float(ARGS.get("min_volume_m3") or 0.0005)
+    max_pairs = int(ARGS.get("max_pairs") or 20000)
+    budget_ms = int(float(ARGS.get("time_budget_s") or 20) * 1000)
+    skip_hosted = ARGS.get("skip_hosted", True)
+    watch = Stopwatch.StartNew()
+
+    # one record per element: [element, id, min, max, side flags]; flag 1 = in A, 2 = in B
+    recs = {}
+    for e in set_a:
+        bb = e.get_BoundingBox(None)
+        if bb is None:
+            info("NO_BBOX", "element %d has no bounding box and was skipped" % eid(e))
+            continue
+        recs[eid(e)] = [e, eid(e), bb.Min, bb.Max, 1 if set_b is not None else 3]
+    if set_b is not None:
+        for e in set_b:
+            i = eid(e)
+            if i in recs:
+                recs[i][4] = 3
+                continue
+            bb = e.get_BoundingBox(None)
+            if bb is None:
+                info("NO_BBOX", "element %d has no bounding box and was skipped" % i)
+                continue
+            recs[i] = [e, i, bb.Min, bb.Max, 2]
+    items = sorted(recs.values(), key=lambda r: r[2].X)
+
+    cache = {}
+
+    def solids_cached(rec):
+        if rec[1] not in cache:
+            cache[rec[1]] = solids_of(rec[0])
+        return cache[rec[1]]
+
+    candidates = 0
+    tested = 0
+    candidates_no_solid = 0
+    errors = 0
+    pairs = []
+    partial = False
+    n = len(items)
+    for i in range(n):
+        ra = items[i]
+        j = i + 1
+        while j < n and items[j][2].X <= ra[3].X + tol:
+            rb = items[j]
+            j += 1
+            if not ((ra[4] & 1 and rb[4] & 2) or (ra[4] & 2 and rb[4] & 1)):
+                continue
+            if ra[3].Y + tol < rb[2].Y or rb[3].Y + tol < ra[2].Y or ra[3].Z + tol < rb[2].Z or rb[3].Z + tol < ra[2].Z:
+                continue
+            if skip_hosted and (host_id(ra[0]) == rb[1] or host_id(rb[0]) == ra[1]):
+                continue
+            candidates += 1
+            if candidates > max_pairs:
+                partial = True
+                break
+            if watch.ElapsedMilliseconds > budget_ms:
+                partial = True
+                break
+            ax = (max(ra[2].X, rb[2].X) + min(ra[3].X, rb[3].X)) / 2.0
+            ay = (max(ra[2].Y, rb[2].Y) + min(ra[3].Y, rb[3].Y)) / 2.0
+            az = (max(ra[2].Z, rb[2].Z) + min(ra[3].Z, rb[3].Z)) / 2.0
+            if mode == "bbox":
+                pairs.append([ra[1], rb[1], cat_name(ra[0]), cat_name(rb[0]), "bbox", None, "bbox_overlap", ax, ay, az])
+                continue
+            sa, ma = solids_cached(ra)
+            sb, mb = solids_cached(rb)
+            if not sa or not sb:
+                candidates_no_solid += 1
+                pairs.append([ra[1], rb[1], cat_name(ra[0]), cat_name(rb[0]), "bbox", None, "candidate_no_solid", ax, ay, az])
+                continue
+            tested += 1
+            vol = 0.0
+            best = 0.0
+            cx, cy, cz = ax, ay, az
+            failed_text = ""
+            for s1 in sa:
+                for s2 in sb:
+                    try:
+                        r = BooleanOperationsUtils.ExecuteBooleanOperation(s1, s2, BooleanOperationsType.Intersect)
+                        if r is not None and r.Volume > 0:
+                            vol += r.Volume
+                            if r.Volume > best:
+                                best = r.Volume
+                                try:
+                                    c = r.ComputeCentroid()
+                                    cx, cy, cz = c.X, c.Y, c.Z
+                                except Exception:
+                                    pass
+                    except Exception as ex:
+                        failed_text = str(ex)
+            if failed_text and vol <= 0:
+                errors += 1
+                pairs.append([ra[1], rb[1], cat_name(ra[0]), cat_name(rb[0]), "error", None, "boolean_failed: " + failed_text, ax, ay, az])
+                continue
+            vol_m3 = vol * FT3_TO_M3
+            if vol_m3 > 0:
+                pairs.append([ra[1], rb[1], cat_name(ra[0]), cat_name(rb[0]), "solid", round(vol_m3, 6), "verified", cx, cy, cz])
+        if partial:
+            break
+
+    # most important first: biggest volume, then the unmeasured candidates
+    pairs.sort(key=lambda p: (-(p[5] or 0.0), p[0], p[1]))
+    overlaps = 0
+    for p in pairs:
+        loc = "(%s, %s, %s) m" % (to_m(p[7]), to_m(p[8]), to_m(p[9]))
+        if p[4] == "solid" and p[5] >= min_vol:
+            overlaps += 1
+            fail("INTERSECT", "%s %d x %s %d overlap %s m3 at %s" % (p[2], p[0], p[3], p[1], p[5], loc))
+        elif p[4] == "bbox" and p[6] == "bbox_overlap":
+            overlaps += 1
+            fail("BBOX_OVERLAP", "%s %d x %s %d bounding boxes overlap at %s (not a measured volume)" % (p[2], p[0], p[3], p[1], loc))
+        elif p[4] == "error":
+            info("BOOLEAN_FAILED", "%s %d x %s %d: %s" % (p[2], p[0], p[3], p[1], p[6]))
+        elif p[6] == "candidate_no_solid":
+            info("NO_SOLID", "%s %d x %s %d overlap in bounding box but one side has no solid (mesh): check by eye" % (p[2], p[0], p[3], p[1]))
+        if p[4] != "solid" or p[5] >= min_vol:
+            row([
+                ("a_id", p[0]), ("b_id", p[1]), ("a_category", p[2]), ("b_category", p[3]), ("kind", p[4]),
+                ("volume_m3", "" if p[5] is None else p[5]), ("status", p[6]),
+                ("x_m", to_m(p[7])), ("y_m", to_m(p[8])), ("z_m", to_m(p[9])),
+            ])
+    if partial:
+        meta("partial", "1")
+        info("PARTIAL", "stopped after %d bounding-box candidates (%d ms; limits: max_pairs=%d, time_budget_s=%s). Narrow the sets or split by category/tag and run again." % (candidates, watch.ElapsedMilliseconds, max_pairs, ARGS.get("time_budget_s") or 20))
+    elems_b = len(set_b) if set_b is not None else len(set_a)
+    if mode == "bbox":
+        text = "%d bounding-box overlaps among %d x %d elements (bounding boxes only: false positives likely)" % (overlaps, len(set_a), elems_b)
+    else:
+        text = "%d bounding-box candidates, %d solid/solid pairs measured among %d x %d elements; %d overlaps >= %s m3" % (candidates, tested, len(set_a), elems_b, overlaps, min_vol)
+        if candidates_no_solid:
+            text += "; %d candidates without solids" % candidates_no_solid
+        if errors:
+            text += "; %d boolean failures" % errors
+    if partial:
+        text = "PARTIAL: " + text
+    summary(text)
+
+
+__output__ = run_main(main)

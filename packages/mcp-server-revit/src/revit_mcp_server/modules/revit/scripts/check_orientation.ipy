@@ -1,0 +1,109 @@
+# revit_check_orientation: exterior-side probe of walls (read only). Needs ARGS = {ids, tag, categories, scope, distance_m,
+# height_m, max_elements}. For each wall: the point `distance_m` along Wall.Orientation (which points to the exterior side)
+# from the middle of the location line, `height_m` above the wall's base. If that point lies inside a placed Room, the wall
+# is facing the wrong way (or its exterior is not outside). scope = "exterior" (WallType.Function == Exterior) or "all".
+
+
+def room_at(rooms, pt):
+    for entry in rooms:
+        bb = entry[1]
+        if bb is not None:
+            if pt.X < bb.Min.X - 0.05 or pt.X > bb.Max.X + 0.05 or pt.Y < bb.Min.Y - 0.05 or pt.Y > bb.Max.Y + 0.05 or pt.Z < bb.Min.Z - 0.05 or pt.Z > bb.Max.Z + 0.05:
+                continue
+        try:
+            if entry[0].IsPointInRoom(pt):
+                return entry[0]
+        except Exception:
+            continue
+    return None
+
+
+def room_label(r):
+    try:
+        return "%s %s (id %d)" % (r.Number, r.get_Parameter(BuiltInParameter.ROOM_NAME).AsString(), eid(r))
+    except Exception:
+        return "room id %d" % eid(r)
+
+
+def main():
+    doc_meta()
+    spec = {"ids": ARGS.get("ids"), "tag": ARGS.get("tag"), "max_elements": ARGS.get("max_elements")}
+    cats = ARGS.get("categories") or []
+    if not cats and ARGS.get("tag"):
+        cats = ["Walls"]
+    spec["categories"] = cats
+    elems = select_elements(spec, "check_orientation")
+    if elems is None:
+        return
+    walls = [e for e in elems if isinstance(e, Wall)]
+    scope = ARGS.get("scope") or "exterior"
+    dist = float(ARGS.get("distance_m") or 0.6) / FT_TO_M
+    height = float(ARGS.get("height_m") or 1.0) / FT_TO_M
+    rooms = []
+    for r in FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_Rooms).WhereElementIsNotElementType():
+        try:
+            if r.Area > 0:
+                rooms.append((r, r.get_BoundingBox(None)))
+        except Exception:
+            continue
+    if not rooms:
+        meta("verified", "0")
+        info("NO_ROOMS", "the document has no placed, enclosed rooms: the exterior probe has nothing to test against")
+    checked = 0
+    bad = 0
+    unconfirmed = 0
+    for w in walls:
+        wid = eid(w)
+        try:
+            func = str(w.WallType.Function)
+        except Exception:
+            func = "?"
+        if scope == "exterior" and func != "Exterior":
+            continue
+        loc = w.Location
+        if loc is None or not isinstance(loc, LocationCurve):
+            info("NO_LOCATION_CURVE", "wall %d has no location curve and was skipped" % wid)
+            continue
+        checked += 1
+        o = w.Orientation
+        mid = loc.Curve.Evaluate(0.5, True)
+        bb = w.get_BoundingBox(None)
+        z = (bb.Min.Z + height) if bb is not None else mid.Z + height
+        if bb is not None and z > bb.Max.Z:
+            z = bb.Max.Z - 0.1
+        out_pt = XYZ(mid.X + o.X * dist, mid.Y + o.Y * dist, z)
+        in_pt = XYZ(mid.X - o.X * dist, mid.Y - o.Y * dist, z)
+        out_room = room_at(rooms, out_pt) if rooms else None
+        in_room = room_at(rooms, in_pt) if rooms else None
+        flipped = ""
+        try:
+            flipped = str(bool(w.Flipped))
+        except Exception:
+            pass
+        if out_room is not None:
+            bad += 1
+            status = "exterior_in_room"
+            fail("ORIENT_INTO_ROOM", "wall %d: the probe %s m along its Orientation at (%s, %s) lands inside room %s, so the wall faces the wrong way (flipped=%s). Rebuild it with the curve reversed; do not call Flip()." % (wid, round(dist * FT_TO_M, 2), to_m(out_pt.X), to_m(out_pt.Y), room_label(out_room), flipped))
+        elif rooms and in_room is None:
+            unconfirmed += 1
+            status = "unconfirmed"
+            info("ORIENT_UNCONFIRMED", "wall %d: neither side lands in a room, orientation cannot be confirmed from rooms" % wid)
+        elif rooms:
+            status = "ok"
+        else:
+            status = "unconfirmed"
+        row([
+            ("wall_id", wid), ("function", func), ("flipped", flipped), ("status", status),
+            ("exterior_room_id", eid(out_room) if out_room is not None else ""),
+            ("interior_room_id", eid(in_room) if in_room is not None else ""),
+            ("x_m", to_m(mid.X)), ("y_m", to_m(mid.Y)),
+        ])
+    text = "%d %s walls probed, %d facing into a room" % (checked, scope, bad)
+    if unconfirmed:
+        text += ", %d unconfirmed (no room on either side)" % unconfirmed
+    if not rooms:
+        text = "UNVERIFIED (no rooms): " + text
+    summary(text)
+
+
+__output__ = run_main(main)

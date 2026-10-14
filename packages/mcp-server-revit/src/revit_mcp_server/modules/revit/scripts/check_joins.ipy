@@ -1,0 +1,77 @@
+# revit_check_joins: wall-end join census (read only). Needs ARGS = {ids, tag, categories, allow_free_ids, max_elements}.
+# For every wall end: which walls are joined at that end (LocationCurve.get_ElementsAtJoin), the join type,
+# and whether joining is allowed at that end at all (WallUtils.IsWallJoinAllowedAtEnd).
+
+
+def main():
+    doc_meta()
+    spec = {"ids": ARGS.get("ids"), "tag": ARGS.get("tag"), "max_elements": ARGS.get("max_elements")}
+    cats = ARGS.get("categories") or []
+    if not cats and ARGS.get("tag"):
+        cats = ["Walls"]
+    spec["categories"] = cats
+    elems = select_elements(spec, "check_joins")
+    if elems is None:
+        return
+    walls = [e for e in elems if isinstance(e, Wall)]
+    skipped = len(elems) - len(walls)
+    if skipped:
+        info("NOT_A_WALL", "%d selected element(s) are not walls and were skipped" % skipped)
+    free_ok = set([int(x) for x in (ARGS.get("allow_free_ids") or [])])
+    ends = 0
+    unjoined = 0
+    by_setting = 0
+    waived = 0
+    for w in walls:
+        wid = eid(w)
+        loc = w.Location
+        if loc is None or not isinstance(loc, LocationCurve):
+            info("NO_LOCATION_CURVE", "wall %d has no location curve and was skipped" % wid)
+            continue
+        for end in (0, 1):
+            ends += 1
+            joined = []
+            try:
+                for o in loc.get_ElementsAtJoin(end):
+                    oid = eid(o)
+                    if oid != wid:
+                        joined.append(oid)
+            except Exception as ex:
+                info("JOIN_READ_FAILED", "wall %d end %d: %s" % (wid, end, ex))
+            join_type = ""
+            try:
+                join_type = str(loc.get_JoinType(end))
+            except Exception:
+                pass
+            allowed = True
+            try:
+                allowed = bool(WallUtils.IsWallJoinAllowedAtEnd(w, end))
+            except Exception:
+                pass
+            pt = loc.Curve.GetEndPoint(end)
+            if joined:
+                status = "joined"
+            elif not allowed:
+                status = "free_by_setting"
+                by_setting += 1
+                info("JOIN_DISALLOWED", "wall %d end %d at (%s, %s) has joins switched off (intended free end)" % (wid, end, to_m(pt.X), to_m(pt.Y)))
+            elif wid in free_ok:
+                status = "waived"
+                waived += 1
+                info("JOIN_WAIVED", "wall %d end %d at (%s, %s) is free (listed in allow_free_ids)" % (wid, end, to_m(pt.X), to_m(pt.Y)))
+            else:
+                status = "unjoined"
+                unjoined += 1
+                fail("JOIN_OPEN", "wall %d end %d at (%s, %s) m is not joined to any wall" % (wid, end, to_m(pt.X), to_m(pt.Y)))
+            row([
+                ("wall_id", wid), ("end", end), ("status", status),
+                ("joined_to", ",".join([str(x) for x in joined])), ("join_type", join_type),
+                ("x_m", to_m(pt.X)), ("y_m", to_m(pt.Y)),
+            ])
+    text = "%d ends checked on %d walls, %d unjoined" % (ends, len(walls), unjoined)
+    if by_setting or waived:
+        text += " (%d free by join setting, %d waived)" % (by_setting, waived)
+    summary(text)
+
+
+__output__ = run_main(main)

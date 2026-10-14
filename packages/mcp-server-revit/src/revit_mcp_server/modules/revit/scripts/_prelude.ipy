@@ -1,0 +1,221 @@
+# Shared prelude of the read-only check scripts (revit_check_joins, revit_check_intersections,
+# revit_warnings_delta, revit_check_orientation). IronPython 2.7 source: no json, no time, no f-strings,
+# no annotations. It never opens a transaction. Output is a tab-separated line protocol that
+# revit_mcp_server/check_contract.py parses (SUMMARY / FAIL / INFO / ROW / META / COUNT / ERROR).
+import clr
+import System
+from System.Collections.Generic import List
+from Autodesk.Revit.DB import *
+
+FT_TO_M = 0.3048
+FT3_TO_M3 = 0.0283168466
+MAX_FAIL_LINES = 2000
+MAX_INFO_LINES = 500
+MAX_ROW_LINES = 5000
+LOG = []
+COUNTS = {"fail": 0, "info": 0, "row": 0}
+
+
+def clean(value):
+    """One line, no tabs: the protocol is line and tab based."""
+    try:
+        text = str(value)
+    except Exception:
+        text = repr(value)
+    return text.replace("\t", " ").replace("\r", " ").replace("\n", " ")
+
+
+def summary(text):
+    LOG.append("SUMMARY\t" + clean(text))
+
+
+def fail(code, text):
+    COUNTS["fail"] += 1
+    if COUNTS["fail"] <= MAX_FAIL_LINES:
+        LOG.append("FAIL\t" + clean(code) + "\t" + clean(text))
+
+
+def info(code, text):
+    COUNTS["info"] += 1
+    if COUNTS["info"] <= MAX_INFO_LINES:
+        LOG.append("INFO\t" + clean(code) + "\t" + clean(text))
+
+
+def row(pairs):
+    """pairs = [("key", value), ...] (a list keeps the column order)."""
+    COUNTS["row"] += 1
+    if COUNTS["row"] <= MAX_ROW_LINES:
+        parts = ["ROW"]
+        for pair in pairs:
+            parts.append(clean(pair[0]) + "=" + clean(pair[1]))
+        LOG.append("\t".join(parts))
+
+
+def meta(key, value):
+    LOG.append("META\t" + clean(key) + "\t" + clean(value))
+
+
+def error(kind, message):
+    LOG.append("ERROR\t" + clean(kind) + "\t" + clean(message))
+
+
+def finish():
+    for key in ("fail", "info", "row"):
+        LOG.append("COUNT\t" + key + "\t" + str(COUNTS[key]))
+    return chr(10).join(LOG)
+
+
+def run_main(fn):
+    try:
+        fn()
+    except Exception as ex:
+        error("script_exception", "%s: %s" % (ex.__class__.__name__, ex))
+    return finish()
+
+
+def _make_eid_getter():
+    # Revit 2024+ ElementId.Value (64 bit); older versions only have IntegerValue.
+    try:
+        ElementId.InvalidElementId.Value
+        return lambda i: int(i.Value)
+    except Exception:
+        return lambda i: int(i.IntegerValue)
+
+
+_EID = _make_eid_getter()
+
+
+def eid(x):
+    """Integer id of an Element or an ElementId."""
+    try:
+        i = x.Id
+    except Exception:
+        i = x
+    return _EID(i)
+
+
+def to_m(feet):
+    return round(feet * FT_TO_M, 3)
+
+
+def doc_meta():
+    try:
+        meta("doc_title", doc.Title)
+    except Exception:
+        pass
+    try:
+        meta("doc_guid", str(doc.CreationGUID))
+    except Exception:
+        pass
+    try:
+        meta("revit_version", app.VersionNumber)
+    except Exception:
+        pass
+
+
+def comment_of(e):
+    try:
+        p = e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)
+        if p is None:
+            return ""
+        return p.AsString() or ""
+    except Exception:
+        return ""
+
+
+CATEGORY_ALIASES = {
+    "walls": "OST_Walls",
+    "floors": "OST_Floors",
+    "roofs": "OST_Roofs",
+    "doors": "OST_Doors",
+    "windows": "OST_Windows",
+    "columns": "OST_Columns",
+    "structuralcolumns": "OST_StructuralColumns",
+    "structuralframing": "OST_StructuralFraming",
+    "beams": "OST_StructuralFraming",
+    "ceilings": "OST_Ceilings",
+    "stairs": "OST_Stairs",
+    "railings": "OST_StairsRailing",
+    "rooms": "OST_Rooms",
+    "pipes": "OST_PipeCurves",
+    "ducts": "OST_DuctCurves",
+    "genericmodels": "OST_GenericModel",
+}
+
+
+def parse_categories(names):
+    """Names -> (list of BuiltInCategory, None) or (None, offending name)."""
+    out = []
+    for n in names:
+        key = str(n).strip()
+        low = key.lower().replace(" ", "")
+        bic = None
+        if low in CATEGORY_ALIASES:
+            bic = getattr(BuiltInCategory, CATEGORY_ALIASES[low], None)
+        elif key.startswith("OST_"):
+            bic = getattr(BuiltInCategory, key, None)
+        else:
+            bic = getattr(BuiltInCategory, "OST_" + key.replace(" ", ""), None)
+        if bic is None:
+            return None, key
+        out.append(bic)
+    return out, None
+
+
+def select_elements(spec, what):
+    """Elements named by spec = {ids, tag, categories, max_elements}; None after an ERROR line.
+
+    ids wins when given. Otherwise the model is scanned by category and/or Comments prefix (tag).
+    A scan with neither is refused: these tools never walk the whole model unasked.
+    """
+    ids = spec.get("ids") or []
+    tag = spec.get("tag") or ""
+    cats = spec.get("categories") or []
+    cap = spec.get("max_elements") or 3000
+    found = []
+    if ids:
+        missing = []
+        for i in ids:
+            e = doc.GetElement(ElementId(int(i)))
+            if e is None:
+                missing.append(int(i))
+            else:
+                found.append(e)
+        if missing:
+            info("ID_NOT_FOUND", "%d id(s) not in the document: %s" % (len(missing), ",".join([str(x) for x in missing[:20]])))
+    elif tag or cats:
+        col = FilteredElementCollector(doc).WhereElementIsNotElementType()
+        if cats:
+            bics, bad = parse_categories(cats)
+            if bics is None:
+                error("invalid_input", "unknown category '%s' for %s" % (bad, what))
+                return None
+            typed = List[BuiltInCategory]()
+            for b in bics:
+                typed.Add(b)
+            col = col.WherePasses(ElementMulticategoryFilter(typed))
+        for e in col:
+            if e.Category is None:
+                continue
+            if tag and not comment_of(e).startswith(tag):
+                continue
+            found.append(e)
+            if len(found) > cap:
+                break
+    else:
+        error("invalid_input", "%s: give ids, a tag (Comments prefix) or categories" % what)
+        return None
+    if len(found) > cap:
+        error("too_many_elements", "%s: more than %d elements selected; narrow it with ids, tag or categories (or raise max_elements)" % (what, cap))
+        return None
+    if not found:
+        error("empty_selection", "%s: no elements matched (ids=%d, tag='%s', categories=%s)" % (what, len(ids), tag, ",".join([str(c) for c in cats])))
+        return None
+    return found
+
+
+def cat_name(e):
+    try:
+        return e.Category.Name
+    except Exception:
+        return "?"

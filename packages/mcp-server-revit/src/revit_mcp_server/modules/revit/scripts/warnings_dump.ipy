@@ -1,0 +1,46 @@
+# revit_warnings_delta: dump of the open document's current warnings (read only). Needs ARGS = {want_tags}.
+# One ROW per warning: severity, description, ids (failing + additional elements, sorted), tags (Comments of those elements,
+# '|' separated, first 80 characters each). The baseline / delta comparison happens on the server side.
+
+
+def main():
+    doc_meta()
+    want_tags = bool(ARGS.get("want_tags"))
+    msgs = doc.GetWarnings()
+    cache = {}
+    n = 0
+    for fm in msgs:
+        n += 1
+        ids = set()
+        try:
+            for i in fm.GetFailingElements():
+                ids.add(eid(i))
+        except Exception:
+            pass
+        try:
+            for i in fm.GetAdditionalElements():
+                ids.add(eid(i))
+        except Exception:
+            pass
+        ordered = sorted(ids)
+        tags = []
+        if want_tags:
+            for i in ordered[:50]:
+                if i not in cache:
+                    e = doc.GetElement(ElementId(i))
+                    cache[i] = comment_of(e)[:80] if e is not None else ""
+                t = cache[i]
+                if t and t not in tags:
+                    tags.append(t)
+        try:
+            severity = str(fm.GetSeverity())
+        except Exception:
+            severity = "?"
+        row([
+            ("severity", severity), ("description", fm.GetDescriptionText()),
+            ("ids", ",".join([str(x) for x in ordered])), ("tags", "|".join(tags)),
+        ])
+    summary("%d warnings in the open document" % n)
+
+
+__output__ = run_main(main)
