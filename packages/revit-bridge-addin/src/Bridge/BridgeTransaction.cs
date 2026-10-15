@@ -95,20 +95,6 @@ public sealed class BridgeTransaction : IDisposable
     }
 }
 
-public sealed class BridgeFailureMessage
-{
-    [JsonPropertyName("severity")]
-    public string Severity { get; set; } = "";
-    [JsonPropertyName("message")]
-    public string Message { get; set; } = "";
-    [JsonPropertyName("failure_id")]
-    public string FailureId { get; set; } = "";
-    [JsonPropertyName("element_ids")]
-    public List<long> ElementIds { get; set; } = new();
-    [JsonPropertyName("additional_element_ids")]
-    public List<long> AdditionalElementIds { get; set; } = new();
-}
-
 internal sealed class BridgeFailureCollector : IFailuresPreprocessor
 {
     public List<BridgeFailureMessage> Messages { get; } = new();
@@ -152,22 +138,12 @@ public sealed class BridgeTransactionException : Exception
 
     public BridgeTransactionException(string name, TransactionStatus status, string kind,
         IEnumerable<BridgeFailureMessage> messages, Exception? inner = null)
-        : base(Describe(name, status, messages, inner), inner)
+        : base(BridgeFailureText.Describe(name, status.ToString(), messages, inner), inner)
     {
         Kind = kind;
         TransactionStatus = status;
         RevitMessages = messages.ToList();
-        FailedElementIds = RevitMessages.Where(m => m.Severity != "Warning" && m.Severity != "None")
-            .SelectMany(m => m.ElementIds.Concat(m.AdditionalElementIds)).Distinct().ToList();
-    }
-
-    private static string Describe(string name, TransactionStatus status,
-        IEnumerable<BridgeFailureMessage> messages, Exception? inner)
-    {
-        var details = messages.Select(m => $"{m.Severity}: {m.Message} (element ids: "
-            + string.Join(", ", m.ElementIds.Concat(m.AdditionalElementIds).Distinct()) + ")").ToList();
-        if (inner != null) details.Add(inner.Message);
-        return $"Transaction '{name}' did not commit (status: {status}). " + string.Join("; ", details);
+        FailedElementIds = BridgeFailureText.FailedElementIds(RevitMessages);
     }
 
     public object ToResult() => new
@@ -181,7 +157,7 @@ public sealed class BridgeTransactionException : Exception
         failed_element_ids = FailedElementIds,
         element_ids = FailedElementIds,
         revit_messages = RevitMessages,
-        warnings = RevitMessages.Where(m => m.Severity == "Warning").ToList()
+        warnings = BridgeFailureText.Warnings(RevitMessages)
     };
 
     public static BridgeTransactionException? Find(Exception error)
@@ -189,29 +165,5 @@ public sealed class BridgeTransactionException : Exception
         for (Exception? current = error; current != null; current = current.InnerException)
             if (current is BridgeTransactionException failure) return failure;
         return null;
-    }
-}
-
-internal static class BridgeTransactionResults
-{
-    public static object AppendWarnings(object result, IReadOnlyList<BridgeFailureMessage> messages)
-    {
-        if (messages.Count == 0) return result;
-        var serialized = JsonSerializer.SerializeToElement(result);
-        var fields = new Dictionary<string, object?>();
-        if (serialized.ValueKind == JsonValueKind.Object)
-            foreach (var property in serialized.EnumerateObject())
-                fields[property.Name] = property.Value.Clone();
-        else
-            fields["result"] = serialized;
-
-        var warnings = new List<object>();
-        if (fields.TryGetValue("warnings", out var previous) && previous is JsonElement old
-            && old.ValueKind == JsonValueKind.Array)
-            warnings.AddRange(old.EnumerateArray().Select(value => (object)value.Clone()));
-        warnings.AddRange(messages.Where(message => message.Severity == "Warning"));
-        fields["warnings"] = warnings;
-        fields["revit_messages"] = messages;
-        return fields;
     }
 }

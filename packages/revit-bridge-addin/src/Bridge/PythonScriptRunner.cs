@@ -25,23 +25,6 @@ internal static class PythonScriptRunner
     private const int MaxProgressLines = 200;
     private const int MaxProgressLineLength = 500;
 
-    // Keep in step with revit_mcp_server/security/read_mode.py (a test compares the rule names).
-    private static readonly (string Name, Regex Pattern)[] ReadModeRules =
-    {
-        ("Transaction", new Regex(@"\bTransaction\b", RegexOptions.CultureInvariant)),
-        ("SubTransaction", new Regex(@"\bSubTransaction\b", RegexOptions.CultureInvariant)),
-        ("TransactionGroup", new Regex(@"\bTransactionGroup\b", RegexOptions.CultureInvariant)),
-        ("Save", new Regex(@"\.\s*Save(?:As)?\s*\(", RegexOptions.CultureInvariant)),
-        ("SynchronizeWithCentral", new Regex(@"\bSynchronizeWithCentral\b", RegexOptions.CultureInvariant)),
-        ("PostCommand", new Regex(@"\bPostCommand\b", RegexOptions.CultureInvariant)),
-        ("eval", new Regex(@"\beval\b", RegexOptions.CultureInvariant)),
-        ("exec", new Regex(@"\bexec(?:file)?\b", RegexOptions.CultureInvariant)),
-        ("__import__", new Regex(@"\b__import__\b", RegexOptions.CultureInvariant)),
-        ("os_modules", new Regex(@"\b(?:import|from)\s+(?:os|subprocess|shutil|socket|ctypes|urllib\w*|http|ftplib|smtplib|pickle|marshal|webbrowser|tempfile|glob|io)\b", RegexOptions.CultureInvariant)),
-        ("System.IO", new Regex(@"\bSystem\s*\.\s*(?:IO|Net|Reflection)\b|\bProcess(?:StartInfo)?\s*[.(]", RegexOptions.CultureInvariant)),
-        ("open", new Regex(@"(?<![\w.])(?:open|file)\s*\(", RegexOptions.CultureInvariant)),
-    };
-
     /// <summary>Progress lines of the script that is running now, for a future live status endpoint.</summary>
     internal static ProgressBuffer? ActiveProgress { get; private set; }
 
@@ -55,7 +38,7 @@ internal static class PythonScriptRunner
 
     internal static List<string> FindReadModeViolations(string script)
     {
-        return ReadModeRules.Where(rule => rule.Pattern.IsMatch(script)).Select(rule => rule.Name).ToList();
+        return ReadModeRules.FindViolations(script);
     }
 
     internal static object Run(UIApplication app, Document doc, string script, string? requestedMode)

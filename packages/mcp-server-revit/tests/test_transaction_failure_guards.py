@@ -290,7 +290,7 @@ def transaction_harness(tmp_path_factory):
         '<Nullable>enable</Nullable></PropertyGroup></Project>', encoding="utf-8"
     )
     (directory / "Harness.cs").write_text(STUBS, encoding="utf-8")
-    for name in ("BridgeTransaction.cs", "ExternalEventHandler.cs"):
+    for name in ("BridgeTransaction.cs", "BridgeFailureText.cs", "ExternalEventHandler.cs"):
         shutil.copyfile(BRIDGE / name, directory / name)
     built = subprocess.run(
         ["dotnet", "build", str(directory / "Policy.csproj"), "-c", "Release", "--nologo", "-v:q"],

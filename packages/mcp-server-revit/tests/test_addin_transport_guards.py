@@ -1,7 +1,7 @@
 """Static guards on the add-in's durable-result transport, context command and image export.
 
-No C# test project exists and nothing here runs against a live Revit; these read the source and fail on
-the patterns that would bring back a lost result, a wrong image path or a mutating context command.
+Nothing here runs against a live Revit (the pure logic has C# tests in packages/revit-bridge-addin-tests).
+These read the source and fail on the patterns that would bring back a lost result, a wrong image path or a mutating context command.
 """
 import re
 from pathlib import Path

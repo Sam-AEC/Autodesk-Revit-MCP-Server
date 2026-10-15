@@ -215,6 +215,11 @@ jobs:
         shell: pwsh
         run: ./scripts/build-addin.ps1 -RevitVersion "${{ matrix.revit-version }}" -Configuration Release
 
+      # Logic tests that need no Revit and no Autodesk assemblies (queue, read mode, paths, failure text).
+      - name: Test add-in logic
+        shell: pwsh
+        run: dotnet test packages/revit-bridge-addin-tests -c Release -p:RevitVersion="${{ matrix.revit-version }}"
+
   rhino-addin:
     runs-on: windows-latest
     timeout-minutes: 20

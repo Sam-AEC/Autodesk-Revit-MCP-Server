@@ -854,24 +854,10 @@ public static partial class BridgeCommandFactory
     }
 
     private static string? OptionalString(JsonElement payload, string name)
-    {
-        if (!payload.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String)
-            return null;
-        var text = value.GetString();
-        return string.IsNullOrWhiteSpace(text) ? null : text;
-    }
+        => PayloadJson.OptionalString(payload, name);
 
     private static bool? OptionalBool(JsonElement payload, string name)
-    {
-        if (!payload.TryGetProperty(name, out var value)) return null;
-        return value.ValueKind switch
-        {
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            JsonValueKind.Null => (bool?)null,
-            _ => throw new ArgumentException($"{name} must be a boolean")
-        };
-    }
+        => PayloadJson.OptionalBool(payload, name);
 
     /// <summary>Exact family+type when both are given; otherwise the first loaded symbol of the category (reported).</summary>
     private static FamilySymbol ResolveOpeningSymbol(Document doc, BuiltInCategory category, string label,
@@ -4822,15 +4808,7 @@ public static partial class BridgeCommandFactory
     private const int SnapshotDefaultBudgetMs = 20000;
 
     private static int ReadSnapshotInt(JsonElement payload, string name, int fallback, int min, int max)
-    {
-        if (payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty(name, out var el)
-            && el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out var v))
-        {
-            return Math.Max(min, Math.Min(max, v));
-        }
-
-        return fallback;
-    }
+        => PayloadJson.ClampedInt(payload, name, fallback, min, max);
 
     private static List<BuiltInCategory> ReadSnapshotCategories(JsonElement payload, List<string> unknown)
     {

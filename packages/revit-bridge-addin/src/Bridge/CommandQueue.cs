@@ -61,6 +61,7 @@ public class CommandQueue
     // times ran three times in a row and froze Revit.
     private readonly ConcurrentDictionary<string, byte> _inflight = new();
     private long _finishedBytes;
+    private readonly Func<DateTime> _utcNow = () => DateTime.UtcNow;
 
     /// <summary>How long a finished result stays retrievable by request id.</summary>
     public TimeSpan ResultTtl { get; } = TimeSpan.FromSeconds(EnvInt("AEC_BRIDGE_RESULT_TTL_SECONDS", 900, 30, 86400));
@@ -69,6 +70,20 @@ public class CommandQueue
     /// <summary>Finished results are kept in memory up to this many entries and bytes (oldest go first).</summary>
     public int MaxFinishedEntries { get; } = EnvInt("AEC_BRIDGE_RESULT_MAX_ENTRIES", 500, 10, 100000);
     public long MaxFinishedBytes { get; } = EnvInt("AEC_BRIDGE_RESULT_MAX_MB", 64, 1, 1024) * 1024L * 1024L;
+
+    public CommandQueue()
+    {
+    }
+
+    /// <summary>For tests: explicit limits and a clock, so expiry can be checked without waiting.</summary>
+    internal CommandQueue(TimeSpan resultTtl, TimeSpan abandonAfter, int maxFinishedEntries, long maxFinishedBytes, Func<DateTime> utcNow)
+    {
+        ResultTtl = resultTtl;
+        AbandonAfter = abandonAfter;
+        MaxFinishedEntries = maxFinishedEntries;
+        MaxFinishedBytes = maxFinishedBytes;
+        _utcNow = utcNow;
+    }
 
     public int Count
     {
@@ -79,17 +94,17 @@ public class CommandQueue
     {
         lock (_sync)
         {
-            Sweep(DateTime.UtcNow);
+            Sweep(_utcNow());
 
             if (_entries.TryGetValue(request.RequestId, out var existing))
             {
                 // Same id again: a retry. Finished work is answered from the stored result, never re-run.
-                existing.LastTouchedUtc = DateTime.UtcNow;
+                existing.LastTouchedUtc = _utcNow();
                 if (existing.IsFinished) return;
             }
             else
             {
-                var now = DateTime.UtcNow;
+                var now = _utcNow();
                 _entries[request.RequestId] = new Entry
                 {
                     RequestId = request.RequestId,
@@ -134,7 +149,7 @@ public class CommandQueue
         {
             return _entries.TryGetValue(requestId, out var entry)
                 && !entry.IsFinished
-                && DateTime.UtcNow - entry.LastTouchedUtc <= AbandonAfter;
+                && _utcNow() - entry.LastTouchedUtc <= AbandonAfter;
         }
     }
 
@@ -145,7 +160,7 @@ public class CommandQueue
             if (_entries.TryGetValue(requestId, out var entry) && !entry.IsFinished)
             {
                 entry.State = "running";
-                entry.StartedUtc = DateTime.UtcNow;
+                entry.StartedUtc = _utcNow();
             }
         }
     }
@@ -173,7 +188,7 @@ public class CommandQueue
             _inflight.TryRemove(requestId, out _);
             if (!_entries.TryGetValue(requestId, out var entry) || entry.IsFinished) return;
 
-            var now = DateTime.UtcNow;
+            var now = _utcNow();
             entry.State = response.Status == "ok" ? "done" : "failed";
             entry.FinishedUtc = now;
             entry.ResponseJson = json;
@@ -190,7 +205,7 @@ public class CommandQueue
         lock (_sync)
         {
             if (!_entries.TryGetValue(requestId, out var entry)) return null;
-            entry.LastTouchedUtc = DateTime.UtcNow;
+            entry.LastTouchedUtc = _utcNow();
             finished = entry.Finished.Task;
         }
 
@@ -208,8 +223,8 @@ public class CommandQueue
         lock (_sync)
         {
             if (!_entries.TryGetValue(requestId, out var entry)) return null;
-            entry.LastTouchedUtc = DateTime.UtcNow;
-            return ToSnapshot(entry, DateTime.UtcNow);
+            entry.LastTouchedUtc = _utcNow();
+            return ToSnapshot(entry, _utcNow());
         }
     }
 
@@ -218,7 +233,7 @@ public class CommandQueue
     {
         lock (_sync)
         {
-            var now = DateTime.UtcNow;
+            var now = _utcNow();
             var running = _entries.Values.FirstOrDefault(e => e.State == "running");
             return running == null ? null : ToSnapshot(running, now);
         }

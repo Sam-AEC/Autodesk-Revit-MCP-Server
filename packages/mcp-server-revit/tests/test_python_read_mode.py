@@ -26,7 +26,7 @@ from revit_mcp_server.security.read_mode import (
 from revit_mcp_server.security.workspace import WorkspaceMonitor
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-PROVIDER_SOURCE = REPO_ROOT / "packages" / "revit-bridge-addin" / "src" / "Bridge" / "PythonScriptRunner.cs"
+PROVIDER_SOURCE = REPO_ROOT / "packages" / "revit-bridge-addin" / "src" / "Bridge" / "ReadModeRules.cs"
 
 AUDIT_SCRIPT = (
     "from Autodesk.Revit.DB import FilteredElementCollector, BuiltInCategory\n"
@@ -198,7 +198,7 @@ def test_python_and_addin_forbidden_token_lists_agree():
     """The add-in repeats the Python rules; a rule added on one side must be added on the other."""
     source = PROVIDER_SOURCE.read_text(encoding="utf-8")
     for name, _pattern in read_mode.FORBIDDEN_IN_READ_MODE:
-        assert re.search(rf'"{re.escape(name)}"', source), f"{name} missing from PythonScriptRunner.cs"
+        assert re.search(rf'"{re.escape(name)}"', source), f"{name} missing from ReadModeRules.cs"
 
 
 def test_look_only_mode_still_allows_read_mode_scripts_but_not_write_scripts(stack):

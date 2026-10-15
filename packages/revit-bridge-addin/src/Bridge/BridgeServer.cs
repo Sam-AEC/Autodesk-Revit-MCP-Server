@@ -303,32 +303,7 @@ public class BridgeServer
 
     private void ValidatePayloadPaths(JsonElement element)
     {
-        if (element.ValueKind == JsonValueKind.Object)
-        {
-            foreach (var property in element.EnumerateObject())
-            {
-                var name = property.Name.ToLower();
-                if (property.Value.ValueKind == JsonValueKind.String)
-                {
-                    var val = property.Value.GetString();
-                    if (!string.IsNullOrEmpty(val) && (name.Contains("path") || name.Contains("file")))
-                    {
-                        _workspaceMonitor.AssertInWorkspace(val);
-                    }
-                }
-                else
-                {
-                    ValidatePayloadPaths(property.Value);
-                }
-            }
-        }
-        else if (element.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in element.EnumerateArray())
-            {
-                ValidatePayloadPaths(item);
-            }
-        }
+        PayloadPathValidator.Validate(element, _workspaceMonitor.AssertInWorkspace);
     }
 
     private Task HandleHealth(HttpListenerContext context)
