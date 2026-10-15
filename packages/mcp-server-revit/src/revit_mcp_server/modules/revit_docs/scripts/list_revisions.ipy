@@ -1,0 +1,37 @@
+# revit_list_revisions (read only).
+# ARGS = {only_open}
+# One ROW per revision in sequence order: id, sequence, number, date, description, issued, issued_by, issued_to, visibility,
+# clouds (revision clouds in any view), sheets (sheets that show the revision). Revisions that are not issued are the open ones.
+
+
+def main():
+    doc_meta()
+    only_open = bool(ARGS.get("only_open"))
+    clouds = {}
+    for c in FilteredElementCollector(doc).OfClass(RevisionCloud):
+        clouds[eid(c.RevisionId)] = clouds.get(eid(c.RevisionId), 0) + 1
+    on_sheets = {}
+    for s in FilteredElementCollector(doc).OfClass(ViewSheet):
+        for rid in revision_ids_on(s):
+            on_sheets[rid] = on_sheets.get(rid, 0) + 1
+    total = 0
+    issued = 0
+    shown = 0
+    for r in all_revisions():
+        total += 1
+        if r.Issued:
+            issued += 1
+        if only_open and r.Issued:
+            continue
+        shown += 1
+        row([
+            ("kind", "revision"), ("id", eid(r)), ("sequence", r.SequenceNumber), ("number", r.RevisionNumber), ("date", r.RevisionDate),
+            ("name", r.Description), ("issued", 1 if r.Issued else 0), ("issued_by", r.IssuedBy), ("issued_to", r.IssuedTo),
+            ("visibility", str(r.Visibility)), ("clouds", clouds.get(eid(r), 0)), ("sheets", on_sheets.get(eid(r), 0)),
+        ])
+    meta("n_revisions", total)
+    meta("n_issued", issued)
+    summary("%d revisions in the document (%d issued, %d open); %d rows match" % (total, issued, total - issued, shown))
+
+
+__output__ = run_main(main)

@@ -1,0 +1,140 @@
+# revit_add_revision_clouds (write mode).
+# ARGS = {revision_id, revision_number, view: {view_id | view_name}, element_ids, bbox_m: {min:[x,y,z], max:[x,y,z]},
+#         per_element, margin_mm, on_error, dry_run}
+# Draws rectangular revision clouds in one plan or section view, around elements (their bounding box as seen in that view)
+# and/or a model-space box. per_element false (default): one cloud around everything; true: one cloud per element, plus one for
+# bbox_m. The rectangle is measured on the view's own right/up axes, so it also fits section and elevation views. Nothing is
+# moved or deleted. Each cloud is its own transaction and is read back (revision, view). An issued revision is refused.
+CLOUD_VIEWS = (ViewPlan, ViewSection)
+
+
+def corners(lo, hi):
+    out = []
+    for x in (lo[0], hi[0]):
+        for y in (lo[1], hi[1]):
+            for z in (lo[2], hi[2]):
+                out.append((x, y, z))
+    return out
+
+
+def to_view_rect(points, view, margin):
+    o = view.Origin
+    r = view.RightDirection
+    u = view.UpDirection
+    us = []
+    vs = []
+    for p in points:
+        dx, dy, dz = p[0] - o.X, p[1] - o.Y, p[2] - o.Z
+        us.append(dx * r.X + dy * r.Y + dz * r.Z)
+        vs.append(dx * u.X + dy * u.Y + dz * u.Z)
+    return (min(us) - margin, min(vs) - margin, max(us) + margin, max(vs) + margin)
+
+
+def cloud_curves(rect, view):
+    o = view.Origin
+    r = view.RightDirection
+    u = view.UpDirection
+
+    def at(a, b):
+        return XYZ(o.X + a * r.X + b * u.X, o.Y + a * r.Y + b * u.Y, o.Z + a * r.Z + b * u.Z)
+
+    p = [at(rect[0], rect[1]), at(rect[2], rect[1]), at(rect[2], rect[3]), at(rect[0], rect[3])]
+    curves = List[Curve]()
+    for i in range(4):
+        curves.Add(Line.CreateBound(p[i], p[(i + 1) % 4]))
+    return curves
+
+
+def main():
+    doc_meta()
+    rev, why = resolve_revision(ARGS.get("revision_id"), ARGS.get("revision_number"))
+    if rev is None:
+        refuse("revision_not_found", why)
+        return
+    if rev.Issued:
+        refuse("revision_issued", "revision %s '%s' (id %d) is issued, and Revit does not allow new clouds on an issued revision; add a new revision first (revit_add_revision)" % (rev.RevisionNumber, rev.Description, eid(rev)), [eid(rev)])
+        return
+    view, why = resolve_view(ARGS["view"], "view")
+    if view is None:
+        refuse("view_not_found", why)
+        return
+    if view.IsTemplate or not isinstance(view, CLOUD_VIEWS):
+        refuse("view_not_supported", "%s is a %s; clouds are drawn in plan, section and elevation views" % (vlabel(view), view_type_text(view)), [eid(view)])
+        return
+    margin = ARGS["margin_mm"] / MM_PER_FT
+
+    groups = []
+    elem_points = []
+    missing = []
+    for i in ARGS.get("element_ids") or []:
+        e = get_by_id(i)
+        if e is None:
+            missing.append(i)
+            continue
+        bb = e.get_BoundingBox(view)
+        if bb is None:
+            missing.append(i)
+            continue
+        pts = corners((bb.Min.X, bb.Min.Y, bb.Min.Z), (bb.Max.X, bb.Max.Y, bb.Max.Z))
+        elem_points.extend(pts)
+        groups.append(("element %d" % i, pts))
+    if missing:
+        refuse("element_not_in_view", "%d element(s) do not exist or have no extent in view %s (not visible there): %s" % (len(missing), vlabel(view), ",".join([str(m) for m in missing[:20]])), missing)
+        return
+    box_points = []
+    if ARGS.get("bbox_m"):
+        lo = [c / FT_TO_M for c in ARGS["bbox_m"]["min"]]
+        hi = [c / FT_TO_M for c in ARGS["bbox_m"]["max"]]
+        box_points = corners(lo, hi)
+    if ARGS.get("per_element"):
+        targets = list(groups)
+        if box_points:
+            targets.append(("box", box_points))
+    else:
+        label = "%d element(s)" % len(groups) if groups else "box"
+        if groups and box_points:
+            label = "%d element(s) and box" % len(groups)
+        targets = [(label, elem_points + box_points)]
+
+    rects = []
+    for label, pts in targets:
+        rect = to_view_rect(pts, view, margin)
+        if rect[2] - rect[0] < 1.0 / MM_PER_FT or rect[3] - rect[1] < 1.0 / MM_PER_FT:
+            refuse("empty_extent", "the cloud around %s would be thinner than 1 mm; raise margin_mm" % label)
+            return
+        rects.append((label, rect))
+
+    sheets_of_view = [sheet_number_of(vp) for vp in viewports_by_view().get(eid(view), [])]
+    if not sheets_of_view and not is_legend(view):
+        info("VIEW_NOT_ON_SHEET", "view %s is not on a sheet, so the revision will not show on any sheet until the view is placed" % vlabel(view))
+
+    run = Runner("AEC add revision clouds", ARGS.get("on_error"))
+    made = []
+    for label, rect in rects:
+        def work(rect=rect):
+            return RevisionCloud.Create(doc, view, rev, cloud_curves(rect, view))
+
+        cloud = run.step("Add revision cloud around %s in view '%s'" % (label, view.Name), work, ids=[eid(view), eid(rev)])
+        if cloud is not None:
+            made.append((label, rect, eid(cloud)))
+
+    for label, rect, cid in made:
+        got = get_by_id(cid)
+        ok = got is not None and isinstance(got, RevisionCloud)
+        post("cloud_exists", ok, "revision cloud id %d around %s" % (cid, label))
+        if not ok:
+            continue
+        post("cloud_revision", eid(got.RevisionId) == eid(rev), "cloud %d belongs to revision id %d (expected %d)" % (cid, eid(got.RevisionId), eid(rev)))
+        post("cloud_view", eid(got.OwnerViewId) == eid(view), "cloud %d is in view id %d (expected %d)" % (cid, eid(got.OwnerViewId), eid(view)))
+        run.changed.append(cid)
+        item([("kind", "cloud"), ("id", cid), ("view_id", eid(view)), ("revision_id", eid(rev)), ("name", label), ("sheet", ",".join(sheets_of_view)),
+              ("width_mm", mm(rect[2] - rect[0])), ("height_mm", mm(rect[3] - rect[1])), ("status", "created")])
+    if made:
+        for vp in viewports_by_view().get(eid(view), []):
+            sh = doc.GetElement(vp.SheetId)
+            if sh is not None:
+                post("revision_on_sheet", eid(rev) in revision_ids_on(sh), "revision %s %s on sheet %s" % (rev.RevisionNumber, "is listed" if eid(rev) in revision_ids_on(sh) else "is NOT listed", sh.SheetNumber))
+    summary("added %d of %d revision clouds for revision %s in view '%s' (cloud ids %s)" % (len(made), len(rects), rev.RevisionNumber, view.Name, ",".join([str(m[2]) for m in made]) or "none"))
+
+
+__output__ = run_write(main)
