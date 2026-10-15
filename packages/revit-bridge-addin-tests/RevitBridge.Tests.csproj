@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Tests for the add-in logic that has no Revit types. Source files are linked in below, so
+       this project never references the Autodesk assemblies and never ships with the add-in.
+       Run: dotnet test packages/revit-bridge-addin-tests -p:RevitVersion=2024 -->
+  <PropertyGroup>
+    <RevitVersion Condition="'$(RevitVersion)'==''">2024</RevitVersion>
+    <TargetFramework Condition="'$(RevitVersion)' == '2024'">net48</TargetFramework>
+    <TargetFramework Condition="'$(RevitVersion)' == '2025' OR '$(RevitVersion)' == '2026'">net8.0</TargetFramework>
+    <TargetFramework Condition="'$(RevitVersion)' == '2027'">net10.0</TargetFramework>
+    <RootNamespace>RevitBridge.Tests</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <OutputPath>bin\$(Configuration)\$(RevitVersion)\</OutputPath>
+  </PropertyGroup>
+
+  <!-- Lets the tests find the repository when the build output is somewhere else (for example C:	mp). -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>RepoRoot</_Parameter1>
+      <_Parameter2>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..'))</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageReference Include="System.Text.Json" Version="6.0.10" Condition="'$(TargetFramework)'=='net48'" />
+  </ItemGroup>
+
+  <!-- Add-in sources that do not touch the Revit API. Add a file here only if it compiles without Autodesk types. -->
+  <ItemGroup>
+    <Compile Include="..\revit-bridge-addin\src\Bridge\CommandQueue.cs" Link="Linked\CommandQueue.cs" />
+    <Compile Include="..\revit-bridge-addin\src\Bridge\ReadModeRules.cs" Link="Linked\ReadModeRules.cs" />
+    <Compile Include="..\revit-bridge-addin\src\Bridge\PayloadPathValidator.cs" Link="Linked\PayloadPathValidator.cs" />
+    <Compile Include="..\revit-bridge-addin\src\Bridge\PayloadJson.cs" Link="Linked\PayloadJson.cs" />
+    <Compile Include="..\revit-bridge-addin\src\Bridge\BridgeFailureText.cs" Link="Linked\BridgeFailureText.cs" />
+    <Compile Include="..\revit-bridge-addin\src\Bridge\WorkspaceMonitor.cs" Link="Linked\WorkspaceMonitor.cs" />
+    <Compile Include="..\revit-bridge-addin\src\Bridge\WorkspaceDirectory.cs" Link="Linked\WorkspaceDirectory.cs" />
+  </ItemGroup>
+</Project>
