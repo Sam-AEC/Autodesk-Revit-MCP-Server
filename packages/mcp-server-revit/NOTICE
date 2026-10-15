@@ -1,1 +1,35 @@
 Required Notice: Copyright 2025-2026 A. Sam Mohammad and AEC Model Bridge contributors.
+
+AEC Model Bridge is licensed under GPL-3.0-or-later with the Revit Linking
+Exception, or under a commercial licence. See LICENSING.md.
+
+Third-party components
+----------------------
+AEC Model Bridge uses third-party software under its own licences. The list,
+with versions and licences read from package metadata, is in
+THIRD_PARTY_NOTICES.md
+(https://github.com/Sam-AEC/aec-model-bridge/blob/main/THIRD_PARTY_NOTICES.md).
+Entries marked "unverified" there could not be confirmed from metadata.
+
+IfcOpenShell (LGPL-3.0-or-later)
+--------------------------------
+The Windows installer bundles IfcOpenShell, which is licensed under the GNU
+Lesser General Public License, version 3 or later.
+
+- Licence text: the LGPL-3.0 text is in the LICENSES folder next to this file
+  (LICENSES/LGPL-3.0.txt). The GPL-3.0 text is in the LICENSE file.
+- Corresponding source: IfcOpenShell is not modified by this project. Its source
+  code is available from https://github.com/IfcOpenShell/IfcOpenShell and from
+  the source distribution of the same version on https://pypi.org/project/ifcopenshell/.
+  The version in use is shown in THIRD_PARTY_NOTICES.md and in the
+  ifcopenshell-*.dist-info folder of the installed Python. If you cannot
+  obtain it from those places, open an issue at
+  https://github.com/Sam-AEC/aec-model-bridge/issues and we will help.
+- Replacing the library: IfcOpenShell is installed as ordinary Python files in
+  the bundled Python (python\Lib\site-packages\ifcopenshell), not compiled into
+  an executable. You can replace it with a modified or newer version, for
+  example with "python.exe -m pip install --upgrade ifcopenshell" using the
+  python.exe in the install folder.
+
+Autodesk and Revit are trademarks of the Autodesk group of companies. See
+TRADEMARKS.md. The Revit and Navisworks API assemblies are not distributed.
