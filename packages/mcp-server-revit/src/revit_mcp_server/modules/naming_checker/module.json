@@ -1,0 +1,60 @@
+{
+  "id": "naming_checker",
+  "name": "Naming Checker",
+  "version": "1.0.0",
+  "schema_version": 1,
+  "min_hub_version": "1.2.0",
+  "description": "Checks file names, sheet numbers and names, view names and level/grid names against a naming convention you provide (a pattern of named fields with allowed values per field). Read-only; it does not ship or assume any standard or national code list.",
+  "author": "AEC Model Bridge",
+  "license": "GPL-3.0-or-later",
+  "requires_providers": ["revit"],
+  "permissions": ["model.read"],
+  "commands": [
+    {
+      "id": "check_names",
+      "title": "Check Names Against Your Convention",
+      "surface": ["mcp", "panel"],
+      "execution_mode": "sync",
+      "is_mutating": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "convention": {
+            "type": "object",
+            "description": "Your naming convention: {\"pattern\": \"{project}-{originator}-{number}\", \"fields\": {\"project\": {\"allowed\": [\"PRJ1\"]}, \"number\": {\"regex\": \"[0-9]{4}\"}}}. To use different patterns for different kinds of names, give {\"by_kind\": {\"file_names\": {...}, \"level_names\": {...}}} instead."
+          },
+          "convention_file": {
+            "type": "string",
+            "description": "Name of a bundled example convention (see list_example_conventions) or a path to a convention JSON file inside the workspace. Used only when 'convention' is not given."
+          },
+          "names": {
+            "type": "object",
+            "description": "The names to check, as lists under any of: file_names, sheet_numbers, sheet_names, view_names, level_names, grid_names. Example: {\"file_names\": [\"PRJ1-ABC-ZZ-00-M3-A-0001\"]}."
+          },
+          "snapshot_id": {
+            "type": "string",
+            "description": "Optional saved snapshot to read sheets, views, levels, grids and the document title from, in addition to any names given."
+          },
+          "kinds": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Optional: only check these kinds (file_names, sheet_numbers, sheet_names, view_names, level_names, grid_names). Default is every kind that has names and a convention."
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "id": "list_example_conventions",
+      "title": "List Example Conventions",
+      "surface": ["mcp", "panel"],
+      "execution_mode": "sync",
+      "is_mutating": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  ]
+}

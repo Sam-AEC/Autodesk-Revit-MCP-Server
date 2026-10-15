@@ -89,6 +89,8 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `model_inspector_save_query` | Save a named filter query so it can be re-run later with model_inspector_run_saved_query. | No | sync |
 | `model_inspector_summarize_model` | Summarise a saved snapshot, for example element counts by category. | No | sync |
 | `module_list_commands` | List all registered modules and the commands they expose to the dockable Revit panel. | No | sync |
+| `naming_checker_check_names` | Check file names, sheet numbers and names, view names and level or grid names against the naming convention you provide (a pattern of named fields with allowed values per field). | No | sync |
+| `naming_checker_list_example_conventions` | List the bundled example naming conventions. | No | sync |
 | `parameter_manager_diff_params` | Compare parameter values between two saved snapshots and list the differences. | No | sync |
 | `parameter_manager_export_params_csv` | Export parameters of the matching snapshot elements to a CSV file in the workspace. | No | sync |
 | `parameter_manager_filter_params` | Return a parameter grid for the elements of a snapshot that match a filter, optionally including read-only parameters. | No | sync |

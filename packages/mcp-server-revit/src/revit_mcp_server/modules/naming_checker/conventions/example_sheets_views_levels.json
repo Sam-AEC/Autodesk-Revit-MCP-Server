@@ -1,0 +1,41 @@
+{
+  "label": "EXAMPLE ONLY - not the ISO 19650 standard and not a national annex",
+  "note": "Placeholder rules for sheets, views, levels and grids, to show the file format. Replace them with your own project's conventions.",
+  "by_kind": {
+    "sheet_numbers": {
+      "pattern": "{discipline}-{series}-{number}",
+      "fields": {
+        "discipline": {"allowed": ["A", "S", "M"]},
+        "series": {"allowed": ["GA", "DT", "SC"]},
+        "number": {"regex": "[0-9]{3}"}
+      }
+    },
+    "sheet_names": {
+      "pattern": "{discipline} - {title}",
+      "fields": {
+        "discipline": {"allowed": ["Architecture", "Structure", "Mechanical"]},
+        "title": {"regex": ".+", "description": "Any non-empty title"}
+      }
+    },
+    "view_names": {
+      "pattern": "{purpose}_{level}_{description}",
+      "fields": {
+        "purpose": {"allowed": ["WORK", "COORD", "PRES"]},
+        "level": {"regex": "L[0-9]{2}"},
+        "description": {"regex": "[A-Za-z0-9 ]+"}
+      }
+    },
+    "level_names": {
+      "pattern": "L{number}",
+      "fields": {
+        "number": {"regex": "[0-9]{2}"}
+      }
+    },
+    "grid_names": {
+      "pattern": "{name}",
+      "fields": {
+        "name": {"regex": "[A-Z]|[0-9]{1,2}", "description": "One capital letter or a one/two digit number"}
+      }
+    }
+  }
+}

@@ -157,6 +157,8 @@ DESCRIPTIONS: dict[str, str] = {
     "model_inspector_save_query": "Save a named filter query so it can be re-run later with model_inspector_run_saved_query.",
     "model_inspector_run_saved_query": "Run a previously saved named query against a saved snapshot. Read-only.",
     "model_inspector_list_saved_queries": "List the saved named queries. Read-only.",
+    "naming_checker_check_names": "Check file names, sheet numbers and names, view names and level or grid names against the naming convention you provide (a pattern of named fields with allowed values per field). Reports pass or fail per name, which field failed and why, and a count summary. Read-only.",
+    "naming_checker_list_example_conventions": "List the bundled example naming conventions. They use placeholder codes only and are not a standard. Read-only.",
     "parameter_manager_filter_params": "Return a parameter grid for the elements of a snapshot that match a filter, optionally including read-only parameters. Read-only.",
     "parameter_manager_diff_params": "Compare parameter values between two saved snapshots and list the differences. Read-only.",
     "parameter_manager_plan_set_params": "Create a draft ActionPlan that sets parameter values on the elements of a snapshot matching a filter. Review and approve the plan before it runs.",

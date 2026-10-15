@@ -1,0 +1,18 @@
+{
+  "label": "EXAMPLE ONLY - not the ISO 19650 standard and not a national annex",
+  "note": "Every code below is a made-up placeholder to show the file format. Replace the pattern and the allowed lists with your own project's naming convention before relying on any result.",
+  "by_kind": {
+    "file_names": {
+      "pattern": "{project}-{originator}-{volume}-{level}-{type}-{role}-{number}",
+      "fields": {
+        "project": {"allowed": ["PRJ1"], "description": "Placeholder project code"},
+        "originator": {"allowed": ["ABC", "XYZ"], "description": "Placeholder originator codes"},
+        "volume": {"allowed": ["ZZ", "B1", "B2"], "description": "Placeholder volume/system codes"},
+        "level": {"allowed": ["00", "01", "02", "ZZ"], "description": "Placeholder level codes"},
+        "type": {"allowed": ["M3", "DR", "SP"], "description": "Placeholder document type codes"},
+        "role": {"allowed": ["A", "S", "M"], "description": "Placeholder role codes"},
+        "number": {"regex": "[0-9]{4}", "description": "Four-digit sequence number"}
+      }
+    }
+  }
+}

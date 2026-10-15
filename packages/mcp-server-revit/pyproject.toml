@@ -64,6 +64,7 @@ revit_mcp_server = [
     "modules/*/module.json",
     "modules/*/rules/*.yaml",
     "modules/*/recipes/*.yaml",
+    "modules/*/conventions/*.json",
 ]
 
 [tool.pytest.ini_options]
