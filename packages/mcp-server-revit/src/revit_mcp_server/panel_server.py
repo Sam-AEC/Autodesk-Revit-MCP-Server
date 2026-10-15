@@ -15,6 +15,7 @@ reach the hub.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -35,6 +36,13 @@ from .security.workspace import WorkspaceMonitor
 logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 8787
+
+# Per-launch bearer token. The add-in generates it, passes it to the hub it
+# launches through this env var, and sends it as ``Authorization: Bearer``.
+# When unset (a hand-started hub) token auth is OFF; the Host / Origin /
+# Content-Type checks below still apply.
+TOKEN_ENV_VAR = "MCP_PANEL_HTTP_TOKEN"
+OPEN_PATHS = {"/health"}
 
 # report_generator writes exports directly to the workspace root (see
 # modules/report_generator/module.py's _ws_dir). Other modules keep their own
@@ -138,6 +146,7 @@ class PanelRequestHandler(BaseHTTPRequestHandler):
     registry = None
     approval_provider = None
     workspace = None
+    token: str | None = None
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         logger.debug("panel_server: " + format, *args)
@@ -150,9 +159,51 @@ class PanelRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _authorize(self, is_post: bool) -> bool:
+        """Reject browser-originated and unauthenticated requests.
+
+        The only legitimate caller is the add-in's C# HttpClient, which sends
+        no Origin header (the WebView2 panel never calls this server directly;
+        it talks to C# over the WebView2 message bridge). So *any* Origin
+        header means a browser page made the request and is refused,
+        including ``Origin: null``. Sends the error response and returns
+        False when the request must not proceed.
+        """
+        port = self.server.server_address[1]
+        allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        host = (self.headers.get("Host") or "").strip().lower()
+        if host not in allowed_hosts:
+            # Blocks DNS rebinding: attacker.example resolving to 127.0.0.1
+            # still sends Host: attacker.example.
+            self._send_json(403, {"ok": False, "error": "Forbidden host"})
+            return False
+        if self.headers.get("Origin") is not None:
+            self._send_json(403, {"ok": False, "error": "Cross-origin requests are not allowed"})
+            return False
+        path = self.path.split("?", 1)[0]
+        if self.token and path not in OPEN_PATHS:
+            auth = self.headers.get("Authorization") or ""
+            scheme, _, supplied = auth.partition(" ")
+            if scheme.lower() != "bearer" or not hmac.compare_digest(
+                supplied.strip().encode("utf-8"), self.token.encode("utf-8")
+            ):
+                self._send_json(401, {"ok": False, "error": "Missing or invalid bearer token"})
+                return False
+        if is_post:
+            ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if ctype != "application/json":
+                # Non-JSON types are CORS "simple requests" a web page can send
+                # without a preflight; requiring JSON forces a preflight, and
+                # this server answers no OPTIONS.
+                self._send_json(415, {"ok": False, "error": "Content-Type must be application/json"})
+                return False
+        return True
+
     def do_GET(self) -> None:  # noqa: N802
+        if not self._authorize(is_post=False):
+            return
         if self.path == "/health":
-            self._send_json(200, {"status": "healthy", "tools": len(self.registry.get_all_tools())})
+            self._send_json(200, {"status": "healthy"})
             return
         if self.path == "/diagnostics":
             self._send_json(200, collect_diagnostics(self.workspace.allowed_directories[0]))
@@ -192,6 +243,8 @@ class PanelRequestHandler(BaseHTTPRequestHandler):
         self._send_json(200, {"ok": True, "reports": reports})
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self._authorize(is_post=True):
+            return
         if self.path == "/agent/chat":
             self._handle_agent_chat()
             return
@@ -275,13 +328,18 @@ class PanelRequestHandler(BaseHTTPRequestHandler):
         self._send_json(200 if result.get("ok") else 502, result)
 
 
-def build_server(port: int | None = None, workspace: WorkspaceMonitor | None = None) -> ThreadingHTTPServer:
+def build_server(
+    port: int | None = None,
+    workspace: WorkspaceMonitor | None = None,
+    token: str | None = None,
+) -> ThreadingHTTPServer:
     registry, approval_provider, _job_manager, _module_registry, resolved_workspace = build_registry(workspace=workspace)
 
     handler = type("BoundPanelRequestHandler", (PanelRequestHandler,), {
         "registry": registry,
         "approval_provider": approval_provider,
         "workspace": resolved_workspace,
+        "token": token if token is not None else (os.getenv(TOKEN_ENV_VAR) or None),
     })
 
     resolved_port = port if port is not None else int(os.getenv("MCP_PANEL_HTTP_PORT", str(DEFAULT_PORT)))

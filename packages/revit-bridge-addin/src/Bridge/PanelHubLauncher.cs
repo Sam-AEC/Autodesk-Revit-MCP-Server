@@ -34,6 +34,32 @@ public sealed class PanelHubLauncher
 
     private Process? _launchedProcess;
 
+    /// <summary>
+    /// Per-launch bearer token for the hub's panel HTTP shim (env
+    /// MCP_PANEL_HTTP_TOKEN). Uses an operator-supplied value if one is already
+    /// set in this process's environment (so a hand-started hub with the same
+    /// variable keeps working), otherwise a fresh random one. HubClient sends it
+    /// as "Authorization: Bearer" on every request. Kept in memory only.
+    /// </summary>
+    internal static string HubToken { get; } = CreateToken();
+
+    private static string CreateToken()
+    {
+        var existing = Environment.GetEnvironmentVariable("MCP_PANEL_HTTP_TOKEN");
+        if (!string.IsNullOrWhiteSpace(existing))
+        {
+            return existing!;
+        }
+
+        var bytes = new byte[32];
+        using (var rng = System.Security.Cryptography.RandomNumberGenerator.Create())
+        {
+            rng.GetBytes(bytes);
+        }
+
+        return BitConverter.ToString(bytes).Replace("-", string.Empty).ToLowerInvariant();
+    }
+
     private static int Port
     {
         get
@@ -97,6 +123,8 @@ public sealed class PanelHubLauncher
             var defaultWorkspace = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
             SetEnvironmentDefault(startInfo, "MCP_REVIT_WORKSPACE_DIR", defaultWorkspace);
             SetEnvironmentDefault(startInfo, "MCP_REVIT_ALLOWED_DIRECTORIES", defaultWorkspace);
+
+            startInfo.EnvironmentVariables["MCP_PANEL_HTTP_TOKEN"] = HubToken;
 
             _launchedProcess = Process.Start(startInfo);
             Log.Information("Launched panel hub via '{Interpreter} -m revit_mcp_server.panel_server' (pid {Pid})",

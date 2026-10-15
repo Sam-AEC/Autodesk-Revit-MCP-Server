@@ -60,7 +60,6 @@ def test_health_reports_tool_count(running_server):
     status, body = _get(running_server, "/health")
     assert status == 200
     assert body["status"] == "healthy"
-    assert body["tools"] > 100  # ~218 across all providers/modules
 
 
 def test_execute_runs_a_real_readonly_tool(running_server):
@@ -340,3 +339,130 @@ def test_diagnostics_reports_missing_revit_bridge(running_server, monkeypatch):
     checks = {c["id"]: c for c in body["checks"]}
     assert checks["revit_bridge"]["ok"] is False
     assert "add-in" in checks["revit_bridge"]["next_step"]
+
+
+# --- Browser / DNS-rebinding / token hardening -----------------------------
+
+TOKEN = "test-token-123"
+
+
+@pytest.fixture
+def secured_server(tmp_path):
+    workspace = WorkspaceMonitor([tmp_path])
+    server = build_server(port=0, workspace=workspace, token=TOKEN)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+    try:
+        yield port
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def _raw(port, method, path, headers=None, body=None):
+    """Request with full header control (urllib would override Host)."""
+    import http.client
+
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        conn.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
+        hdrs = {"Host": f"127.0.0.1:{port}"}
+        hdrs.update(headers or {})
+        data = body.encode("utf-8") if body is not None else None
+        if data is not None:
+            hdrs["Content-Length"] = str(len(data))
+        for k, v in hdrs.items():
+            conn.putheader(k, v)
+        conn.endheaders(data)
+        resp = conn.getresponse()
+        return resp.status, json.loads(resp.read() or b"{}")
+    finally:
+        conn.close()
+
+
+AUTH = {"Authorization": f"Bearer {TOKEN}"}
+JSON_AUTH = {**AUTH, "Content-Type": "application/json"}
+EXEC_BODY = json.dumps({"tool": "list_pending_plans", "arguments": {}})
+
+
+def test_post_requires_json_content_type(secured_server):
+    for ctype in ("text/plain", "application/x-www-form-urlencoded", "multipart/form-data"):
+        status, _ = _raw(secured_server, "POST", "/execute", {**AUTH, "Content-Type": ctype}, EXEC_BODY)
+        assert status == 415, ctype
+    status, _ = _raw(secured_server, "POST", "/execute", AUTH, EXEC_BODY)  # none at all
+    assert status == 415
+
+
+def test_json_content_type_with_charset_is_accepted(secured_server):
+    status, body = _raw(
+        secured_server, "POST", "/execute",
+        {**AUTH, "Content-Type": "application/json; charset=utf-8"}, EXEC_BODY,
+    )
+    assert status == 200 and body["ok"] is True
+
+
+@pytest.mark.parametrize("host", ["evil.example", "evil.example:%d", "127.0.0.1", "localhost:1", "127.0.0.1.evil.example:%d"])
+def test_bad_host_rejected_including_dns_rebinding(secured_server, host):
+    host = host.replace("%d", str(secured_server))
+    status, _ = _raw(secured_server, "POST", "/execute", {**JSON_AUTH, "Host": host}, EXEC_BODY)
+    assert status == 403
+    status, _ = _raw(secured_server, "GET", "/health", {"Host": host})
+    assert status == 403
+
+
+def test_localhost_host_is_allowed(secured_server):
+    status, _ = _raw(secured_server, "GET", "/health", {"Host": f"localhost:{secured_server}"})
+    assert status == 200
+
+
+@pytest.mark.parametrize("origin", ["https://evil.example", "null", "http://127.0.0.1", "http://localhost:8787"])
+def test_any_origin_rejected(secured_server, origin):
+    status, _ = _raw(secured_server, "POST", "/execute", {**JSON_AUTH, "Origin": origin}, EXEC_BODY)
+    assert status == 403
+    status, _ = _raw(secured_server, "GET", "/diagnostics", {**AUTH, "Origin": origin})
+    assert status == 403
+    status, _ = _raw(secured_server, "GET", "/health", {"Origin": origin})
+    assert status == 403
+
+
+def test_missing_or_wrong_token_rejected(secured_server):
+    status, _ = _raw(secured_server, "POST", "/execute", {"Content-Type": "application/json"}, EXEC_BODY)
+    assert status == 401
+    for bad in ("Bearer wrong", "Bearer ", f"Basic {TOKEN}", TOKEN, f"Bearer {TOKEN}x"):
+        status, _ = _raw(
+            secured_server, "POST", "/execute",
+            {"Authorization": bad, "Content-Type": "application/json"}, EXEC_BODY,
+        )
+        assert status == 401, bad
+    for path in ("/diagnostics", "/reports", "/agent/providers"):
+        assert _raw(secured_server, "GET", path)[0] == 401, path
+    status, _ = _raw(secured_server, "POST", "/agent/chat", {"Content-Type": "application/json"}, "{}")
+    assert status == 401
+
+
+def test_correct_token_works(secured_server):
+    status, body = _raw(secured_server, "POST", "/execute", JSON_AUTH, EXEC_BODY)
+    assert status == 200 and body["ok"] is True
+    assert _raw(secured_server, "GET", "/reports", AUTH)[0] == 200
+    assert _raw(secured_server, "GET", "/agent/providers", AUTH)[0] == 200
+
+
+def test_health_is_open_and_minimal(secured_server):
+    status, body = _raw(secured_server, "GET", "/health")
+    assert status == 200
+    assert body == {"status": "healthy"}
+
+
+def test_token_read_from_env_var(tmp_path, monkeypatch):
+    monkeypatch.setenv(panel_server.TOKEN_ENV_VAR, "from-env")
+    server = build_server(port=0, workspace=WorkspaceMonitor([tmp_path]))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        assert _raw(port, "GET", "/reports")[0] == 401
+        assert _raw(port, "GET", "/reports", {"Authorization": "Bearer from-env"})[0] == 200
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)

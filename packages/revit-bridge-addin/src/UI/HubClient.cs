@@ -22,6 +22,14 @@ namespace RevitBridge.UI
         // 180s subprocess ceiling with headroom, well past the 30s tool-call timeout above.
         private static readonly HttpClient ChatClient = new HttpClient { Timeout = TimeSpan.FromSeconds(200) };
 
+        static HubClient()
+        {
+            // The hub requires this per-launch bearer token on every endpoint but /health.
+            var auth = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", RevitBridge.Bridge.PanelHubLauncher.HubToken);
+            Client.DefaultRequestHeaders.Authorization = auth;
+            ChatClient.DefaultRequestHeaders.Authorization = auth;
+        }
+
         private static int Port
         {
             get

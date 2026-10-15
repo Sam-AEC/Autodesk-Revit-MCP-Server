@@ -87,6 +87,19 @@ One hub serves every open Revit. Requests that act on Revit carry an `instance` 
 
 What this does not do: it does not stop software running as the same user, and it does not change tool approval semantics; mutating tools remain gated by the approval flow.
 
+
+### Panel HTTP Shim (`panel_server.py`, port 8787)
+The dockable panel's hub (`aec-model-bridge-panel-server`) exposes `/execute`, `/agent/chat`, `/diagnostics`, `/reports` and `/agent/providers` on `127.0.0.1`. Only the add-in's C# `HubClient` calls it; the WebView2 page talks to C# over the WebView2 message bridge and never calls the shim itself. Because any web page open in the user's browser can reach loopback ports, the shim enforces, on every request:
+
+1. **Host allow-list**: `Host` must be `127.0.0.1:<port>` or `localhost:<port>`, otherwise 403. This defeats DNS rebinding, where a hostile domain re-resolves to 127.0.0.1 but still sends its own `Host`.
+2. **No `Origin` header**: any request carrying `Origin` (including `null`) is refused with 403. Browsers attach `Origin` to cross-origin and to most POST requests; the C# `HttpClient` sends none, so the real panel is unaffected. This is deliberately stricter than an origin allow-list because the panel has no origin of its own that needs to call the shim.
+3. **`Content-Type: application/json` on POST**, otherwise 415. This removes the CORS "simple request" path (`text/plain` and form types); a JSON POST from a page needs a preflight, and the shim does not answer `OPTIONS` or send CORS headers.
+4. **Per-launch bearer token** (`Authorization: Bearer <token>`, compared with `hmac.compare_digest`, 401 otherwise) on every endpoint except `GET /health`, which returns only `{"status": "healthy"}`.
+
+Token wiring: the add-in (`PanelHubLauncher.HubToken`) uses `MCP_PANEL_HTTP_TOKEN` from its own environment if set, else generates 32 random bytes, passes it to the hub it launches via the same variable, and `HubClient` sends it on every request. The token lives in process memory and the child's environment; it is not written to disk. **Token enforcement is on only when `MCP_PANEL_HTTP_TOKEN` is set for the hub.** A hub started by hand without it still gets checks 1-3 but no token check. A hub that was already running when Revit starts (the add-in then does not launch one) must have been started with the same `MCP_PANEL_HTTP_TOKEN` value that Revit sees, or the panel's calls get 401.
+
+Limits: this does not protect against other software running as the same user (it can read the hub's environment or use the loopback port directly) and does not change tool approval semantics; mutating tools remain gated by the approval flow. The C# token wiring was written without being compiled or run against Revit; treat it as unverified until tested on a real install.
+
 ---
 
 ## 3. Workspace sandboxing
