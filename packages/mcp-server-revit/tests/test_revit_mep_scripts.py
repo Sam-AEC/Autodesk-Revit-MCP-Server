@@ -734,3 +734,32 @@ def test_marks_that_belong_to_two_elements_are_ambiguous(env):
     env.w.equipment("HP", BIC.OST_MechanicalEquipment, [port(SUP, (0, 0, 0))])
     result = env.check(kind="pipe", elements=[{"mark": "HP"}])
     assert result["rows"][0]["verdict"] == "element_not_found" and "2 elements have Mark 'HP'" in result["rows"][0]["message"]
+
+
+def test_connector_owners_skip_the_mep_system_element():
+    # Live (Revit 2024): Connector.AllRefs also lists the PipingSystem. Counting it made a routed run's connectors
+    # look 'connected to something foreign', so a rerun of a route failed with NO_FREE_CONNECTOR.
+    import ast
+
+    from revit_mcp_server.modules.revit_mep.module import SCRIPT_DIR
+
+    tree = ast.parse((SCRIPT_DIR / "_mep_guard.ipy").read_text(encoding="utf-8"))
+    wanted = {"is_mep_system", "connector_owner_ids"}
+    nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in wanted]
+
+    class MEPSystem:
+        Id = 99
+
+    class Pipe:
+        Id = 7
+
+    class Ref:
+        def __init__(self, owner):
+            self.Owner = owner
+
+    class Connector:
+        AllRefs = [Ref(MEPSystem()), Ref(Pipe()), Ref(None)]
+
+    env: Dict[str, Any] = {"MEPSystem": MEPSystem, "eid": lambda e: e.Id}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), "_mep_guard.ipy", "exec"), env)
+    assert env["connector_owner_ids"](Connector()) == [7]

@@ -70,7 +70,7 @@ def deletion_env(elements, cascades):
            "TransactionStatus": SimpleNamespace(Started="started", Committed="committed"),
            "owned_elements": lambda kind, tag, key: [e for e in doc.elements.values()
                                                       if e.owner and e.owner[:2] == (tag, key)]}
-    load_functions("_write_prelude.ipy", {"delete_owned", "is_view_internal", "StepError"}, env)
+    load_functions("_write_prelude.ipy", {"delete_owned", "is_intrinsic_part", "StepError"}, env)
     return env
 
 
@@ -210,3 +210,40 @@ def test_make_view_crops_a_3d_view_to_its_scope():
     assert "def frame_3d(view, lo, hi)" in source
     assert "    frame_3d(view, lo, hi)\n" in source
     assert "crop_frames_scope" in source
+
+
+def test_nested_fitting_parts_and_centre_lines_are_not_foreign():
+    # Live: replacing a pipe route failed because a fitting's nested family instances and the centre line of every
+    # pipe and fitting were counted as foreign dependents.
+    class Part(Element):
+        def __init__(self, number, parent=None, category=None):
+            Element.__init__(self, number)
+            self.SuperComponent = parent
+            self.Category = category
+            self.OwnerViewId = -1
+
+    class Fitting(Part):
+        def __init__(self, number, owner, dependents):
+            Part.__init__(self, number)
+            self.owner = owner
+            self.dependents = dependents
+
+        def GetDependentElements(self, _filter):
+            return [self.Id] + self.dependents
+
+    fitting = Fitting(1, ("MEP", "r1", "fitting"), [2, 3])
+    nested = Part(2, parent=fitting)
+    centre = Part(3, category=SimpleNamespace(Id=-2008072))
+    env = deletion_env([fitting, nested, centre], {1: [1, 2, 3]})
+    env["BuiltInCategory"] = SimpleNamespace(OST_Cameras=-10)
+    env["Enum"] = SimpleNamespace(GetName=lambda _type, number: {-2008072: "OST_PipeFittingCenterLine"}.get(number))
+    import sys
+    import types
+
+    system = types.ModuleType("System")
+    system.Enum = env["Enum"]
+    sys.modules["System"] = system
+    try:
+        assert env["delete_owned"]([fitting]) == [1, 2, 3]
+    finally:
+        del sys.modules["System"]

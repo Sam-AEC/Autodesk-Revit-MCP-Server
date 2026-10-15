@@ -291,10 +291,22 @@ def get_by_id(i):
     return doc.GetElement(ElementId(int(i)))
 
 
-def is_view_internal(e, view_ids, view_names):
-    """True for the parts of a view that Revit creates and deletes with it (camera, section box, sun path, work plane
-    grid, view-specific helper elements and the view's own unplaced viewport). A viewport on a sheet is NOT internal."""
+def is_intrinsic_part(e, view_ids, view_names):
+    """True for the parts Revit creates with an element and deletes with it: of a view the camera, section box, sun path,
+    work plane grid, view-specific helper elements and its own unplaced viewport; of a pipe or duct its centre line.
+    A viewport on a sheet is NOT intrinsic."""
     categories = ("OST_Cameras", "OST_SectionBox", "OST_IOSSketchGrid", "OST_SunStudy")
+    try:
+        # A fitting is built from nested family instances; they go with their parent.
+        parent = e.SuperComponent
+        for _ in range(8):
+            if parent is None:
+                break
+            if eid(parent) in view_ids:
+                return True
+            parent = parent.SuperComponent
+    except Exception:
+        pass
     try:
         owner = e.OwnerViewId
         if owner is not None and eid(owner) in view_ids:
@@ -313,6 +325,10 @@ def is_view_internal(e, view_ids, view_names):
                 bic = getattr(BuiltInCategory, name, None)
                 if bic is not None and eid(cat.Id) == int(bic):
                     return True
+            from System import Enum
+            bic_name = Enum.GetName(BuiltInCategory, eid(cat.Id)) or ""
+            if bic_name.endswith("CenterLine") or bic_name == "OST_CenterLines":
+                return True
         elif e.GetType().Name == "Element" and e.Name in view_names:
             return True
     except Exception:
@@ -324,11 +340,10 @@ def delete_owned(elems):
     """Check the complete dependency cascade inside a rollbackable sub-transaction."""
     ids = [eid(e) for e in elems]
     allowed = set()
-    view_ids = set()
+    view_ids = set(ids)  # the elements being replaced: views, pipes, fittings
     view_names = set()
     for e in elems:
         if getattr(e, "ViewType", None) is not None:
-            view_ids.add(eid(e))
             view_names.add(e.Name)
     for e in elems:
         owner = read_tag(e)
@@ -352,7 +367,7 @@ def delete_owned(elems):
             try:
                 for j in e.GetDependentElements(None):
                     dep = doc.GetElement(j)
-                    if dep is not None and is_view_internal(dep, view_ids, view_names):
+                    if dep is not None and is_intrinsic_part(dep, view_ids, view_names):
                         internal.add(eid(j))
             except Exception:
                 pass

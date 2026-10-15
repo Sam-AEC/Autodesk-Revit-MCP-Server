@@ -104,12 +104,22 @@ def element_connectors(e):
     return out
 
 
+def is_mep_system(o):
+    try:
+        return isinstance(o, MEPSystem)
+    except Exception:
+        return False
+
+
 def connector_owner_ids(c):
+    """Ids of the elements a connector is physically connected to. Revit also lists the MEP system element (the
+    logical connection) in AllRefs; seen live, it made every connector of a routed run look 'already connected' to
+    something outside the replaced route, so a rerun of a route failed with NO_FREE_CONNECTOR."""
     out = []
     try:
         for r in c.AllRefs:
             o = r.Owner
-            if o is not None:
+            if o is not None and not is_mep_system(o):
                 out.append(eid(o))
     except Exception:
         pass
