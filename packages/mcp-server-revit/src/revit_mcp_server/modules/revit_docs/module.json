@@ -1,10 +1,10 @@
 {
   "id": "revit_docs",
-  "name": "Revit Documentation (views, sheets, schedules, export)",
-  "version": "0.1.0",
+  "name": "Revit Documentation (views, sheets, schedules, revisions, export)",
+  "version": "0.2.0",
   "schema_version": 1,
   "min_hub_version": "1.2.0",
-  "description": "Documentation automation for a live Revit session: list views, sheets and schedules, check a rendered picture, and make views, sheets and schedules or export PDF, DWG, IFC and NWC. The list and render tools are read-only. The make and export tools are write tools: they need an approved plan, replace only what they made under the same tag, use one transaction per element, and roll back on failure unless on_error is skip. Every write tool takes dry_run: it runs the call, reports what would change and rolls it all back (still approval-gated).",
+  "description": "Documentation automation for a live Revit session: list views, sheets, schedules, view templates and revisions, check a rendered picture, make views, sheets and schedules, place views on sheets, apply or create view templates, align crop regions, add revisions and revision clouds, issue revisions to sheets, renumber and rename sheets from a table, and export PDF, DWG, IFC and NWC. The list, index and render tools are read-only. The write tools need an approved plan, use one transaction per element and roll back on failure unless on_error is skip. The make tools replace only what they made under the same tag; the sheet, template, crop and revision tools change only what the call names and never delete. Every write tool takes dry_run: it runs the call, reports what would change and rolls it all back (still approval-gated).",
   "author": "AEC Model Bridge",
   "license": "GPL-3.0-or-later",
   "requires_providers": [
@@ -627,6 +627,821 @@
           "format",
           "path"
         ]
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    },
+    {
+      "id": "place_views",
+      "title": "Place views on an existing sheet as viewports, on a grid, in one row or in one column, centred or aligned to the top left of each cell, inside the title block outline (or area_mm). Refuses a view that is already on a sheet (names the sheet and viewport id) and a sheet number that is not exactly one sheet; legends may go on several sheets. Never moves or deletes anything. Returns the viewport id of every view placed, its position and size, and notes for oversize or overlapping viewports. Write tool: needs an approved plan; one transaction per viewport; positions are read back; rolls back on failure unless on_error is skip.",
+      "mcp_tool": "revit_place_views",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sheet": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Number of the sheet to place the views on, for example A101. The sheet can be any sheet, not only one this tool made."
+          },
+          "views": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 60,
+            "description": "Views to place, in reading order. Each has view_id or view_name, and optionally x_mm and y_mm (centre on the sheet, millimetres) to skip the layout for that view.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "view_id": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "ElementId (integer) of the view."
+                },
+                "view_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "description": "Exact name of the view, when view_id is not given."
+                },
+                "x_mm": {
+                  "type": "number",
+                  "minimum": -100000,
+                  "maximum": 100000,
+                  "description": "Centre X on the sheet in millimetres. Needs y_mm."
+                },
+                "y_mm": {
+                  "type": "number",
+                  "minimum": -100000,
+                  "maximum": 100000,
+                  "description": "Centre Y on the sheet in millimetres. Needs x_mm."
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "layout": {
+            "type": "string",
+            "enum": [
+              "grid",
+              "row",
+              "column"
+            ],
+            "default": "grid",
+            "description": "grid (default): rows and columns inside the sheet area. row: all views side by side. column: all views one below the other."
+          },
+          "columns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 12,
+            "description": "Grid columns, only with layout grid (default: about the square root of the number of views)."
+          },
+          "align": {
+            "type": "string",
+            "enum": [
+              "center",
+              "top_left"
+            ],
+            "default": "center",
+            "description": "center (default): each viewport is centred in its cell. top_left: each viewport box is moved so its top left corner sits at the top left corner of its cell."
+          },
+          "margin_mm": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 300,
+            "default": 15,
+            "description": "Space kept free inside the title block outline, millimetres."
+          },
+          "gutter_mm": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 300,
+            "default": 10,
+            "description": "Space between layout cells, millimetres."
+          },
+          "area_mm": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": -100000,
+              "maximum": 100000
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "[x0, y0, x1, y1] sheet area for the layout, millimetres; overrides the title block outline (use it to keep clear of the title strip)."
+          },
+          "on_error": {
+            "type": "string",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort",
+            "description": "abort (default): the first failure rolls the whole call back and nothing is kept. skip: keep what worked and list the failures."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: do the whole call inside Revit exactly as normal (same checks, same post-checks), then roll everything back. The result says dry_run true, committed false and what would change (would_change); changed_ids stays empty. Still needs an approved plan like any write. Use it to test a call before the real one."
+          }
+        },
+        "required": [
+          "sheet",
+          "views"
+        ],
+        "additionalProperties": false
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    },
+    {
+      "id": "list_view_templates",
+      "title": "List the view templates of the document: id, name, view type, how many views use each (used_by) and how many view parameters it controls. Unused templates are reported. Read-only. Use it before revit_apply_view_template (which assigns a template to views) or revit_make_view_template (which creates one from a view); revit_list_views_sheets_schedules lists the views.",
+      "mcp_tool": "revit_list_view_templates",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name_contains": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "Only templates whose name contains this text, case-insensitive."
+          },
+          "only_unused": {
+            "type": "boolean",
+            "default": false,
+            "description": "List only templates that no view uses."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "default": 50,
+            "description": "Most rows to return (default 50, at most 500). The full list is written to a detail file when it is longer."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Skip this many rows first, to read the next page of a truncated list."
+          },
+          "count_only": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return only the summary and the counts (no rows). Use for a cheap overview."
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "maxItems": 30,
+            "description": "Row fields to keep (for example [\"id\",\"name\"]); omit for all fields."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "apply_view_template",
+      "title": "Assign one view template, by name or id, to a list of views. A view that already has it is reported as unchanged and not touched; a view the template does not fit (wrong view type) fails with its id and Revit's reason. Never edits the template and never removes a template from a view. Returns previous and new template per view. Write tool: needs an approved plan; one transaction per view; every assignment is read back; rolls back on failure unless on_error is skip. List templates first with revit_list_view_templates.",
+      "mcp_tool": "revit_apply_view_template",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "template": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Exact name of the view template. Give this or template_id."
+          },
+          "template_id": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "ElementId (integer) of the view template. Give this or template."
+          },
+          "views": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 200,
+            "description": "Views to apply it to. Each has view_id or view_name.",
+            "items": {
+              "type": "object",
+              "description": "A view. Give exactly one of view_id or view_name.",
+              "properties": {
+                "view_id": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "ElementId (integer) of the view."
+                },
+                "view_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "description": "Exact name of the view; it must match exactly one view (otherwise use view_id)."
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "on_error": {
+            "type": "string",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort",
+            "description": "abort (default): the first failure rolls the whole call back and nothing is kept. skip: keep what worked and list the failures."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: do the whole call inside Revit exactly as normal (same checks, same post-checks), then roll everything back. The result says dry_run true, committed false and what would change (would_change); changed_ids stays empty. Still needs an approved plan like any write. Use it to test a call before the real one."
+          }
+        },
+        "required": [
+          "views"
+        ],
+        "additionalProperties": false
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    },
+    {
+      "id": "make_view_template",
+      "title": "Create a view template from the settings of an existing view and name it. Refuses a name that another view template already has and never replaces or edits one. With assign_to_view the source view is switched to the new template. Returns the new template id. Write tool: needs an approved plan; one transaction; the template, its name and its type are read back; rolls back on failure. Apply the template to other views with revit_apply_view_template.",
+      "mcp_tool": "revit_make_view_template",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "view": {
+            "type": "object",
+            "description": "The view whose settings the template copies. Give exactly one of view_id or view_name.",
+            "properties": {
+              "view_id": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "ElementId (integer) of the view."
+              },
+              "view_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "description": "Exact name of the view; it must match exactly one view (otherwise use view_id)."
+              }
+            },
+            "additionalProperties": false
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Name of the new view template. Must not be used by another view template."
+          },
+          "assign_to_view": {
+            "type": "boolean",
+            "default": false,
+            "description": "true: also assign the new template to the source view. Default false."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: do the whole call inside Revit exactly as normal (same checks, same post-checks), then roll everything back. The result says dry_run true, committed false and what would change (would_change); changed_ids stays empty. Still needs an approved plan like any write. Use it to test a call before the real one."
+          }
+        },
+        "required": [
+          "view",
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    },
+    {
+      "id": "align_crop",
+      "title": "Align the crop regions of a set of plan views to a reference plan view: each view gets the same crop rectangle in model coordinates, its crop switched on and its height range kept. Optionally sets the annotation crop (on, off, or match the reference including its four offsets). Refuses non-plan views, custom crop shapes and plan views rotated against the reference, with ids; views that already match are reported as unchanged. Returns the shift per view. Write tool: needs an approved plan; one transaction per view; the crop corners are read back in model coordinates; rolls back on failure unless on_error is skip.",
+      "mcp_tool": "revit_align_crop",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "reference": {
+            "type": "object",
+            "description": "The plan view whose crop region is copied. Give exactly one of view_id or view_name.",
+            "properties": {
+              "view_id": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "ElementId (integer) of the view."
+              },
+              "view_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "description": "Exact name of the view; it must match exactly one view (otherwise use view_id)."
+              }
+            },
+            "additionalProperties": false
+          },
+          "views": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Plan views to align. Each has view_id or view_name. The reference itself is ignored if listed.",
+            "items": {
+              "type": "object",
+              "description": "A plan view. Give exactly one of view_id or view_name.",
+              "properties": {
+                "view_id": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "ElementId (integer) of the view."
+                },
+                "view_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "description": "Exact name of the view; it must match exactly one view (otherwise use view_id)."
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "align_crop_box": {
+            "type": "boolean",
+            "default": true,
+            "description": "true (default): copy the reference crop rectangle. false: only set the annotation crop."
+          },
+          "annotation_crop": {
+            "type": "string",
+            "enum": [
+              "keep",
+              "on",
+              "off",
+              "match_reference"
+            ],
+            "default": "keep",
+            "description": "keep (default): leave it. on or off: switch the annotation crop. match_reference: use the reference view's state and, when on, its four offsets."
+          },
+          "on_error": {
+            "type": "string",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort",
+            "description": "abort (default): the first failure rolls the whole call back and nothing is kept. skip: keep what worked and list the failures."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: do the whole call inside Revit exactly as normal (same checks, same post-checks), then roll everything back. The result says dry_run true, committed false and what would change (would_change); changed_ids stays empty. Still needs an approved plan like any write. Use it to test a call before the real one."
+          }
+        },
+        "required": [
+          "reference",
+          "views"
+        ],
+        "additionalProperties": false
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    },
+    {
+      "id": "list_revisions",
+      "title": "List the revisions of the document in sequence order: id, sequence, revision number, date, description, issued state, issued by and to, visibility, how many revision clouds each has and on how many sheets it shows. Read-only. Use the id or revision number in revit_add_revision_clouds and revit_issue_revision; revit_add_revision adds a new one.",
+      "mcp_tool": "revit_list_revisions",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "only_open": {
+            "type": "boolean",
+            "default": false,
+            "description": "List only revisions that are not issued yet."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "default": 50,
+            "description": "Most rows to return (default 50, at most 500). The full list is written to a detail file when it is longer."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Skip this many rows first, to read the next page of a truncated list."
+          },
+          "count_only": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return only the summary and the counts (no rows). Use for a cheap overview."
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "maxItems": 30,
+            "description": "Row fields to keep (for example [\"id\",\"name\"]); omit for all fields."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "add_revision",
+      "title": "Add a new revision at the end of the revision sequence, with description, date, issued by and to, and visibility. Existing revisions are never changed; a revision with the same description and date is refused so a repeated call cannot add it twice. Returns the new revision id and number. Write tool: needs an approved plan; one transaction; every property is read back; rolls back on failure. Then draw clouds with revit_add_revision_clouds and release it with revit_issue_revision.",
+      "mcp_tool": "revit_add_revision",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Revision description as it should appear in the revision schedule."
+          },
+          "date": {
+            "type": "string",
+            "maxLength": 40,
+            "description": "Revision date as text, for example 2026-10-15. Omit to keep Revit's default."
+          },
+          "issued_by": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "Issued by (initials or name). Omit to leave empty."
+          },
+          "issued_to": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "Issued to. Omit to leave empty."
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "cloud_and_tag",
+              "tag",
+              "hidden"
+            ],
+            "description": "What the revision shows on sheets: cloud_and_tag, tag only, or hidden. Omit to keep Revit's default."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: do the whole call inside Revit exactly as normal (same checks, same post-checks), then roll everything back. The result says dry_run true, committed false and what would change (would_change); changed_ids stays empty. Still needs an approved plan like any write. Use it to test a call before the real one."
+          }
+        },
+        "required": [
+          "description"
+        ],
+        "additionalProperties": false
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    },
+    {
+      "id": "add_revision_clouds",
+      "title": "Draw rectangular revision clouds in one plan, section or elevation view around elements (their extent in that view) and/or a model-space box, for a revision given by id or number. One cloud around everything, or one per element with per_element. Refuses an issued revision, elements that have no extent in the view and views that cannot hold clouds. Reports the sheets the view is on, or that it is on none. Never moves or deletes anything. Write tool: needs an approved plan; one transaction per cloud; revision, view and sheet listing are read back; rolls back on failure unless on_error is skip.",
+      "mcp_tool": "revit_add_revision_clouds",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "revision_id": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "ElementId (integer) of the revision. Give this or revision_number."
+          },
+          "revision_number": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "Revision number as shown in the revision schedule, for example 3 or C. Must match exactly one revision. Give this or revision_id."
+          },
+          "view": {
+            "type": "object",
+            "description": "The plan, section or elevation view to draw in. Give exactly one of view_id or view_name.",
+            "properties": {
+              "view_id": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "ElementId (integer) of the view."
+              },
+              "view_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "description": "Exact name of the view; it must match exactly one view (otherwise use view_id)."
+              }
+            },
+            "additionalProperties": false
+          },
+          "element_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxItems": 200,
+            "description": "ElementIds (integers) of elements to cloud. They need an extent in the view."
+          },
+          "bbox_m": {
+            "type": "object",
+            "description": "A box in model coordinates, metres, to cloud: its corners are projected into the view.",
+            "properties": {
+              "min": {
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "minimum": -100000,
+                  "maximum": 100000
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "[x, y, z] low corner in metres."
+              },
+              "max": {
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "minimum": -100000,
+                  "maximum": 100000
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "[x, y, z] high corner in metres."
+              }
+            },
+            "required": [
+              "min",
+              "max"
+            ],
+            "additionalProperties": false
+          },
+          "per_element": {
+            "type": "boolean",
+            "default": false,
+            "description": "true: one cloud per element (plus one for bbox_m), at most 100. false (default): one cloud around everything."
+          },
+          "margin_mm": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 2000,
+            "default": 100,
+            "description": "Space between the extent and the cloud, in model millimetres."
+          },
+          "on_error": {
+            "type": "string",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort",
+            "description": "abort (default): the first failure rolls the whole call back and nothing is kept. skip: keep what worked and list the failures."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: do the whole call inside Revit exactly as normal (same checks, same post-checks), then roll everything back. The result says dry_run true, committed false and what would change (would_change); changed_ids stays empty. Still needs an approved plan like any write. Use it to test a call before the real one."
+          }
+        },
+        "required": [
+          "view"
+        ],
+        "additionalProperties": false
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    },
+    {
+      "id": "issue_revision",
+      "title": "Assign a revision to sheets (adds it to each sheet's revisions on sheet) and/or mark it issued, with issued by and to. Sheets are assigned first, then the revision is issued; a sheet that already shows the revision is reported as unchanged. Issuing locks the revision and its clouds, so run it with dry_run first. Never removes a revision from a sheet. Write tool: needs an approved plan; one transaction per sheet and one for the issue; the sheet listing and the issued state are read back; rolls back on failure unless on_error is skip.",
+      "mcp_tool": "revit_issue_revision",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "revision_id": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "ElementId (integer) of the revision. Give this or revision_number."
+          },
+          "revision_number": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "Revision number as shown in the revision schedule. Must match exactly one revision. Give this or revision_id."
+          },
+          "sheets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "maxItems": 200,
+            "description": "Sheet numbers to add the revision to."
+          },
+          "issue": {
+            "type": "boolean",
+            "default": false,
+            "description": "true: mark the revision as issued after the sheets are assigned. Default false."
+          },
+          "issued_by": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "Issued by. Only with issue true."
+          },
+          "issued_to": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "Issued to. Only with issue true."
+          },
+          "on_error": {
+            "type": "string",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort",
+            "description": "abort (default): the first failure rolls the whole call back and nothing is kept. skip: keep what worked and list the failures."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: do the whole call inside Revit exactly as normal (same checks, same post-checks), then roll everything back. The result says dry_run true, committed false and what would change (would_change); changed_ids stays empty. Still needs an approved plan like any write. Use it to test a call before the real one."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    },
+    {
+      "id": "sheet_index",
+      "title": "Index of all sheets: number, name, title block, number of views and their names, schedules, current revision and all revisions shown. Findings: duplicate sheet numbers and empty sheets (fails), near-duplicate numbers (case or spaces), sheets without a title block and placeholder sheets (info). Read-only. Use revit_update_sheets to renumber or rename from a table and revit_place_views to fill an empty sheet.",
+      "mcp_tool": "revit_sheet_index",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name_contains": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "Only sheets whose name or number contains this text, case-insensitive."
+          },
+          "only_findings": {
+            "type": "boolean",
+            "default": false,
+            "description": "List only sheets that have a finding (duplicate number, empty, no title block)."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "default": 50,
+            "description": "Most rows to return (default 50, at most 500). The full list is written to a detail file when it is longer."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Skip this many rows first, to read the next page of a truncated list."
+          },
+          "count_only": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return only the summary and the counts (no rows). Use for a cheap overview."
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "maxItems": 30,
+            "description": "Row fields to keep (for example [\"id\",\"name\"]); omit for all fields."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "update_sheets",
+      "title": "Bulk renumber and rename sheets from a table (number = the current number; new_number and/or new_name). The final numbering of the whole document is checked first: if two sheets would share a number, including a sheet that is not in the table, nothing is changed. Swaps and chains (A1 to A2 while A2 to A3) go through temporary numbers and need on_error abort. Only the number and name are written; sheets outside the table are never touched. Write tool: needs an approved plan; one transaction per sheet; every number and name is read back, uniqueness is re-checked; rolls back on failure.",
+      "mcp_tool": "revit_update_sheets",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sheets": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 200,
+            "description": "One row per sheet to change.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "description": "Current sheet number. Must match exactly one sheet."
+                },
+                "new_number": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "description": "New sheet number. Omit to keep the number."
+                },
+                "new_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "description": "New sheet name. Omit to keep the name."
+                }
+              },
+              "required": [
+                "number"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "on_error": {
+            "type": "string",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort",
+            "description": "abort (default): the first failure rolls the whole call back and nothing is kept. skip: keep what worked and list the failures."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: do the whole call inside Revit exactly as normal (same checks, same post-checks), then roll everything back. The result says dry_run true, committed false and what would change (would_change); changed_ids stays empty. Still needs an approved plan like any write. Use it to test a call before the real one."
+          }
+        },
+        "required": [
+          "sheets"
+        ],
+        "additionalProperties": false
       },
       "surface": [
         "mcp"

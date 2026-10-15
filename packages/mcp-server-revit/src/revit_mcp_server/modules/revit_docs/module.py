@@ -9,12 +9,27 @@ Commands (the MCP tool name is the ``mcp_tool`` of the command in module.json):
   make_sheet                   WRITE      sheet with a title block by name, views placed on a grid
   make_schedule                WRITE      schedule with fields, filters, sorting, totals; optionally placed on a sheet
   export                       WRITE      PDF, DWG, IFC, NWC to a path inside the workspace sandbox
+  place_views                  WRITE      viewports on an existing sheet, grid/row/column layout, alignment, title block aware
+  list_view_templates          read-only  view templates with the number of views using each
+  apply_view_template          WRITE      assign one view template to a set of views
+  make_view_template           WRITE      create a view template from an existing view
+  align_crop                   WRITE      crop regions of plan views aligned to a reference view, annotation crop
+  list_revisions               read-only  revisions with clouds, sheets and issued state
+  add_revision                 WRITE      add a revision at the end of the sequence
+  add_revision_clouds          WRITE      rectangular revision clouds around elements or a box in a plan or section view
+  issue_revision               WRITE      assign a revision to sheets and/or mark it issued
+  sheet_index                  read-only  sheets with views, revision, empty-sheet and duplicate-number findings
+  update_sheets                WRITE      bulk renumber and rename sheets from a table, with a collision check
 
 How it works: like the ``revit`` module, each command builds an IronPython 2.7 script from the revit module's
 ``_prelude.ipy`` plus this module's scripts, injects the arguments as an ``ARGS`` literal and runs it in Revit; the
 script prints the tab-separated line protocol that ``revit_mcp_server.check_contract`` turns into the plan section 6
 contract. The three seams to Revit are ``run_read_script`` (read mode, no approval), ``run_write_script`` (write mode,
 only for the write commands) and the ``revit_export_image`` call of render_check.
+
+The tools from place_views on act on elements the caller names (sheet numbers, view ids, revision, a table of sheets), not
+on elements they made themselves, so they carry no tag. They never delete anything, never move a view that is already on a
+sheet, never touch a template or a revision they were not asked to, and read every result back from the model.
 
 Safety of the write commands:
   * they are ``is_mutating`` in module.json, so the approval gate demands an approved plan_id before they start;
@@ -35,6 +50,7 @@ stub of the Revit API in the tests (tests/test_revit_docs.py), not against Revit
 """
 from __future__ import annotations
 
+import inspect
 import math
 import re
 import time
@@ -59,6 +75,12 @@ SCRIPT_DIR = MODULE_DIR / "scripts"
 REVIT_PRELUDE = MODULE_DIR.parent / "revit" / "scripts" / "_prelude.ipy"
 TAGS_READ = "_tags_read.ipy"
 WRITE_PRELUDE = "_write_prelude.ipy"
+DOCS_COMMON = "_docs_common.ipy"
+# Scripts that also load the shared view/sheet/revision helpers (they never open a transaction themselves).
+USES_COMMON = frozenset({
+    "place_views.ipy", "list_view_templates.ipy", "apply_view_template.ipy", "make_view_template.ipy", "align_crop.ipy",
+    "list_revisions.ipy", "add_revision.ipy", "add_revision_clouds.ipy", "issue_revision.ipy", "sheet_index.ipy", "update_sheets.ipy",
+})
 EXECUTE_TOOL = "revit_execute_python"
 EXPORT_IMAGE_TOOL = "revit_export_image"
 
@@ -79,7 +101,7 @@ _HINTS = {
     "view_not_found": "Check the view ids or names with revit_list_views_sheets_schedules.",
     "view_already_placed": "A view can be on one sheet only. Remove its viewport from the other sheet yourself or make a duplicate view first; this tool never moves a placed view.",
     "level_not_found": "List the levels with revit_list_levels and use the exact name.",
-    "sheet_not_found": "Make the sheet first with revit_make_sheet, then pass its number.",
+    "sheet_not_found": "Make the sheet first with revit_make_sheet, or check the number with revit_sheet_index. A number must match exactly one sheet.",
     "sheet_not_owned": "Pass allow_foreign=true to add the schedule to a sheet this tool did not make.",
     "rolled_back": "Nothing was changed: the whole call was rolled back. Fix the cause named in fails and call again, or pass on_error='skip' to keep what worked.",
     "partial_failure": "The steps that worked were kept (see changed_ids); the failed ones are in fails with element ids. Run the same call again to replace what this tool made, or fix the cause first.",
@@ -89,6 +111,20 @@ _HINTS = {
     "export_failed": "Revit refused the export. Check the options (sheet numbers, view ids) and that the folder is writable.",
     "script_exception": "The embedded script failed inside Revit; any open transaction group was rolled back, so the model should be unchanged (verify with revit_warnings_delta).",
     "timeout_running": "Revit may still be running the script. Call revit_get_result with the request_id, and do not repeat a write until it has finished.",
+    "duplicate_view": "List each view once; a view can be on a sheet once.",
+    "no_layout_area": "Give area_mm, or x_mm and y_mm for every view, or put a title block on the sheet.",
+    "view_not_plan": "Only plan views take part. Pick floor, ceiling or area plans (revit_list_views_sheets_schedules).",
+    "crop_not_rectangular": "This tool copies and sets rectangular crop regions only. Reset the custom crop shape in Revit first.",
+    "reference_crop_off": "Switch the crop region of the reference view on first, then call again.",
+    "annotation_crop_unreadable": "Revit did not give the annotation crop of the reference view. Use annotation_crop on, off or keep instead.",
+    "revision_not_found": "Use a revision id or revision number listed by revit_list_revisions.",
+    "revision_exists": "That revision is already in the document. Use its id, or give another description or date.",
+    "revision_issued": "An issued revision cannot get new clouds. Add a new revision with revit_add_revision and use that.",
+    "view_not_supported": "Clouds go into plan, section and elevation views. Pick one of those.",
+    "element_not_in_view": "Give elements that are visible in that view (they need an extent in it), or pick another view.",
+    "empty_extent": "Raise margin_mm so the cloud has an extent.",
+    "sheet_number_conflict": "Choose numbers that no other sheet ends up with. This tool never renumbers sheets that are not in the table.",
+    "duplicate_sheet": "List each sheet once in the table.",
     "dry_run_not_honoured": "A dry run reported committed changes. Check the model (revit_warnings_delta, revit_list_views_sheets_schedules) before doing anything else.",
 }
 
@@ -136,6 +172,8 @@ def build_script(script_name: str, args: Dict[str, Any], *, write: bool) -> str:
     parts = [REVIT_PRELUDE.read_text(encoding="utf-8"), (SCRIPT_DIR / TAGS_READ).read_text(encoding="utf-8")]
     if write:
         parts.append((SCRIPT_DIR / WRITE_PRELUDE).read_text(encoding="utf-8"))
+    if script_name in USES_COMMON:
+        parts.append((SCRIPT_DIR / DOCS_COMMON).read_text(encoding="utf-8"))
     parts.append(f"ARGS = {py2_literal(args)}")
     parts.append((SCRIPT_DIR / script_name).read_text(encoding="utf-8"))
     return "\n\n".join(parts) + "\n"
@@ -356,6 +394,98 @@ def _flag(value: Any, what: str) -> bool:
     return value
 
 
+# --------------------------------------------------------------------------- #
+# Strict argument helpers of the documentation batch (place_views ... update_sheets)
+# --------------------------------------------------------------------------- #
+# Keys the server may put next to a tool's own arguments. Any other unknown key is refused: a misspelt dry_run must never
+# turn into a real write.
+CONTROL_KEYS = frozenset({"plan_id", "run_async", "idempotency_key"})
+
+
+def _check_args(method: Callable[..., Any], arguments: Any) -> None:
+    if not isinstance(arguments, dict):
+        return
+    allowed = set(inspect.signature(method).parameters) - {"arguments"}
+    unknown = sorted(set(arguments) - allowed - CONTROL_KEYS)
+    if unknown:
+        keep = sorted(a for a in allowed if a not in ("workspace", "tool_executor", "approved_executor"))
+        raise ValueError(f"unknown argument(s): {', '.join(unknown)}; this tool takes: {', '.join(keep)}")
+
+
+def _only(obj: Dict[str, Any], allowed: Tuple[str, ...], what: str) -> None:
+    extra = sorted(set(obj) - set(allowed))
+    if extra:
+        raise ValueError(f"{what}: unknown field(s) {', '.join(extra)}; allowed: {', '.join(allowed)}")
+
+
+def _bool(value: Any, what: str, default: bool) -> bool:
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        raise ValueError(f"{what} must be true or false")
+    return value
+
+
+def _text(value: Any, what: str, max_len: int = 200, required: bool = True) -> Optional[str]:
+    if value is None:
+        if required:
+            raise ValueError(f"{what} is required")
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{what} must be text")
+    text = value.strip()
+    if required and not text:
+        raise ValueError(f"{what} is required")
+    if len(text) > max_len:
+        raise ValueError(f"{what} is longer than {max_len} characters")
+    if any(ord(c) < 32 for c in text):
+        raise ValueError(f"{what} contains control characters")
+    return text
+
+
+def _in_range(value: float, low: float, high: float, what: str) -> float:
+    if not low <= value <= high:
+        raise ValueError(f"{what} must be between {low:g} and {high:g}")
+    return value
+
+
+def _view_ref(value: Any, what: str, extra: Tuple[str, ...] = ()) -> Dict[str, Any]:
+    """{view_id} or {view_name}: exactly one of them."""
+    if not isinstance(value, dict):
+        raise ValueError(f"{what} must be an object with view_id or view_name")
+    _only(value, ("view_id", "view_name") + extra, what)
+    has_id, has_name = value.get("view_id") is not None, value.get("view_name") not in (None, "")
+    if has_id == has_name:
+        raise ValueError(f"{what} needs exactly one of view_id or view_name")
+    if has_id:
+        vid = _int(value["view_id"], f"{what}.view_id")
+        if vid < 1:
+            raise ValueError(f"{what}.view_id must be a positive integer")
+        return {"view_id": vid}
+    return {"view_name": _name(value["view_name"], f"{what}.view_name")}
+
+
+def _view_refs(value: Any, what: str, limit: int) -> List[Dict[str, Any]]:
+    if not isinstance(value, list) or not 1 <= len(value) <= limit:
+        raise ValueError(f"{what} must be a list of 1 to {limit} views, each with view_id or view_name")
+    return [_view_ref(v, f"{what}[{i}]") for i, v in enumerate(value)]
+
+
+def _revision_ref(revision_id: Any, revision_number: Any) -> Dict[str, Any]:
+    if (revision_id is None) == (revision_number in (None, "")):
+        raise ValueError("give exactly one of revision_id or revision_number")
+    if revision_id is not None:
+        rid = _int(revision_id, "revision_id")
+        if rid < 1:
+            raise ValueError("revision_id must be a positive integer")
+        return {"revision_id": rid, "revision_number": None}
+    return {"revision_id": None, "revision_number": _text(revision_number, "revision_number", 40)}
+
+
+def _on_error_dry(on_error: Any, dry_run: Any) -> Dict[str, Any]:
+    return {"on_error": _choice(on_error, ("abort", "skip"), "on_error", "abort"), "dry_run": _flag(dry_run, "dry_run")}
+
+
 def _bad_input(tool: str, exc: Exception) -> Dict[str, Any]:
     return error_result(tool, "invalid_input", str(exc), hint=_HINTS["invalid_input"])
 
@@ -366,6 +496,8 @@ def _bad_input(tool: str, exc: Exception) -> Dict[str, Any]:
 ITEM_TYPES = {
     "id": "int", "view_id": "int", "fields": "int", "filters": "int", "sort": "int", "body_rows": "int",
     "x_mm": "float", "y_mm": "float", "width_mm": "float", "height_mm": "float", "bytes": "int", "exists": "bool",
+    "revision_id": "int", "source_view_id": "int", "sequence": "int", "assigned_to_source": "bool", "annotation_crop": "int",
+    "shift_x_mm": "float", "shift_y_mm": "float",
 }
 
 
@@ -873,6 +1005,394 @@ class RevitDocsModule:
         except (TypeError, ValueError) as exc:
             return _bad_input(tool, exc)
         return self._write(tool, "export.ipy", args, workspace, approved_executor, export_target=target)
+
+    # ---- sheets, view templates, crop, revisions (documentation batch) -------- #
+    def place_views(
+        self,
+        sheet: Any = None,
+        views: Any = None,
+        layout: Any = None,
+        columns: Any = None,
+        align: Any = None,
+        margin_mm: Any = 15.0,
+        gutter_mm: Any = 10.0,
+        area_mm: Any = None,
+        on_error: Any = None,
+        dry_run: Any = False,
+        arguments: Any = None,
+        workspace: Any = None,
+        approved_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_place_views"
+        try:
+            _check_args(self.place_views, arguments)
+            if not isinstance(views, list) or not 1 <= len(views) <= 60:
+                raise ValueError("views must be a list of 1 to 60 views")
+            specs: List[Dict[str, Any]] = []
+            for i, v in enumerate(views):
+                spec = _view_ref(v, f"views[{i}]", ("x_mm", "y_mm"))
+                if (v.get("x_mm") is None) != (v.get("y_mm") is None):
+                    raise ValueError(f"views[{i}]: give both x_mm and y_mm, or neither")
+                if v.get("x_mm") is not None:
+                    spec["x_mm"] = _in_range(_num(v["x_mm"], f"views[{i}].x_mm"), -100000, 100000, f"views[{i}].x_mm")
+                    spec["y_mm"] = _in_range(_num(v["y_mm"], f"views[{i}].y_mm"), -100000, 100000, f"views[{i}].y_mm")
+                specs.append(spec)
+            args: Dict[str, Any] = {
+                "sheet": _name(sheet, "sheet"),
+                "views": specs,
+                "layout": _choice(layout, ("grid", "row", "column"), "layout", "grid"),
+                "columns": None,
+                "align": _choice(align, ("center", "top_left"), "align", "center"),
+                "margin_mm": _in_range(_num(margin_mm if margin_mm is not None else 15.0, "margin_mm"), 0, 300, "margin_mm"),
+                "gutter_mm": _in_range(_num(gutter_mm if gutter_mm is not None else 10.0, "gutter_mm"), 0, 300, "gutter_mm"),
+                "area_mm": None,
+                **_on_error_dry(on_error, dry_run),
+            }
+            if columns is not None:
+                if args["layout"] != "grid":
+                    raise ValueError("columns only goes with layout grid")
+                args["columns"] = int(_in_range(_int(columns, "columns"), 1, 12, "columns"))
+            if area_mm is not None:
+                a = _num_list(area_mm, "area_mm", 4)
+                if a[2] <= a[0] or a[3] <= a[1]:
+                    raise ValueError("area_mm must be [x0, y0, x1, y1] with x1 > x0 and y1 > y0")
+                args["area_mm"] = a
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        return self._write(tool, "place_views.ipy", args, workspace, approved_executor)
+
+    def list_view_templates(
+        self,
+        name_contains: Any = "",
+        only_unused: Any = False,
+        limit: int = 50,
+        offset: int = 0,
+        count_only: bool = False,
+        fields: Optional[List[str]] = None,
+        arguments: Any = None,
+        workspace: Any = None,
+        tool_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_list_view_templates"
+        try:
+            _check_args(self.list_view_templates, arguments)
+            args = {"name_contains": _text(name_contains if name_contains is not None else "", "name_contains", 100, required=False) or "",
+                    "only_unused": _bool(only_unused, "only_unused", False)}
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        return self._read(tool, "list_view_templates.ipy", args, PageSpec.from_args(limit, offset, count_only, fields), workspace, tool_executor,
+                          {"id": "int", "used_by": "int", "controlled": "int"}, lambda r: str(r.get("name") or "").lower())
+
+    def apply_view_template(
+        self,
+        template: Any = None,
+        template_id: Any = None,
+        views: Any = None,
+        on_error: Any = None,
+        dry_run: Any = False,
+        arguments: Any = None,
+        workspace: Any = None,
+        approved_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_apply_view_template"
+        try:
+            _check_args(self.apply_view_template, arguments)
+            if (template in (None, "")) == (template_id is None):
+                raise ValueError("give exactly one of template (name) or template_id")
+            args: Dict[str, Any] = {
+                "template": _name(template, "template") if template_id is None else "",
+                "template_id": None,
+                "views": _view_refs(views, "views", 200),
+                **_on_error_dry(on_error, dry_run),
+            }
+            if template_id is not None:
+                args["template_id"] = _int(template_id, "template_id")
+                if args["template_id"] < 1:
+                    raise ValueError("template_id must be a positive integer")
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        return self._write(tool, "apply_view_template.ipy", args, workspace, approved_executor)
+
+    def make_view_template(
+        self,
+        view: Any = None,
+        name: Any = None,
+        assign_to_view: Any = False,
+        dry_run: Any = False,
+        arguments: Any = None,
+        workspace: Any = None,
+        approved_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_make_view_template"
+        try:
+            _check_args(self.make_view_template, arguments)
+            args = {
+                "view": _view_ref(view, "view"),
+                "name": _name(name, "name"),
+                "assign_to_view": _bool(assign_to_view, "assign_to_view", False),
+                "dry_run": _flag(dry_run, "dry_run"),
+            }
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        return self._write(tool, "make_view_template.ipy", args, workspace, approved_executor)
+
+    def align_crop(
+        self,
+        reference: Any = None,
+        views: Any = None,
+        align_crop_box: Any = True,
+        annotation_crop: Any = None,
+        on_error: Any = None,
+        dry_run: Any = False,
+        arguments: Any = None,
+        workspace: Any = None,
+        approved_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_align_crop"
+        try:
+            _check_args(self.align_crop, arguments)
+            args: Dict[str, Any] = {
+                "reference": _view_ref(reference, "reference"),
+                "views": _view_refs(views, "views", 100),
+                "align_crop_box": _bool(align_crop_box, "align_crop_box", True),
+                "annotation_crop": _choice(annotation_crop, ("keep", "on", "off", "match_reference"), "annotation_crop", "keep"),
+                **_on_error_dry(on_error, dry_run),
+            }
+            if not args["align_crop_box"] and args["annotation_crop"] == "keep":
+                raise ValueError("nothing to do: align_crop_box is false and annotation_crop is keep")
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        return self._write(tool, "align_crop.ipy", args, workspace, approved_executor)
+
+    def list_revisions(
+        self,
+        only_open: Any = False,
+        limit: int = 50,
+        offset: int = 0,
+        count_only: bool = False,
+        fields: Optional[List[str]] = None,
+        arguments: Any = None,
+        workspace: Any = None,
+        tool_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_list_revisions"
+        try:
+            _check_args(self.list_revisions, arguments)
+            args = {"only_open": _bool(only_open, "only_open", False)}
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        return self._read(tool, "list_revisions.ipy", args, PageSpec.from_args(limit, offset, count_only, fields), workspace, tool_executor,
+                          {"id": "int", "sequence": "int", "issued": "bool", "clouds": "int", "sheets": "int"}, lambda r: r.get("sequence") or 0)
+
+    def add_revision(
+        self,
+        description: Any = None,
+        date: Any = None,
+        issued_by: Any = None,
+        issued_to: Any = None,
+        visibility: Any = None,
+        dry_run: Any = False,
+        arguments: Any = None,
+        workspace: Any = None,
+        approved_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_add_revision"
+        try:
+            _check_args(self.add_revision, arguments)
+            args = {
+                "description": _text(description, "description", 500),
+                "date": _text(date, "date", 40, required=False),
+                "issued_by": _text(issued_by, "issued_by", 100, required=False),
+                "issued_to": _text(issued_to, "issued_to", 100, required=False),
+                "visibility": _choice(visibility, ("cloud_and_tag", "tag", "hidden"), "visibility", "") or None,
+                "dry_run": _flag(dry_run, "dry_run"),
+            }
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        return self._write(tool, "add_revision.ipy", args, workspace, approved_executor)
+
+    def add_revision_clouds(
+        self,
+        revision_id: Any = None,
+        revision_number: Any = None,
+        view: Any = None,
+        element_ids: Any = None,
+        bbox_m: Any = None,
+        per_element: Any = False,
+        margin_mm: Any = 100.0,
+        on_error: Any = None,
+        dry_run: Any = False,
+        arguments: Any = None,
+        workspace: Any = None,
+        approved_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_add_revision_clouds"
+        try:
+            _check_args(self.add_revision_clouds, arguments)
+            ids = _int_list(element_ids, "element_ids")
+            if len(ids) > 200 or any(i < 1 for i in ids):
+                raise ValueError("element_ids must hold 0 to 200 positive integers")
+            box = None
+            if bbox_m is not None:
+                if not isinstance(bbox_m, dict):
+                    raise ValueError("bbox_m must be an object with min and max, each [x, y, z] in metres")
+                _only(bbox_m, ("min", "max"), "bbox_m")
+                lo, hi = _num_list(bbox_m.get("min"), "bbox_m.min", 3), _num_list(bbox_m.get("max"), "bbox_m.max", 3)
+                for c in lo + hi:
+                    _in_range(c, -100000, 100000, "bbox_m coordinates (metres)")
+                if any(h < low for low, h in zip(lo, hi)):
+                    raise ValueError("bbox_m.max must not be below bbox_m.min on any axis")
+                box = {"min": lo, "max": hi}
+            if not ids and box is None:
+                raise ValueError("give element_ids and/or bbox_m")
+            per = _bool(per_element, "per_element", False)
+            if per and len(ids) + (1 if box else 0) > 100:
+                raise ValueError("per_element makes one cloud per element: at most 100 clouds per call")
+            args: Dict[str, Any] = {
+                **_revision_ref(revision_id, revision_number),
+                "view": _view_ref(view, "view"),
+                "element_ids": ids,
+                "bbox_m": box,
+                "per_element": per,
+                "margin_mm": _in_range(_num(margin_mm if margin_mm is not None else 100.0, "margin_mm"), 0, 2000, "margin_mm"),
+                **_on_error_dry(on_error, dry_run),
+            }
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        return self._write(tool, "add_revision_clouds.ipy", args, workspace, approved_executor)
+
+    def issue_revision(
+        self,
+        revision_id: Any = None,
+        revision_number: Any = None,
+        sheets: Any = None,
+        issue: Any = False,
+        issued_by: Any = None,
+        issued_to: Any = None,
+        on_error: Any = None,
+        dry_run: Any = False,
+        arguments: Any = None,
+        workspace: Any = None,
+        approved_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_issue_revision"
+        try:
+            _check_args(self.issue_revision, arguments)
+            if sheets is not None and not isinstance(sheets, list):
+                raise ValueError("sheets must be a list of sheet numbers")
+            numbers = [_name(n, "sheets[]") for n in (sheets or [])]
+            if len(numbers) > 200:
+                raise ValueError("at most 200 sheets per call")
+            do_issue = _bool(issue, "issue", False)
+            if not numbers and not do_issue:
+                raise ValueError("nothing to do: give sheets and/or issue true")
+            by, to = _text(issued_by, "issued_by", 100, required=False), _text(issued_to, "issued_to", 100, required=False)
+            if (by is not None or to is not None) and not do_issue:
+                raise ValueError("issued_by and issued_to only go with issue true")
+            args = {
+                **_revision_ref(revision_id, revision_number),
+                "sheets": numbers,
+                "issue": do_issue,
+                "issued_by": by,
+                "issued_to": to,
+                **_on_error_dry(on_error, dry_run),
+            }
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        return self._write(tool, "issue_revision.ipy", args, workspace, approved_executor)
+
+    def sheet_index(
+        self,
+        name_contains: Any = "",
+        only_findings: Any = False,
+        limit: int = 50,
+        offset: int = 0,
+        count_only: bool = False,
+        fields: Optional[List[str]] = None,
+        arguments: Any = None,
+        workspace: Any = None,
+        tool_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_sheet_index"
+        try:
+            _check_args(self.sheet_index, arguments)
+            args = {"name_contains": _text(name_contains if name_contains is not None else "", "name_contains", 100, required=False) or "",
+                    "only_findings": _bool(only_findings, "only_findings", False)}
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        return self._read(tool, "sheet_index.ipy", args, PageSpec.from_args(limit, offset, count_only, fields), workspace, tool_executor,
+                          {"id": "int", "views": "int", "schedules": "int", "empty": "bool"}, lambda r: str(r.get("number") or "").lower())
+
+    def update_sheets(
+        self,
+        sheets: Any = None,
+        on_error: Any = None,
+        dry_run: Any = False,
+        arguments: Any = None,
+        workspace: Any = None,
+        approved_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_update_sheets"
+        try:
+            _check_args(self.update_sheets, arguments)
+            if not isinstance(sheets, list) or not 1 <= len(sheets) <= 200:
+                raise ValueError("sheets must be a list of 1 to 200 rows, each with number and new_number and/or new_name")
+            rows: List[Dict[str, Any]] = []
+            for i, r in enumerate(sheets):
+                if not isinstance(r, dict):
+                    raise ValueError(f"sheets[{i}] must be an object with number, new_number, new_name")
+                _only(r, ("number", "new_number", "new_name"), f"sheets[{i}]")
+                row: Dict[str, Any] = {"number": _name(r.get("number"), f"sheets[{i}].number")}
+                if r.get("new_number") is not None:
+                    row["new_number"] = _name(r["new_number"], f"sheets[{i}].new_number")
+                if r.get("new_name") is not None:
+                    row["new_name"] = _name(r["new_name"], f"sheets[{i}].new_name")
+                if "new_number" not in row and "new_name" not in row:
+                    raise ValueError(f"sheets[{i}] changes nothing: give new_number and/or new_name")
+                rows.append(row)
+            olds = [r["number"] for r in rows]
+            if len(set(olds)) != len(olds):
+                raise ValueError("a sheet number is listed twice in the table: " + ", ".join(sorted({n for n in olds if olds.count(n) > 1})))
+            news = [r.get("new_number", r["number"]) for r in rows]
+            if len(set(news)) != len(news):
+                raise ValueError("two rows give their sheet the same number: " + ", ".join(sorted({n for n in news if news.count(n) > 1})))
+            opts = _on_error_dry(on_error, dry_run)
+            moving = {r["number"] for r in rows if r.get("new_number") not in (None, r["number"])}
+            chained = sorted(r["new_number"] for r in rows if r.get("new_number") in moving and r["new_number"] != r["number"])
+            if chained and opts["on_error"] != "abort":
+                raise ValueError("numbers swap or chain (" + ", ".join(chained) + " is also the current number of a listed sheet); this needs on_error abort")
+            args = {"sheets": rows, **opts}
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        return self._write(tool, "update_sheets.ipy", args, workspace, approved_executor)
+
+    # ---- shared read path (documentation batch) ------------------------------ #
+    def _read(
+        self,
+        tool: str,
+        script_name: str,
+        args: Dict[str, Any],
+        page: PageSpec,
+        workspace: Any,
+        tool_executor: Optional[ToolExecutor],
+        row_types: Dict[str, str],
+        order: Callable[[Dict[str, Any]], Any],
+    ) -> Dict[str, Any]:
+        parsed, elapsed, early = _run(tool, script_name, args, write=False, tool_executor=tool_executor, approved_executor=None)
+        if early is not None or parsed is None:
+            return early or {}
+        return assemble_result(tool, parsed, page, row_types=row_types, sort_key=order, elapsed_ms=elapsed, workspace=workspace)
 
     # ---- shared write path -------------------------------------------------- #
     def _write(
