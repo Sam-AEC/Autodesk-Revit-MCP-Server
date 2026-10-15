@@ -209,3 +209,18 @@ def test_soft_wait_is_configurable_from_the_environment(monkeypatch):
     assert BridgeClient("http://bridge.test").soft_wait == 7
     monkeypatch.setenv("AEC_BRIDGE_SOFT_WAIT_SECONDS", "nonsense")
     assert BridgeClient("http://bridge.test").soft_wait == 25
+
+
+def test_door_and_window_results_keep_the_new_element_as_element_id():
+    from revit_mcp_server.bridge.client import BridgeClient
+
+    client = BridgeClient("http://127.0.0.1:1")
+    door = {"door_id": 7, "wall_id": 3}
+    client._normalize_element_ids(door)
+    assert door["element_id"] == 7
+    window = {"wall_id": 3, "window_id": 9}
+    client._normalize_element_ids(window)
+    assert window["element_id"] == 9
+    wall = {"wall_id": 3}
+    client._normalize_element_ids(wall)
+    assert wall["element_id"] == 3

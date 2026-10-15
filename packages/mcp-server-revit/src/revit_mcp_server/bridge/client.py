@@ -288,10 +288,12 @@ class BridgeClient:
     def _normalize_element_ids(self, result: dict[str, Any]) -> None:
         """Normalize specific element ID keys to generic element_id for consistency."""
         # Map specific element type IDs to generic element_id
+        # Order matters: a door or window result also carries its host's wall_id, and element_id must be the
+        # new element, so wall_id comes after the keys of the things that can be placed in a wall.
         id_keys = [
-            'wall_id', 'floor_id', 'roof_id', 'door_id', 'window_id',
+            'floor_id', 'roof_id', 'door_id', 'window_id',
             'column_id', 'beam_id', 'level_id', 'view_id', 'sheet_id',
-            'room_id', 'grid_id', 'family_instance_id', 'element_id'
+            'room_id', 'grid_id', 'family_instance_id', 'wall_id', 'element_id'
         ]
 
         for key in id_keys:
