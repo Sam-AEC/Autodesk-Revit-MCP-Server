@@ -107,9 +107,12 @@ def _element_chip(el: Dict[str, Any]) -> Dict[str, Any]:
 class ModelInspectorModule:
 
     def summarize_model(self, snapshot_id: str = "", workspace: Any = None, **_) -> Dict[str, Any]:
+        is_mock = False
         if not snapshot_id:
             # Auto-take snapshot — call out to semantic module
-            from revit_mcp_server.semantic.engine import generate_mock_snapshot
+            from revit_mcp_server.semantic.engine import generate_mock_snapshot, require_snapshot_or_mock
+            require_snapshot_or_mock(snapshot_id, "model_inspector")
+            is_mock = True
             snap = generate_mock_snapshot()
             elements = [el.model_dump(by_alias=True) for el in snap.elements]
             types = [t.model_dump() for t in snap.types]
@@ -140,11 +143,15 @@ class ModelInspectorModule:
             "family_count": len(family_set),
             "by_category": dict(by_cat.most_common()),
             "rooms": {"total": len(rooms), "placed": placed_rooms, "unplaced": len(rooms) - placed_rooms},
+            **({"data_source": "mock"} if is_mock else {}),
         }
 
     def ask(self, filter: Dict[str, Any], snapshot_id: str = "", workspace: Any = None, **_) -> Dict[str, Any]:
+        is_mock = False
         if not snapshot_id:
-            from revit_mcp_server.semantic.engine import generate_mock_snapshot
+            from revit_mcp_server.semantic.engine import generate_mock_snapshot, require_snapshot_or_mock
+            require_snapshot_or_mock(snapshot_id, "model_inspector")
+            is_mock = True
             snap = generate_mock_snapshot()
             elements = [el.model_dump(by_alias=True) for el in snap.elements]
         else:
@@ -158,11 +165,15 @@ class ModelInspectorModule:
             "filter": filter,
             "matches_count": len(chips),
             "elements": chips,
+            **({"data_source": "mock"} if is_mock else {}),
         }
 
     def list_groups(self, snapshot_id: str = "", workspace: Any = None, **_) -> Dict[str, Any]:
+        is_mock = False
         if not snapshot_id:
-            from revit_mcp_server.semantic.engine import generate_mock_snapshot
+            from revit_mcp_server.semantic.engine import generate_mock_snapshot, require_snapshot_or_mock
+            require_snapshot_or_mock(snapshot_id, "model_inspector")
+            is_mock = True
             snap = generate_mock_snapshot()
             elements = [el.model_dump(by_alias=True) for el in snap.elements]
         else:
@@ -184,11 +195,15 @@ class ModelInspectorModule:
         return {
             "groups_count": len(group_list),
             "groups": group_list,
+            **({"data_source": "mock"} if is_mock else {}),
         }
 
     def inspect_selection(self, element_uids: List[str], snapshot_id: str = "", workspace: Any = None, **_) -> Dict[str, Any]:
+        is_mock = False
         if not snapshot_id:
-            from revit_mcp_server.semantic.engine import generate_mock_snapshot
+            from revit_mcp_server.semantic.engine import generate_mock_snapshot, require_snapshot_or_mock
+            require_snapshot_or_mock(snapshot_id, "model_inspector")
+            is_mock = True
             snap = generate_mock_snapshot()
             elements = {el.uid: el.model_dump(by_alias=True) for el in snap.elements}
         else:
@@ -239,6 +254,7 @@ class ModelInspectorModule:
             "inspected_count": len(cards),
             "missing_uids": missing,
             "elements": cards,
+            **({"data_source": "mock"} if is_mock else {}),
         }
 
     def save_query(self, query_name: str, filter: Dict[str, Any], workspace: Any = None, **_) -> Dict[str, Any]:

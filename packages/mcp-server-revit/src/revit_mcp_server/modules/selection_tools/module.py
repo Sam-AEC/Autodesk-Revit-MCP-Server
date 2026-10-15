@@ -134,8 +134,11 @@ class SelectionToolsModule:
         return self.set_selection(element_uids=element_uids, workspace=workspace)
 
     def select_by_query(self, filter: Dict[str, Any], snapshot_id: str = "", workspace: Any = None, **_) -> Dict[str, Any]:
+        is_mock = False
         if not snapshot_id:
-            from revit_mcp_server.semantic.engine import generate_mock_snapshot
+            from revit_mcp_server.semantic.engine import generate_mock_snapshot, require_snapshot_or_mock
+            require_snapshot_or_mock(snapshot_id, "selection_tools")
+            is_mock = True
             snap = generate_mock_snapshot()
             elements = [el.model_dump(by_alias=True) for el in snap.elements]
         else:
@@ -143,7 +146,10 @@ class SelectionToolsModule:
             elements = data.get("elements", [])
 
         matched_uids = [el["uid"] for el in elements if _match_element(el, filter)]
-        return self.set_selection(element_uids=matched_uids, workspace=workspace)
+        result = self.set_selection(element_uids=matched_uids, workspace=workspace)
+        if is_mock:
+            result["data_source"] = "mock"
+        return result
 
     def list_saved_selections(self, workspace: Any = None, **_) -> Dict[str, Any]:
         selections = _load_selections(workspace)
@@ -204,8 +210,11 @@ class SelectionToolsModule:
     # -----------------------------------------------------------------------
 
     def _find_group(self, group_uid: str, snapshot_id: str, workspace: Any) -> Dict[str, Any]:
+        is_mock = False
         if not snapshot_id:
-            from revit_mcp_server.semantic.engine import generate_mock_snapshot
+            from revit_mcp_server.semantic.engine import generate_mock_snapshot, require_snapshot_or_mock
+            require_snapshot_or_mock(snapshot_id, "selection_tools")
+            is_mock = True
             snap = generate_mock_snapshot()
             elements = [el.model_dump(by_alias=True) for el in snap.elements]
         else:
@@ -220,4 +229,5 @@ class SelectionToolsModule:
             "current_name": group_el.get("type_name") if group_el else "<unknown>",
             "member_count": len(member_elements),
             "instance_count": 1,  # Without a real Revit connection, assume 1 visible instance
+            **({"data_source": "mock"} if is_mock else {}),
         }

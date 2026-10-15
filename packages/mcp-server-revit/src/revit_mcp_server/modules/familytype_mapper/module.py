@@ -34,7 +34,8 @@ def _load_snapshot(snapshot_id: str, workspace: Any) -> Dict[str, Any]:
 
 def _get_data(snapshot_id: str, workspace: Any):
     if not snapshot_id:
-        from revit_mcp_server.semantic.engine import generate_mock_snapshot
+        from revit_mcp_server.semantic.engine import generate_mock_snapshot, require_snapshot_or_mock
+        require_snapshot_or_mock(snapshot_id, "familytype_mapper")
         snap = generate_mock_snapshot()
         return (
             [el.model_dump(by_alias=True) for el in snap.elements],
@@ -129,6 +130,7 @@ class FamilytypeMapperModule:
             "inplace_count": len(inplace_families),
             "findings_count": len(deduped),
             "findings": deduped,
+            **({"data_source": "mock"} if not snapshot_id else {}),
         }
 
     def list_type_mappings(self, snapshot_id: str = "", category: str = "", workspace: Any = None, **_) -> Dict[str, Any]:
@@ -156,4 +158,5 @@ class FamilytypeMapperModule:
             "category_filter": category or "(all)",
             "families_count": len(result),
             "mappings": result,
+            **({"data_source": "mock"} if not snapshot_id else {}),
         }
