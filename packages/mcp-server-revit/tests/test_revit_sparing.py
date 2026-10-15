@@ -187,7 +187,7 @@ def test_module_files_have_no_conflict_markers():
 
 def test_scripts_are_python27_safe_and_find_stays_read_only():
     scripts = sorted(sp.SCRIPT_DIR.glob("*.ipy"))
-    assert {p.name for p in scripts} == {"_sparing_detect.ipy", "find.ipy", "place.ipy"}
+    assert {p.name for p in scripts} == {"_sparing_detect.ipy", "_sparing_place_lib.ipy", "find.ipy", "place.ipy"}
     for path in scripts:
         tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
         for node in ast.walk(tree):

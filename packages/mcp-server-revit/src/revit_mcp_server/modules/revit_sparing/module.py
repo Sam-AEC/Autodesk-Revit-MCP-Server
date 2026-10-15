@@ -71,8 +71,11 @@ from revit_mcp_server.check_contract import (
     ScriptOutput,
     assemble_result,
     error_result,
+    is_safe_name,
+    load_json,
     mock_result,
     parse_script_output,
+    save_json,
 )
 
 MODULE_DIR = Path(__file__).resolve().parent
@@ -89,6 +92,11 @@ ToolExecutor = Callable[[str, Dict[str, Any]], Any]
 
 # script name -> write script?
 SCRIPTS: Dict[str, bool] = {"find.ipy": False, "place.ipy": True}
+# Shared source files loaded between the preludes and ARGS, per script (order matters). Every file holds definitions only.
+PLACE_LIB = "_sparing_place_lib.ipy"
+SCRIPT_PARTS: Dict[str, Tuple[str, ...]] = {"find.ipy": (DETECT,), "place.ipy": (DETECT, PLACE_LIB)}
+# Scripts that read Extensible Storage tags even though they do not write.
+READS_TAGS: Tuple[str, ...] = ()
 
 MEP_CATEGORIES = ("pipes", "ducts", "conduits", "cabletrays")
 HOST_CATEGORIES = ("walls", "floors", "roofs", "structuralframing")
@@ -162,10 +170,12 @@ def build_script(script_name: str, args: Dict[str, Any]) -> str:
     """Prelude(s) + detection + ``ARGS`` literal + the command script. The read script gets no write prelude."""
     write = SCRIPTS[script_name]
     parts = [REVIT_PRELUDE.read_text(encoding="utf-8")]
-    if write:
+    if write or script_name in READS_TAGS:
         parts.append(TAGS_READ.read_text(encoding="utf-8"))
+    if write:
         parts.append(WRITE_PRELUDE.read_text(encoding="utf-8"))
-    parts.append((SCRIPT_DIR / DETECT).read_text(encoding="utf-8"))
+    for lib in SCRIPT_PARTS[script_name]:
+        parts.append((SCRIPT_DIR / lib).read_text(encoding="utf-8"))
     parts.append(f"ARGS = {py2_literal(args)}")
     parts.append((SCRIPT_DIR / script_name).read_text(encoding="utf-8"))
     return "\n\n".join(parts) + "\n"
@@ -470,11 +480,26 @@ def _summary_first(result: Dict[str, Any], totals: Dict[str, Any]) -> Dict[str, 
     return ordered
 
 
-def _finish_write(tool: str, parsed: ScriptOutput, elapsed: int, workspace: Any) -> Dict[str, Any]:
+def _finish_write(
+    tool: str,
+    parsed: ScriptOutput,
+    elapsed: int,
+    workspace: Any,
+    *,
+    item_types: Optional[Dict[str, str]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+    dry_run_asked: bool = False,
+) -> Dict[str, Any]:
     outcome = parsed.meta.get("outcome", "ok")
-    dry_run = outcome == "dry_run"
+    # a dry run is reported either by the script's own close ('dry_run') or by the Runner's built-in one (dry_run=1)
+    dry_run = outcome == "dry_run" or (outcome == "ok" and parsed.meta.get("dry_run") == "1")
+    if dry_run:
+        outcome = "dry_run"
     changed = _ints(parsed.meta.get("changed_ids"))
     failed_ids = _ints(parsed.meta.get("failed_ids"))
+    violation = ""
+    if dry_run_asked and not dry_run and changed and outcome in ("ok", "partial_failure", "post_check_failed"):
+        violation = "DRY_RUN_NOT_HONOURED: a dry run was asked for but the script reports committed changes; check the model"
     posts = [r for r in parsed.rows if r.get("row_type") == "post"]
     items = [{k: v for k, v in r.items() if k != "row_type"} for r in parsed.rows if r.get("row_type") == "item"]
     checks = [{"check": r.get("check"), "ok": r.get("ok") == "1", "detail": r.get("detail", "")} for r in posts]
@@ -483,14 +508,18 @@ def _finish_write(tool: str, parsed: ScriptOutput, elapsed: int, workspace: Any)
     post_check = {"ok": failed_checks == 0, "checked": len(checks), "failed": failed_checks, "checks": checks[:40]}
     if outcome == "ok" and not post_check["ok"]:
         outcome = "post_check_failed"
+    fails = list(parsed.fails)
+    if violation:
+        fails.insert(0, violation)
+        outcome = "dry_run_not_honoured"
 
     synthetic = ScriptOutput(
         summary=parsed.summary,
-        fails=list(parsed.fails),
+        fails=fails,
         infos=list(parsed.infos),
         rows=items,
         meta=dict(parsed.meta),
-        counts={"fail": parsed.counts.get("fail", len(parsed.fails)), "info": parsed.counts.get("info", len(parsed.infos)), "row": len(items)},
+        counts={"fail": parsed.counts.get("fail", len(parsed.fails)) + (1 if violation else 0), "info": parsed.counts.get("info", len(parsed.infos)), "row": len(items)},
     )
     fields: Dict[str, Any] = {
         "changed_ids": changed if outcome in ("ok", "partial_failure", "post_check_failed") else [],
@@ -500,11 +529,15 @@ def _finish_write(tool: str, parsed: ScriptOutput, elapsed: int, workspace: Any)
         "on_error": parsed.meta.get("on_error"),
         "warnings_dismissed": int(parsed.meta.get("warnings_dismissed", "0") or 0),
     }
-    ok = outcome in ("ok", "dry_run") and post_check["ok"] and not parsed.fails and parsed.counts.get("fail", 0) == 0
+    if dry_run and parsed.meta.get("would_change_ids"):
+        fields["would_change_ids"] = _ints(parsed.meta.get("would_change_ids"))
+    if extra:
+        fields.update(extra)
+    ok = outcome in ("ok", "dry_run") and post_check["ok"] and not fails and parsed.counts.get("fail", 0) == 0
     summary = parsed.summary
     failed_text = [c for c in checks if not c["ok"]]
     if not ok:
-        first = parsed.fails[0] if parsed.fails else (
+        first = fails[0] if fails else (
             ("%s: %s" % (failed_text[0]["check"], failed_text[0]["detail"])) if failed_text else outcome)
         summary = f"FAILED ({outcome}): {first}"
         if outcome == "rolled_back":
@@ -512,7 +545,7 @@ def _finish_write(tool: str, parsed: ScriptOutput, elapsed: int, workspace: Any)
     elif dry_run:
         summary = "DRY RUN (everything was rolled back, the model is unchanged): " + summary
     result = assemble_result(
-        tool, synthetic, PageSpec(limit=MAX_LIMIT), row_types=ITEM_TYPES, elapsed_ms=elapsed, workspace=workspace,
+        tool, synthetic, PageSpec(limit=MAX_LIMIT), row_types=item_types or ITEM_TYPES, elapsed_ms=elapsed, workspace=workspace,
         summary=summary, extra=fields,
     )
     if dry_run:
@@ -520,8 +553,8 @@ def _finish_write(tool: str, parsed: ScriptOutput, elapsed: int, workspace: Any)
     if not ok:
         result["ok"] = False
         result["kind"] = outcome if outcome not in ("ok", "dry_run") else "post_check_failed"
-        if parsed.fails:
-            result["message"] = parsed.fails[0]
+        if fails:
+            result["message"] = fails[0]
         elif failed_text:
             result["message"] = "%s: %s" % (failed_text[0]["check"], failed_text[0]["detail"])
         else:
@@ -650,7 +683,7 @@ class RevitSparingModule:
         parsed, elapsed, early = _run(tool, "place.ipy", args, write=True, tool_executor=None, approved_executor=approved_executor)
         if early is not None or parsed is None:
             return early or {}
-        return _finish_write(tool, parsed, elapsed, workspace)
+        return _finish_write(tool, parsed, elapsed, workspace, dry_run_asked=args["dry_run"])
 
     @staticmethod
     def _size_parameters(value: Any) -> Dict[str, str]:
