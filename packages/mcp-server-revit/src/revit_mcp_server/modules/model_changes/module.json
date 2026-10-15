@@ -1,0 +1,44 @@
+{
+  "id": "model_changes",
+  "name": "Model Changes",
+  "version": "1.0.0",
+  "schema_version": 1,
+  "min_hub_version": "1.2.0",
+  "description": "What changed since yesterday: compare two saved model snapshots and get a plain-language list of added, removed and modified elements, parameter value changes and counts per category. Read-only.",
+  "author": "AEC Model Bridge",
+  "license": "GPL-3.0-or-later",
+  "requires_providers": ["semantic"],
+  "permissions": ["model.read"],
+  "commands": [
+    {
+      "id": "list_snapshots",
+      "title": "List Saved Snapshots",
+      "surface": ["mcp", "panel"],
+      "execution_mode": "sync",
+      "is_mutating": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "limit": {"type": "integer", "description": "Maximum number of snapshots to list, newest first.", "default": 20}
+        },
+        "required": []
+      }
+    },
+    {
+      "id": "compare_snapshots",
+      "title": "What Changed Between Snapshots",
+      "surface": ["mcp", "panel"],
+      "execution_mode": "sync",
+      "is_mutating": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "older_snapshot_id": {"type": "string", "description": "Snapshot id of the earlier state, or 'previous' for the second-newest saved snapshot."},
+          "newer_snapshot_id": {"type": "string", "description": "Snapshot id of the later state, or 'latest' for the newest saved snapshot."},
+          "max_items": {"type": "integer", "description": "Maximum number of detailed rows listed per section; totals are always complete.", "default": 200}
+        },
+        "required": []
+      }
+    }
+  ]
+}

@@ -81,6 +81,8 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `familytype_mapper_list_type_mappings` | List family-type mappings found in a saved snapshot, optionally for one category. | No | sync |
 | `hello_world_say_hello` | Example module command that returns a greeting; use it to confirm the module system works. | No | sync |
 | `links_worksets_audit_audit` | Check linked models and worksets for problems (unloaded or missing links, links not pinned or placed Origin to Origin, empty or default-named worksets, worksets owned by someone else, elements on the wrong workset) and give plain next steps. | No | sync |
+| `model_changes_compare_snapshots` | Say what changed between two saved snapshots: elements added, removed or modified, parameter values before and after, and counts per category. | No | sync |
+| `model_changes_list_snapshots` | List the saved model snapshots with their timestamps, newest first, so you can pick the latest and previous ones to compare. | No | sync |
 | `model_inspector_ask` | Answer a question about a saved snapshot by filtering its element records with the filter DSL. | No | sync |
 | `model_inspector_inspect_selection` | Return the snapshot records of the given elements (by UniqueId). | No | sync |
 | `model_inspector_list_groups` | List the model groups found in a saved snapshot. | No | sync |
