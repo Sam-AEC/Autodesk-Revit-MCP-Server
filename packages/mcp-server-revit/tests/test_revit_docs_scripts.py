@@ -70,7 +70,7 @@ def deletion_env(elements, cascades):
            "TransactionStatus": SimpleNamespace(Started="started", Committed="committed"),
            "owned_elements": lambda kind, tag, key: [e for e in doc.elements.values()
                                                       if e.owner and e.owner[:2] == (tag, key)]}
-    load_functions("_write_prelude.ipy", {"delete_owned", "StepError"}, env)
+    load_functions("_write_prelude.ipy", {"delete_owned", "is_view_internal", "StepError"}, env)
     return env
 
 
@@ -93,6 +93,45 @@ def test_cascade_to_foreign_content_rolls_back_every_deletion(owner):
         env["delete_owned"]([first, second])
     assert error.value.ids == [3]
     assert set(env["doc"].elements) == {1, 2, 3}
+
+
+class ViewPart(Element):
+    """A dependent Revit makes with a view: it exists until Delete runs, like the real parts of a 3D view."""
+
+    def __init__(self, number, owner_view=-1, category=None, name=""):
+        Element.__init__(self, number)
+        self.OwnerViewId = owner_view
+        self.Category = category
+        self.Name = name
+
+
+class OwnedView(Element):
+    ViewType = "ThreeD"
+    Name = "iso"
+
+    def __init__(self, number, owner, dependents):
+        Element.__init__(self, number, owner)
+        self.dependents = dependents
+
+    def GetDependentElements(self, _filter):
+        return [self.Id] + self.dependents
+
+
+def test_parts_revit_makes_with_a_view_are_not_foreign_but_a_sheet_placement_is():
+    camera = ViewPart(2, category=SimpleNamespace(Id=-10))
+    helper = ViewPart(3, owner_view=1)
+    on_sheet = ViewPart(4)
+    view = OwnedView(1, ("DOC", "iso", "view"), [2, 3])
+    env = deletion_env([view, camera, helper, on_sheet], {1: [1, 2, 3]})
+    env["BuiltInCategory"] = SimpleNamespace(OST_Cameras=-10)
+    assert env["delete_owned"]([view]) == [1, 2, 3]
+
+    view = OwnedView(1, ("DOC", "iso", "view"), [2, 3, 4])
+    env = deletion_env([view, camera, helper, on_sheet], {1: [1, 2, 3, 4]})
+    env["BuiltInCategory"] = SimpleNamespace(OST_Cameras=-10)
+    with pytest.raises(env["StepError"], match="foreign dependent") as error:
+        env["delete_owned"]([view])
+    assert error.value.ids == [4]
 
 
 def test_untagged_requested_element_is_refused_before_delete():

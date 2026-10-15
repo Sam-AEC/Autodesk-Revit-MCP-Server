@@ -291,10 +291,45 @@ def get_by_id(i):
     return doc.GetElement(ElementId(int(i)))
 
 
+def is_view_internal(e, view_ids, view_names):
+    """True for the parts of a view that Revit creates and deletes with it (camera, section box, sun path, work plane
+    grid, view-specific helper elements and the view's own unplaced viewport). A viewport on a sheet is NOT internal."""
+    categories = ("OST_Cameras", "OST_SectionBox", "OST_IOSSketchGrid", "OST_SunStudy")
+    try:
+        owner = e.OwnerViewId
+        if owner is not None and eid(owner) in view_ids:
+            return True
+    except Exception:
+        pass
+    try:
+        if isinstance(e, Viewport):
+            return eid(e.SheetId) < 0 and eid(e.ViewId) in view_ids
+    except Exception:
+        pass
+    try:
+        cat = e.Category
+        if cat is not None:
+            for name in categories:
+                bic = getattr(BuiltInCategory, name, None)
+                if bic is not None and eid(cat.Id) == int(bic):
+                    return True
+        elif e.GetType().Name == "Element" and e.Name in view_names:
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def delete_owned(elems):
     """Check the complete dependency cascade inside a rollbackable sub-transaction."""
     ids = [eid(e) for e in elems]
     allowed = set()
+    view_ids = set()
+    view_names = set()
+    for e in elems:
+        if getattr(e, "ViewType", None) is not None:
+            view_ids.add(eid(e))
+            view_names.add(e.Name)
     for e in elems:
         owner = read_tag(e)
         if owner is None:
@@ -312,8 +347,17 @@ def delete_owned(elems):
             e = doc.GetElement(ElementId(i))
             if e is None:
                 continue
+            # Classify the dependents while they still exist; Delete removes them at once.
+            internal = set()
+            try:
+                for j in e.GetDependentElements(None):
+                    dep = doc.GetElement(j)
+                    if dep is not None and is_view_internal(dep, view_ids, view_names):
+                        internal.add(eid(j))
+            except Exception:
+                pass
             cascade = [eid(j) for j in doc.Delete(e.Id)]
-            foreign = [j for j in cascade if j not in allowed]
+            foreign = [j for j in cascade if j not in allowed and j not in internal]
             if foreign:
                 raise StepError("replacement would delete foreign dependent elements; nothing was deleted", foreign)
             for j in cascade:
