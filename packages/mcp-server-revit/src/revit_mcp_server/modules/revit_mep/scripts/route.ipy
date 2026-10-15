@@ -256,6 +256,25 @@ def expected_open(c, points):
     return False
 
 
+def planned_free_end_ids(built):
+    points = []
+    pieces = []
+    for b in built.values():
+        points.extend(b["points"])
+        pieces.extend(b["curves"] + b["extra"])
+    out = []
+    if not points:
+        return out
+    for cu in pieces:
+        try:
+            for c in cu.ConnectorManager.Connectors:
+                if not c.IsConnected and expected_open(c, points) and eid(cu) not in out:
+                    out.append(eid(cu))
+        except Exception:
+            pass
+    return out
+
+
 def check_route(rid, res, run):
     r = res["route"]
     kind = ARGS["kind"]
@@ -358,6 +377,11 @@ def main():
             continue
         check_route(rid, res, run)
         emit_rows(rid, res)
+    # A tee splits a trunk, so the piece that holds a planned free end may be a new one (seen live: the system report
+    # then flagged the planned end of a trunk). Find the pieces by position, not by the id the route started with.
+    for i in planned_free_end_ids(state["built"]):
+        if i not in free_ends:
+            free_ends.append(i)
     meta("free_end_ids", ",".join([str(i) for i in free_ends]))
     n_curves = sum([len(b["curves"]) for b in state["built"].values()])
     n_fit = sum([len(b["fittings"]) for b in state["built"].values()])
