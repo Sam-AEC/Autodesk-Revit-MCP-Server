@@ -47,7 +47,6 @@ person stays in control of every change. You do not need to write scripts.
 - Try it on a copy of a project first. Approving a plan changes the open model.
 - Some limits are known and listed under [How approval works](#how-approval-works)
   and in [docs/security.md](docs/security.md).
-- The dev branch registers more tools (241 in mock mode at the time of writing; see the dev branch).
 
 <p align="center">
   <img src="docs/images/readme/works-with.svg" alt="Works with: Claude Desktop, VS Code with GitHub Copilot, Cursor and Codex have documented setup. Other MCP clients such as Claude Code, Windsurf, Cline, Continue, Zed and Gemini CLI should work too. Applications: Revit 2024 to 2027, Rhino, Grasshopper, Navisworks (in progress). Data: IFC, Speckle, Excel, SQLite. Protocol: MCP over stdio with an approval gate." width="900">
@@ -173,16 +172,16 @@ published to the Marketplace.
 
 | Area | Tools | What they do |
 | --- | --- | --- |
-| Revit | 103 | Read the model, create and edit elements, parameters, views, sheets, schedules, exports, worksharing |
-| Approval | 6 | Plan, review, approve, execute and roll back model changes |
-| Modules | 34 | Snapshot inspection, parameter grids, QA/QC checks, recipes, reports, selections |
+| Revit | 110 | Read the model, create and edit elements, parameters, views, sheets, schedules, exports, worksharing |
+| Approval | 5 | Plan, review, approve, execute and roll back model changes |
+| Modules | 83 | Snapshot inspection, parameter grids, QA/QC checks, recipes, reports, selections |
 | Rhino and Grasshopper | 19 | Geometry, layers, materials, boolean operations |
 | Speckle | 17 | Projects, models, versions, send and receive |
 | Navisworks | 15 | Model tree, viewpoints, clash tests (in progress) |
 | IFC | 7 | Read IFC files without Revit: structure, properties, validation |
-| Graph, snapshots, exports, jobs | 18 | Semantic graph audits, snapshot diffs, SQLite export, background jobs |
+| Graph, snapshots, exports, jobs | 21 | Semantic graph audits, snapshot diffs, SQLite export, background jobs |
 
-219 tools are listed in the default setup (counted from the current server in mock
+277 tools are listed in the default setup (counted from the current server in mock
 mode). The Autodesk Data tools appear when APS credentials are configured. The
 [tool reference](docs/tools-generated.md) lists every tool. Each tool carries
 MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`,

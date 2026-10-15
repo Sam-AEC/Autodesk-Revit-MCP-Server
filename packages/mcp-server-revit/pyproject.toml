@@ -59,7 +59,7 @@ build-backend = "setuptools.build_meta"
 
 # Module manifests, QA/QC rules and recipes are data files next to the code. Without
 # this they were left out of the wheel, so a pip/uvx install silently lacked the
-# ~34 module tools that a source checkout has.
+# ~80 module tools that a source checkout has.
 [tool.setuptools.package-data]
 revit_mcp_server = [
     "modules/*/module.json",
