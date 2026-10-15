@@ -159,8 +159,7 @@ internal static class PythonScriptRunner
             }
             var left = RollBackOpenTransactions(doc, scope);
             var guardNote = EndReadGuard(ref readGuard, app, onChanged, ref changedCount);
-            if (guardNote.Length > 0) error += "
-" + guardNote;
+            if (guardNote.Length > 0) error += Environment.NewLine + guardNote;
             var kind = changedCount > 0 || savesBlocked > 0 ? "read_mode_violation" : null;
             if (left.RolledBack > 0 || left.StillOpen)
             {
