@@ -104,6 +104,18 @@ class ModuleProvider(AECProvider):
                 ))
         return tools
 
+    def call_is_read_only(self, name: str, arguments: Dict[str, Any]) -> bool:
+        """Lets the approval gate skip one call of a mutating module command when the module itself proves it cannot
+        change the model (a read recipe, a dry run). The module implements ``call_is_read_only(command_id, arguments,
+        workspace)``; without it, or with any answer but True, the gate applies. The module may raise to refuse a call."""
+        for m in self.registry.get_all_modules():
+            for cmd in m.manifest.commands:
+                if tool_name_of(m.manifest.id, cmd) != name:
+                    continue
+                hook = getattr(m.class_instance, "call_is_read_only", None) if m.class_instance else None
+                return bool(cmd.is_mutating and hook is not None and hook(cmd.id, arguments, self.workspace) is True)
+        return False
+
     async def check_health(self) -> Dict[str, Any]:
         return {
             "status": "ok",
