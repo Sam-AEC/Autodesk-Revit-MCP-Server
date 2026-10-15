@@ -26,7 +26,7 @@ Vec = Tuple[float, float, float]
 
 BuiltInCategory = types.SimpleNamespace(
     **stub.BuiltInCategory.__dict__, OST_Conduit=-2008132, OST_CableTray=-2008130, OST_StructuralFraming=-2001320,
-    OST_SWallRectOpening=-2000999, OST_FloorOpening=-2000898, OST_RvtLinks=-2001352,
+    OST_SWallRectOpening=-2000999, OST_FloorOpening=-2000898, OST_RvtLinks=-2001352, OST_SpecialityEquipment=-2001350,
 )
 BuiltInParameter = types.SimpleNamespace(
     **rs.BuiltInParameter.__dict__, RBS_PIPE_OUTER_DIAMETER="pipe_od", RBS_CONDUIT_OUTER_DIAM_PARAM="conduit_od",
@@ -81,6 +81,18 @@ class Transform:
     def OfPoint(self, p: XYZ) -> XYZ:
         r = self._rot(_t(p), self.angle)
         return XYZ(r[0] + self.origin[0], r[1] + self.origin[1], r[2] + self.origin[2])
+
+    @property
+    def Origin(self) -> XYZ:
+        return XYZ(*self.origin)
+
+    @property
+    def BasisX(self) -> XYZ:
+        return self.OfVector(XYZ(1.0, 0.0, 0.0))
+
+    @property
+    def Determinant(self) -> float:
+        return 1.0
 
     @property
     def Inverse(self) -> "Transform":
@@ -401,6 +413,149 @@ class LinkDoc(stub.Document):
 
 
 # --------------------------------------------------------------------------- #
+# Parameter bindings, shared parameter files and the Application (revit_sparing_status_setup)
+# --------------------------------------------------------------------------- #
+class SCategory(Category):
+    def __init__(self, bic: int, name: str, allows: bool = True) -> None:
+        super().__init__(bic, name)
+        self.AllowsBoundParameters = allows
+
+
+class SCatSet(list):
+    def Insert(self, c: Any) -> bool:
+        self.append(c)
+        return True
+
+
+class SBinding:
+    def __init__(self, categories: SCatSet) -> None:
+        self.Categories = categories
+
+
+class SDefinition:
+    def __init__(self, name: str, shared: bool = True) -> None:
+        self.Name = name
+        if shared:
+            self.GUID = "00000000-0000-0000-0000-00000000%04d" % (abs(hash(name)) % 10000)
+
+
+class _Iter:
+    def __init__(self, items: List[Tuple[Any, Any]]) -> None:
+        self._items, self._i = items, -1
+
+    def MoveNext(self) -> bool:
+        self._i += 1
+        return self._i < len(self._items)
+
+    @property
+    def Key(self) -> Any:
+        return self._items[self._i][0]
+
+    @property
+    def Current(self) -> Any:
+        return self._items[self._i][1]
+
+
+class SBindings:
+    def __init__(self, world: "SparingWorld") -> None:
+        self.w = world
+        self.items: List[Tuple[Any, Any]] = []
+
+    def ForwardIterator(self) -> _Iter:
+        return _Iter(list(self.items))
+
+    def Insert(self, definition: Any, binding: Any, group: Any = None) -> bool:
+        w = self.w
+        w.maybe_fail("bind_insert")
+        if any(d.Name == definition.Name for d, _ in self.items):
+            return False
+        entry = (definition, binding)
+        self.items.append(entry)
+        w.log(lambda: self.items.remove(entry))
+        return True
+
+    def ReInsert(self, definition: Any, binding: Any, group: Any = None) -> bool:
+        w = self.w
+        w.maybe_fail("bind_reinsert")
+        old = [x for x in self.items if x[0].Name == definition.Name]
+        if not old:
+            return False
+        idx = self.items.index(old[0])
+        self.items[idx] = (definition, binding)
+        w.log(lambda: self.items.__setitem__(idx, old[0]))
+        return True
+
+
+class _Categories:
+    def __init__(self, world: "SparingWorld") -> None:
+        self.w = world
+
+    def get_Item(self, bic: int) -> Any:
+        return self.w.categories.get(bic)
+
+
+class SDefinitions(list):
+    def __init__(self, world: "SparingWorld") -> None:
+        super().__init__()
+        self.w = world
+
+    def Create(self, opts: Any) -> SDefinition:
+        d = SDefinition(opts.Name)
+        d.spec = opts.spec
+        self.append(d)
+        self.w.file_writes.append(("definition", opts.Name))
+        return d
+
+
+class SDefGroup:
+    def __init__(self, world: "SparingWorld", name: str) -> None:
+        self.Name, self.Definitions = name, SDefinitions(world)
+
+
+class SGroups(list):
+    def __init__(self, world: "SparingWorld") -> None:
+        super().__init__()
+        self.w = world
+
+    def Create(self, name: str) -> SDefGroup:
+        g = SDefGroup(self.w, name)
+        self.append(g)
+        self.w.file_writes.append(("group", name))
+        return g
+
+
+class SDefFile:
+    def __init__(self, world: "SparingWorld") -> None:
+        self.Groups = SGroups(world)
+
+
+class ExternalDefinitionCreationOptions:
+    def __init__(self, name: str, spec: Any) -> None:
+        self.Name, self.spec = name, spec
+        self.UserModifiable = self.Visible = False
+
+
+class _AppCreate:
+    def NewCategorySet(self) -> SCatSet:
+        return SCatSet()
+
+    def NewInstanceBinding(self, cs: SCatSet) -> SBinding:
+        return SBinding(cs)
+
+
+class SApp:
+    VersionNumber = "2024"
+
+    def __init__(self, world: "SparingWorld") -> None:
+        self.w = world
+        self.SharedParametersFilename = ""
+        self.Create = _AppCreate()
+
+    def OpenSharedParameterFile(self) -> Any:
+        return self.w.shared_files.get(self.SharedParametersFilename)
+
+
+# --------------------------------------------------------------------------- #
 # Collector, creation, the world
 # --------------------------------------------------------------------------- #
 class SCollector(rs.Collector):
@@ -474,6 +629,21 @@ class SparingWorld(rs.World):
         self.Create = _SCreator(self)
         self.pbp: Vec = (0.0, 0.0, 0.0)
         self.opening_params: Dict[str, Tuple[Any, str, bool]] = {}
+        self.ParameterBindings = SBindings(self)
+        self.categories: Dict[int, SCategory] = {
+            BuiltInCategory.OST_GenericModel: SCategory(BuiltInCategory.OST_GenericModel, "Generic Models"),
+            BuiltInCategory.OST_SpecialityEquipment: SCategory(BuiltInCategory.OST_SpecialityEquipment, "Specialty Equipment"),
+            BuiltInCategory.OST_SWallRectOpening: SCategory(BuiltInCategory.OST_SWallRectOpening, "Rectangular Straight Wall Openings", allows=False),
+        }
+        self.Settings = types.SimpleNamespace(Categories=_Categories(self))
+        self.shared_files: Dict[str, SDefFile] = {}
+        self.file_writes: List[Tuple[str, str]] = []
+        self.app = SApp(self)
+
+    def run(self, script: str) -> str:
+        scope: Dict[str, Any] = {"doc": self, "app": self.app, "__output__": "", "__name__": "__ipy__"}
+        exec(compile(script, "<embedded-script>", "exec"), scope)  # noqa: S102 - test-only stub execution
+        return str(scope["__output__"])
 
     def _remove(self, e: Any) -> None:
         hook = getattr(e, "on_delete", None)
@@ -522,6 +692,9 @@ def installed_sparing(monkeypatch: Any) -> Iterator[SparingWorld]:
         "BuiltInCategory": BuiltInCategory, "BuiltInParameter": BuiltInParameter, "FilteredElementCollector": SCollector,
         "Line": SLine, "Solid": BoxSolid, "SolidUtils": SolidUtils, "SolidCurveIntersectionOptions": SolidCurveIntersectionOptions,
         "Outline": Outline, "BoundingBoxIntersectsFilter": BoundingBoxIntersectsFilter, "BasePoint": BasePoint,
+        "ExternalDefinitionCreationOptions": ExternalDefinitionCreationOptions,
+        "SpecTypeId": types.SimpleNamespace(String=types.SimpleNamespace(Text="spec:text")),
+        "GroupTypeId": types.SimpleNamespace(IdentityData="identity_data"),
         "RevitLinkInstance": SLink, "Opening": SOpening, "Transform": Transform, "ElementTransformUtils": ElementTransformUtils,
         "Transaction": rs.Transaction, "TransactionGroup": rs.TransactionGroup, "SubTransaction": rs.SubTransaction,
         "TransactionStatus": rs.TransactionStatus, "FailureSeverity": rs.FailureSeverity,

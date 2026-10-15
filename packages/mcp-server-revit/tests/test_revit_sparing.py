@@ -46,6 +46,8 @@ PLACE_OK = (
     "ROW\trow_type=item\tkind=sparing\tid=5001\tcrossing_id=301x101\taction=created\tmode=family\thost_id=101\tw_mm=160\th_mm=160\td_mm=200\tstatus=Voorstel\n"
     "COUNT\tfail\t0"
 )
+MUTATING = ("revit_sparing_place", "revit_sparing_status_set", "revit_sparing_status_setup")
+READ_ONLY = ("revit_sparing_find", "revit_sparing_status_get", "revit_sparing_status_summary")
 PLACE_ARGS: Dict[str, Any] = {"tag": "SPA-L00", "mode": "family", "family_name": "Sparing", "type_name": "Standaard",
                               "size_parameters": {"width": "b", "height": "h", "depth": "d"}}
 FIND_ARGS: Dict[str, Any] = {"categories": ["pipes"], "level": "00"}
@@ -127,10 +129,13 @@ def find(module, ex, **args):
 def test_public_tool_names_and_gate_flags(tmp_path, monkeypatch):
     provider, *_ = wire(tmp_path, monkeypatch)
     tools = {t.name: t for t in provider.get_capabilities()}
-    assert {"revit_sparing_find", "revit_sparing_place"} <= set(tools)
-    assert tools["revit_sparing_find"].is_mutating is False and tools["revit_sparing_place"].is_mutating is True
+    assert set(MUTATING) | set(READ_ONLY) <= set(tools)
     commands = {c["mcp_tool"]: c for c in manifest()["commands"]}
-    assert commands["revit_sparing_place"]["requires_plan"] is True and commands["revit_sparing_place"]["destructive"] is False
+    for name in MUTATING:
+        assert tools[name].is_mutating is True, name
+        assert commands[name]["requires_plan"] is True and commands[name]["destructive"] is False, name
+    for name in READ_ONLY:
+        assert tools[name].is_mutating is False, name
 
 
 def _undocumented(schema: Any, path: str = "root") -> List[str]:
@@ -170,7 +175,7 @@ def test_tool_metadata_marks_place_gated_and_find_read_only(tmp_path, monkeypatc
             continue
         assert isinstance(tool, ProviderTool)
         enriched = enrich_tool("module", tool)
-        if tool.name == "revit_sparing_place":
+        if tool.name in MUTATING:
             assert enriched.annotations.readOnlyHint is False and "plan_id" in enriched.inputSchema["properties"]
         else:
             assert enriched.annotations.readOnlyHint is True and "plan_id" not in enriched.inputSchema["properties"]
@@ -187,7 +192,11 @@ def test_module_files_have_no_conflict_markers():
 
 def test_scripts_are_python27_safe_and_find_stays_read_only():
     scripts = sorted(sp.SCRIPT_DIR.glob("*.ipy"))
-    assert {p.name for p in scripts} == {"_sparing_detect.ipy", "_sparing_place_lib.ipy", "find.ipy", "place.ipy"}
+    assert {p.name for p in scripts} == {
+        "_sparing_detect.ipy", "_sparing_place_lib.ipy", "_sparing_status.ipy", "find.ipy", "place.ipy", "status_get.ipy", "status_set.ipy",
+        "status_setup.ipy",
+    }
+    assert set(sp.SCRIPTS) == {p.name for p in scripts if not p.name.startswith("_")}
     for path in scripts:
         tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
         for node in ast.walk(tree):
@@ -198,6 +207,10 @@ def test_scripts_are_python27_safe_and_find_stays_read_only():
         compile(sp.build_script(name, {"tag": "x'\nraise Exception('oops')"}), name, "exec")
     validate_read_script(sp.build_script("find.ipy", sp.detection_args()))
     validate_read_script((sp.SCRIPT_DIR / "_sparing_detect.ipy").read_text(encoding="utf-8"))
+    validate_read_script((sp.SCRIPT_DIR / "_sparing_status.ipy").read_text(encoding="utf-8"))
+    for name, write in sp.SCRIPTS.items():
+        if not write:
+            validate_read_script(sp.build_script(name, {}))  # a read script must never mention a transaction
     assert "Transaction" in sp.build_script("place.ipy", {})
 
 
@@ -222,6 +235,42 @@ def test_place_refuses_a_plan_that_is_not_approved(tmp_path, monkeypatch):
     with pytest.raises(BridgeError, match="pending"):
         asyncio.run(run_gated_tool(registry, gate, "revit_sparing_place", {**PLACE_ARGS, "plan_id": plan["plan_id"]}))
     assert revit.calls == []
+
+
+STATUS_SET_ARGS: Dict[str, Any] = {"ids": [5001], "status": "requested"}
+STATUS_SET_OK = (
+    "SUMMARY\t1 of 1 sparingen set (0 already at the requested status)\nMETA\toutcome\tok\nMETA\ton_error\tabort\nMETA\tchanged_ids\t5001\n"
+    "META\tfailed_ids\t\nMETA\twarnings_dismissed\t0\nROW\trow_type=post\tcheck=5001: status read back\tok=1\tdetail=Aangevraagd\n"
+    "ROW\trow_type=item\tkind=status\tid=5001\tfrom=proposed\tto=requested\taction=set\nCOUNT\tfail\t0"
+)
+
+
+@pytest.mark.parametrize("tool,args", [("revit_sparing_status_set", STATUS_SET_ARGS), ("revit_sparing_status_setup", {})])
+def test_status_writes_refuse_without_an_approved_plan(tmp_path, monkeypatch, tool, args):
+    provider, gate, registry, revit = wire(tmp_path, monkeypatch)
+    with pytest.raises(BridgeError, match="plan_id"):
+        asyncio.run(run_gated_tool(registry, gate, tool, dict(args)))
+    plan = gate.create_plan([{"tool": tool, "arguments": dict(args)}], [{}])
+    with pytest.raises(BridgeError, match="pending"):
+        asyncio.run(run_gated_tool(registry, gate, tool, {**args, "plan_id": plan["plan_id"]}))
+    assert revit.calls == []
+
+
+def test_approved_status_set_runs_once_and_status_reads_need_no_plan(tmp_path, monkeypatch):
+    provider, gate, registry, revit = wire(tmp_path, monkeypatch, revit=FakeRevit(write_output=STATUS_SET_OK))
+    pid = approved(gate, "revit_sparing_status_set", STATUS_SET_ARGS)
+    result = asyncio.run(run_gated_tool(registry, gate, "revit_sparing_status_set", {**STATUS_SET_ARGS, "plan_id": pid}))
+    assert result["ok"] is True and result["changed_ids"] == [5001] and result["rows"][0]["to"] == "requested", result
+    assert [c[1]["mode"] for c in revit.calls] == ["write"]
+    assert gate.load_plan(pid)["actions"][0]["state"] == "executed"
+    with pytest.raises(BridgeError):
+        asyncio.run(run_gated_tool(registry, gate, "revit_sparing_status_set", {**STATUS_SET_ARGS, "plan_id": pid}))
+    revit.calls.clear()
+    for tool in ("revit_sparing_status_get", "revit_sparing_status_summary"):
+        asyncio.run(run_gated_tool(registry, gate, tool, {}))
+    assert [c[1]["mode"] for c in revit.calls] == ["read", "read"]
+    for c in revit.calls:
+        validate_read_script(c[1]["script"])
 
 
 def test_find_needs_no_plan_and_runs_in_read_mode(tmp_path, monkeypatch):

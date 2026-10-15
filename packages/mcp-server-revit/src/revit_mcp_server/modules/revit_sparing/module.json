@@ -1,10 +1,10 @@
 {
   "id": "revit_sparing",
   "name": "Revit sparingen (MEP openings)",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "schema_version": 1,
   "min_hub_version": "1.2.0",
-  "description": "Sparingen: openings where pipes, ducts, conduits and cable trays pass through walls and floors. find (read-only) lists every crossing with MEP size, host thickness, passage angle, an existing opening if any, and a suggested sparing size; links optional. place (write, needs an approved plan) puts a sparing family or native opening at each crossing, sets its size and an approval status, and replaces only the sparingen it made under the same tag. Not yet run against a live Revit.",
+  "description": "Sparingen: openings where pipes, ducts, conduits and cable trays pass through walls and floors. find (read-only) lists every crossing with MEP size, host thickness, angle, an existing opening and a suggested size; links optional. place (write, approved plan) puts a sparing family or native opening at each crossing, tagged and idempotent. Approval status: status_get and status_summary read it, status_set moves it along a transition table, status_setup creates the missing shared parameter. Spec tools copy sparingen to discipline models. Not yet run against a live Revit.",
   "author": "AEC Model Bridge",
   "license": "GPL-3.0-or-later",
   "requires_providers": [
@@ -305,6 +305,356 @@
           "tag",
           "mode"
         ]
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    },
+    {
+      "id": "status_get",
+      "title": "Read the approval status of each sparing (proposed, requested, approved, rejected, built): one row per sparing with family, level, host, discipline and the stored text. Read-only. If the status parameter is missing it says so and points to revit_sparing_status_setup; nothing is created. Use revit_sparing_status_summary for counts and revit_sparing_status_set to change a status.",
+      "mcp_tool": "revit_sparing_status_get",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "tag": {
+            "type": "string",
+            "description": "Only sparingen made under this tag (see revit_sparing_place). Default: every sparing this module made, whatever the tag."
+          },
+          "family_name": {
+            "type": "string",
+            "description": "Also include every instance of this loaded sparing family, even ones this module did not place."
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "description": "ElementId of a sparing in the active document."
+            },
+            "description": "Only these elements (at most 2000). Replaces tag and family_name."
+          },
+          "status_parameter": {
+            "type": "string",
+            "description": "Text instance parameter that holds the status. Default 'Sparing status'. It must exist on the sparing; if it does not, the result says so and offers revit_sparing_status_setup."
+          },
+          "status_labels": {
+            "type": "object",
+            "description": "Stored text per status, to replace the Dutch defaults: proposed Voorstel, requested Aangevraagd, approved Akkoord, rejected Afgewezen, built Gebouwd. Example {\"approved\": \"Goedgekeurd\"}.",
+            "properties": {
+              "proposed": {
+                "type": "string",
+                "description": "Stored text for status proposed."
+              },
+              "requested": {
+                "type": "string",
+                "description": "Stored text for status requested."
+              },
+              "approved": {
+                "type": "string",
+                "description": "Stored text for status approved."
+              },
+              "rejected": {
+                "type": "string",
+                "description": "Stored text for status rejected."
+              },
+              "built": {
+                "type": "string",
+                "description": "Stored text for status built."
+              }
+            }
+          },
+          "discipline_parameter": {
+            "type": "string",
+            "description": "Optional text parameter on the sparing that names its discipline. Default: derived from the MEP element of the crossing (piping, hvac, electrical)."
+          },
+          "only_status": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "A status key, or unset, unknown, no_parameter, unwritable."
+            },
+            "description": "Only list sparingen in these states. Default all."
+          },
+          "max_elements": {
+            "type": "integer",
+            "default": 2000,
+            "description": "Read at most this many sparingen (1 to 5000); more makes the result truncated. Default 2000."
+          },
+          "limit": {
+            "type": "integer",
+            "default": 200,
+            "description": "Rows returned (1 to 500). Default 200; the full list goes to the detail file when cut."
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0,
+            "description": "Skip this many rows (paging). Default 0."
+          }
+        }
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "status_summary",
+      "title": "Count sparingen by approval status and optionally by discipline, level, host category, family, tag or kind. Read-only; one row per combination. Same selection and status parameter as revit_sparing_status_get. A missing status parameter is reported, not hidden. Use it before a coordination meeting; use revit_sparing_status_get for the individual sparingen.",
+      "mcp_tool": "revit_sparing_status_summary",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "group_by": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "status",
+                "discipline",
+                "level",
+                "host_category",
+                "family",
+                "tag",
+                "kind"
+              ],
+              "description": "One grouping field."
+            },
+            "description": "Fields to group by, at most 4. Default status."
+          },
+          "tag": {
+            "type": "string",
+            "description": "Only sparingen made under this tag (see revit_sparing_place). Default: every sparing this module made, whatever the tag."
+          },
+          "family_name": {
+            "type": "string",
+            "description": "Also include every instance of this loaded sparing family, even ones this module did not place."
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "description": "ElementId of a sparing in the active document."
+            },
+            "description": "Only these elements (at most 2000). Replaces tag and family_name."
+          },
+          "status_parameter": {
+            "type": "string",
+            "description": "Text instance parameter that holds the status. Default 'Sparing status'. It must exist on the sparing; if it does not, the result says so and offers revit_sparing_status_setup."
+          },
+          "status_labels": {
+            "type": "object",
+            "description": "Stored text per status, to replace the Dutch defaults: proposed Voorstel, requested Aangevraagd, approved Akkoord, rejected Afgewezen, built Gebouwd. Example {\"approved\": \"Goedgekeurd\"}.",
+            "properties": {
+              "proposed": {
+                "type": "string",
+                "description": "Stored text for status proposed."
+              },
+              "requested": {
+                "type": "string",
+                "description": "Stored text for status requested."
+              },
+              "approved": {
+                "type": "string",
+                "description": "Stored text for status approved."
+              },
+              "rejected": {
+                "type": "string",
+                "description": "Stored text for status rejected."
+              },
+              "built": {
+                "type": "string",
+                "description": "Stored text for status built."
+              }
+            }
+          },
+          "discipline_parameter": {
+            "type": "string",
+            "description": "Optional text parameter on the sparing that names its discipline. Default: derived from the MEP element of the crossing (piping, hvac, electrical)."
+          },
+          "max_elements": {
+            "type": "integer",
+            "default": 2000,
+            "description": "Read at most this many sparingen (1 to 5000); more makes the result truncated. Default 2000."
+          }
+        }
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false
+    },
+    {
+      "id": "status_set",
+      "title": "Set the approval status of sparingen, with a transition table: proposed > requested > approved or rejected, approved > built or rejected, rejected > proposed. Write tool: needs an approved plan. Refuses the whole call, changing nothing, on an illegal move, an unknown stored text or a missing parameter. Reads every value back; dry_run available.",
+      "mcp_tool": "revit_sparing_status_set",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "description": "ElementId of a sparing in the active document."
+            },
+            "description": "Sparingen to move, all to status. Use with status. Or use changes, or tag / family_name."
+          },
+          "status": {
+            "type": "string",
+            "description": "Target status for ids, or for every match of tag / family_name: proposed, requested, approved, rejected or built (or its stored text)."
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One move.",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "description": "ElementId of the sparing."
+                },
+                "status": {
+                  "type": "string",
+                  "description": "A status key (proposed, requested, approved, rejected, built) or its stored text."
+                }
+              },
+              "required": [
+                "id",
+                "status"
+              ]
+            },
+            "description": "Different target statuses per sparing: [{id, status}], at most max_changes."
+          },
+          "tag": {
+            "type": "string",
+            "description": "Only sparingen made under this tag (see revit_sparing_place). Default: every sparing this module made, whatever the tag."
+          },
+          "family_name": {
+            "type": "string",
+            "description": "Also include every instance of this loaded sparing family, even ones this module did not place."
+          },
+          "from_status": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "A status key, or unset."
+            },
+            "description": "With tag / family_name: only move sparingen that now have one of these statuses."
+          },
+          "status_parameter": {
+            "type": "string",
+            "description": "Text instance parameter that holds the status. Default 'Sparing status'. It must exist on the sparing; if it does not, the result says so and offers revit_sparing_status_setup."
+          },
+          "status_labels": {
+            "type": "object",
+            "description": "Stored text per status, to replace the Dutch defaults: proposed Voorstel, requested Aangevraagd, approved Akkoord, rejected Afgewezen, built Gebouwd. Example {\"approved\": \"Goedgekeurd\"}.",
+            "properties": {
+              "proposed": {
+                "type": "string",
+                "description": "Stored text for status proposed."
+              },
+              "requested": {
+                "type": "string",
+                "description": "Stored text for status requested."
+              },
+              "approved": {
+                "type": "string",
+                "description": "Stored text for status approved."
+              },
+              "rejected": {
+                "type": "string",
+                "description": "Stored text for status rejected."
+              },
+              "built": {
+                "type": "string",
+                "description": "Stored text for status built."
+              }
+            }
+          },
+          "max_changes": {
+            "type": "integer",
+            "default": 200,
+            "description": "Refuse the call when more sparingen than this would change (1 to 500). Default 200."
+          },
+          "on_error": {
+            "type": "string",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort",
+            "description": "abort: the first failure rolls everything back. skip: keep what worked and list what failed."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Do all the work, report it with the read-back, then roll everything back. Default false."
+          }
+        }
+      },
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false
+    },
+    {
+      "id": "status_setup",
+      "title": "Create the shared parameter that holds the approval status and bind it to the sparing categories, or add categories to it. Write tool: needs an approved plan, never runs on its own. Adds a definition to the shared parameter file (a rollback does not undo that) and binds it in one transaction. dry_run changes nothing. Use when revit_sparing_status_get reports the parameter missing.",
+      "mcp_tool": "revit_sparing_status_setup",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "status_parameter": {
+            "type": "string",
+            "description": "Text instance parameter that holds the status. Default 'Sparing status'. It must exist on the sparing; if it does not, the result says so and offers revit_sparing_status_setup."
+          },
+          "group_name": {
+            "type": "string",
+            "description": "Group in the shared parameter file for the new definition. Default 'AEC Sparing'."
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "genericmodels",
+                "specialtyequipment",
+                "mechanicalequipment",
+                "wallopenings",
+                "flooropenings",
+                "shaftopenings"
+              ],
+              "description": "One category."
+            },
+            "description": "Categories to bind to (instance parameter). Default genericmodels. Categories that do not allow bound parameters are skipped and listed."
+          },
+          "shared_parameter_file": {
+            "type": "string",
+            "description": "Path of a shared parameter .txt file to use. Default: the file set in Revit (Manage > Shared Parameters). The previous setting is restored afterwards."
+          },
+          "on_error": {
+            "type": "string",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort",
+            "description": "abort: the first failure rolls everything back. skip: keep what worked and list what failed."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Do all the work, report it with the read-back, then roll everything back. Default false."
+          }
+        }
       },
       "surface": [
         "mcp"

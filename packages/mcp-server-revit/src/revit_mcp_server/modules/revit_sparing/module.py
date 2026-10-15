@@ -71,11 +71,8 @@ from revit_mcp_server.check_contract import (
     ScriptOutput,
     assemble_result,
     error_result,
-    is_safe_name,
-    load_json,
     mock_result,
     parse_script_output,
-    save_json,
 )
 
 MODULE_DIR = Path(__file__).resolve().parent
@@ -91,12 +88,21 @@ EXECUTE_TOOL = "revit_execute_python"
 ToolExecutor = Callable[[str, Dict[str, Any]], Any]
 
 # script name -> write script?
-SCRIPTS: Dict[str, bool] = {"find.ipy": False, "place.ipy": True}
+SCRIPTS: Dict[str, bool] = {
+    "find.ipy": False, "place.ipy": True, "status_get.ipy": False, "status_set.ipy": True, "status_setup.ipy": True,
+}
 # Shared source files loaded between the preludes and ARGS, per script (order matters). Every file holds definitions only.
+STATUS_LIB = "_sparing_status.ipy"
 PLACE_LIB = "_sparing_place_lib.ipy"
-SCRIPT_PARTS: Dict[str, Tuple[str, ...]] = {"find.ipy": (DETECT,), "place.ipy": (DETECT, PLACE_LIB)}
+SCRIPT_PARTS: Dict[str, Tuple[str, ...]] = {
+    "find.ipy": (DETECT,),
+    "place.ipy": (DETECT, PLACE_LIB),
+    "status_get.ipy": (STATUS_LIB,),
+    "status_set.ipy": (STATUS_LIB,),
+    "status_setup.ipy": (STATUS_LIB,),
+}
 # Scripts that read Extensible Storage tags even though they do not write.
-READS_TAGS: Tuple[str, ...] = ()
+READS_TAGS = ("status_get.ipy",)
 
 MEP_CATEGORIES = ("pipes", "ducts", "conduits", "cabletrays")
 HOST_CATEGORIES = ("walls", "floors", "roofs", "structuralframing")
@@ -107,6 +113,28 @@ _CATEGORY_ALIASES = {
     "framing": "structuralframing", "beams": "structuralframing", "beam": "structuralframing",
 }
 SIZE_KEYS = ("width", "height", "depth", "diameter")
+
+# Approval status of a sparing, stored as text in one instance parameter. The keys are English; the stored text is the label
+# (Dutch by default) and can be replaced per call with status_labels. Moves not in this table are refused.
+STATUS_KEYS = ("proposed", "requested", "approved", "rejected", "built")
+STATUS_EXTRA = ("unset", "unknown", "no_parameter", "unwritable")  # what a read can report besides the five statuses
+DEFAULT_LABELS = {"proposed": "Voorstel", "requested": "Aangevraagd", "approved": "Akkoord", "rejected": "Afgewezen", "built": "Gebouwd"}
+TRANSITIONS: Dict[str, List[str]] = {
+    "proposed": ["requested"],
+    "requested": ["approved", "rejected"],
+    "approved": ["built", "rejected"],
+    "rejected": ["proposed"],
+    "built": [],
+}
+FROM_UNSET = ["proposed"]  # a sparing with an empty status can only start as proposed
+DEFAULT_STATUS_PARAMETER = "Sparing status"
+DEFAULT_GROUP = "AEC Sparing"
+GROUP_FIELDS = {"status": "status", "discipline": "discipline", "level": "level", "host_category": "host_cat", "family": "family",
+                "tag": "tag", "kind": "kind"}
+SETUP_CATEGORIES = {
+    "genericmodels": "OST_GenericModel", "specialtyequipment": "OST_SpecialityEquipment", "mechanicalequipment": "OST_MechanicalEquipment",
+    "wallopenings": "OST_SWallRectOpening", "flooropenings": "OST_FloorOpening", "shaftopenings": "OST_ShaftOpening",
+}
 
 _TAG = re.compile(r"^[ -~]{1,80}$")  # printable ASCII only
 _CROSSING_ID = re.compile(r"^[A-Za-z0-9.#x-]{1,80}$")
@@ -125,6 +153,15 @@ _HINTS = {
     "post_check_failed": "The model changed but a check afterwards failed (see post_check). Inspect the listed ids, or run the call again to replace what this tool made.",
     "script_exception": "The embedded script failed inside Revit; any open transaction group was rolled back, so the model should be unchanged (verify with revit_warnings_delta).",
     "timeout_running": "Revit may still be running the script. Call revit_get_result with the request_id, and do not repeat a write until it has finished.",
+    "element_not_found": "Use element ids from revit_sparing_status_get in the active document. Nothing was changed.",
+    "illegal_transition": "Nothing was changed. The allowed moves are in the result's transitions table: proposed > requested > approved or rejected; approved > built or rejected; rejected > proposed. Move step by step.",
+    "shared_parameter_file_missing": "Point Revit at the firm's shared parameter file (Manage > Shared Parameters) or pass shared_parameter_file, then call again. Nothing was changed.",
+    "no_bindable_category": "Pick categories that allow bound parameters (genericmodels, specialtyequipment ...). Nothing was changed.",
+    "bindings_unreadable": "Revit would not list the project's parameter bindings; nothing was changed. Check revit_health and try again.",
+    "wrong_document": "The bridge works on the active document only. Open the discipline model named in the message, make it the active document, and call again. Nothing was changed.",
+    "host_not_found": "The spec names hosts by element id; they must exist in the active document. Check you are in the right model, or use on_error=skip to place the rest. Nothing was changed.",
+    "link_not_found": "force_link_id must be a loaded link instance (see the links in the spec). Nothing was changed.",
+    "dry_run_not_honoured": "A dry run was asked for but the script reports a commit. Check the model with revit_warnings_delta before doing anything else.",
 }
 
 
@@ -489,6 +526,7 @@ def _finish_write(
     item_types: Optional[Dict[str, str]] = None,
     extra: Optional[Dict[str, Any]] = None,
     dry_run_asked: bool = False,
+    totals: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     outcome = parsed.meta.get("outcome", "ok")
     # a dry run is reported either by the script's own close ('dry_run') or by the Runner's built-in one (dry_run=1)
@@ -561,7 +599,170 @@ def _finish_write(
             result["message"] = f"outcome: {outcome}"
         result["element_ids"] = failed_ids
         result["hint"] = _HINTS.get(result["kind"], "")
-    return _summary_first(result, _totals(parsed.meta))
+    return _summary_first(result, totals if totals is not None else _totals(parsed.meta))
+
+
+# --------------------------------------------------------------------------- #
+# Approval status helpers (revit_sparing_status_*)
+# --------------------------------------------------------------------------- #
+def _opt_tag(value: Any) -> str:
+    return "" if value in (None, "") else _tag(value)
+
+
+def _labels(value: Any) -> Dict[str, str]:
+    """The stored text per status key: the defaults with the caller's replacements."""
+    labels = dict(DEFAULT_LABELS)
+    if value in (None, {}):
+        return labels
+    if not isinstance(value, dict):
+        raise ValueError('status_labels must be an object such as {"approved": "Goedgekeurd"}')
+    unknown = set(value) - set(STATUS_KEYS)
+    if unknown:
+        raise ValueError(f"status_labels has unknown keys: {', '.join(sorted(unknown))}; use {', '.join(STATUS_KEYS)}")
+    for key, text in value.items():
+        labels[key] = _name(text, f"status_labels.{key}")
+    lows = [v.lower() for v in labels.values()]
+    if len(set(lows)) != len(lows):
+        raise ValueError("status_labels must differ from each other (case does not count)")
+    for key, text in labels.items():
+        if text.lower() in STATUS_KEYS and text.lower() != key:
+            raise ValueError(f"status_labels.{key}: the text {text!r} is the key of another status; use another text")
+    return labels
+
+
+def _status_key(value: Any, labels: Dict[str, str], what: str) -> str:
+    low = str(value if value is not None else "").strip().lower()
+    if low in STATUS_KEYS:
+        return low
+    for key, text in labels.items():
+        if text.lower() == low:
+            return key
+    raise ValueError(f"{what}: unknown status {value!r}; use one of {', '.join(STATUS_KEYS)} (or their stored texts: {', '.join(labels.values())})")
+
+
+def _status_words(value: Any, labels: Dict[str, str], what: str) -> List[str]:
+    if value in (None, []):
+        return []
+    if not isinstance(value, list) or len(value) > 12:
+        raise ValueError(f"{what} must be a list of statuses: {', '.join(STATUS_KEYS + STATUS_EXTRA)}")
+    out: List[str] = []
+    for v in value:
+        low = str(v).strip().lower()
+        word = low if low in STATUS_EXTRA else _status_key(v, labels, what)
+        if word not in out:
+            out.append(word)
+    return out
+
+
+def _status_parameter(value: Any) -> str:
+    return _name(value if value not in (None, "") else DEFAULT_STATUS_PARAMETER, "status_parameter")
+
+
+def _selection(tag: Any, family_name: Any, ids: Any) -> Dict[str, Any]:
+    clean: List[int] = []
+    if ids not in (None, []):
+        if not isinstance(ids, list) or len(ids) > 2000:
+            raise ValueError("ids must be a list of at most 2000 element ids")
+        for i in ids:
+            clean.append(_int(i, "ids", 1, 2**62, 0))
+        if len(set(clean)) != len(clean):
+            raise ValueError("ids lists the same element twice")
+    return {"tag": _opt_tag(tag), "family_name": _opt_name(family_name, "family_name"), "ids": clean}
+
+
+def _status_row_types() -> Dict[str, str]:
+    return {"id": "int", "host_id": "int", "host_link": "int", "has_param": "bool", "writable": "bool"}
+
+
+def _status_counts(rows: List[Dict[str, str]]) -> Dict[str, int]:
+    out: Dict[str, int] = {}
+    for r in rows:
+        word = r.get("status", "")
+        out[word] = out.get(word, 0) + 1
+    return {k: out[k] for k in sorted(out, key=_status_order)}
+
+
+def _status_order(word: str) -> Tuple[int, str]:
+    order = STATUS_KEYS + STATUS_EXTRA
+    return (order.index(word) if word in order else len(order), word)
+
+
+def _status_meta_totals(meta: Dict[str, str]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for key in ("selected", "shown", "with_param", "without_param", "unset", "unknown", "filtered_out"):
+        try:
+            out[key] = int(meta.get(key, "0") or 0)
+        except ValueError:
+            out[key] = 0
+    out["truncated"] = meta.get("truncated", "0") == "1"
+    return out
+
+
+def _setup_note(meta: Dict[str, str], name: str) -> Optional[Dict[str, Any]]:
+    """Honest report of a missing status parameter, with the documented next step. Nothing is created by a read."""
+    try:
+        missing = int(meta.get("without_param", "0") or 0)
+    except ValueError:
+        missing = 0
+    bound = meta.get("parameter_bound", "")
+    if not missing:
+        return None
+    note: Dict[str, Any] = {
+        "needed": True,
+        "parameter": name,
+        "sparingen_without_parameter": missing,
+        "exists_in_project": None if bound == "" else bound == "1",
+        "bound_to_categories": [c for c in meta.get("parameter_categories", "").split(",") if c],
+        "next_step": (
+            "The status is stored in the text parameter '%s'. It is missing on %d sparingen. Nothing was created. To create it, call "
+            "revit_sparing_status_setup (approval-gated, dry_run available): it adds a shared parameter and binds it to the sparing "
+            "categories. Or add the parameter to the sparing family yourself." % (name, missing)
+        ),
+    }
+    return note
+
+
+def _group_rows(rows: List[Dict[str, str]], group_by: List[str]) -> List[Dict[str, Any]]:
+    """One row per distinct combination of the group_by fields, with its count."""
+    counts: Dict[Tuple[str, ...], int] = {}
+    for r in rows:
+        key = tuple(r.get(GROUP_FIELDS[g], "") or "(none)" for g in group_by)
+        counts[key] = counts.get(key, 0) + 1
+
+    def order(key: Tuple[str, ...]) -> Tuple[Any, ...]:
+        return tuple(_status_order(v) if g == "status" else (0, v) for g, v in zip(group_by, key))
+
+    return [{**dict(zip(group_by, key)), "count": counts[key]} for key in sorted(counts, key=order)]
+
+
+def _group_by(value: Any) -> List[str]:
+    if value in (None, []):
+        return ["status"]
+    if not isinstance(value, list) or len(value) > 4:
+        raise ValueError(f"group_by must be a list of at most 4 of: {', '.join(GROUP_FIELDS)}")
+    out: List[str] = []
+    for v in value:
+        key = str(v).strip().lower().replace(" ", "_")
+        if key not in GROUP_FIELDS:
+            raise ValueError(f"group_by: unknown field {v!r}; use {', '.join(GROUP_FIELDS)}")
+        if key not in out:
+            out.append(key)
+    return out
+
+
+def _setup_categories(value: Any) -> List[str]:
+    if value in (None, []):
+        return ["genericmodels"]
+    if not isinstance(value, list) or len(value) > 8:
+        raise ValueError(f"categories must be a list of: {', '.join(SETUP_CATEGORIES)}")
+    out: List[str] = []
+    for v in value:
+        key = str(v).strip().lower().replace(" ", "").replace("_", "")
+        if key not in SETUP_CATEGORIES:
+            raise ValueError(f"categories: unknown category {v!r}; use {', '.join(SETUP_CATEGORIES)}")
+        if key not in out:
+            out.append(key)
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -696,3 +897,219 @@ class RevitSparingModule:
         if not (("width" in out and "height" in out) or "diameter" in out):
             raise ValueError("size_parameters needs width and height, or diameter")
         return out
+
+    # ---- approval status ---------------------------------------------------- #
+    @staticmethod
+    def _status_read_args(tag: Any, family_name: Any, ids: Any, status_parameter: Any, status_labels: Any,
+                          discipline_parameter: Any, only_status: Any, max_elements: Any) -> Tuple[Dict[str, Any], Dict[str, str]]:
+        labels = _labels(status_labels)
+        args: Dict[str, Any] = _selection(tag, family_name, ids)
+        args.update({
+            "status_parameter": _status_parameter(status_parameter),
+            "labels": labels,
+            "discipline_parameter": _opt_name(discipline_parameter, "discipline_parameter"),
+            "only_status": _status_words(only_status, labels, "only_status"),
+            "max_elements": _int(max_elements, "max_elements", 1, 5000, 2000),
+        })
+        return args, labels
+
+    def status_get(
+        self,
+        tag: Any = None,
+        family_name: Any = None,
+        ids: Any = None,
+        status_parameter: Any = None,
+        status_labels: Any = None,
+        discipline_parameter: Any = None,
+        only_status: Any = None,
+        max_elements: Any = None,
+        limit: Any = None,
+        offset: Any = None,
+        workspace: Any = None,
+        tool_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_sparing_status_get"
+        try:
+            args, labels = self._status_read_args(tag, family_name, ids, status_parameter, status_labels, discipline_parameter, only_status, max_elements)
+            page = PageSpec(limit=_int(limit, "limit", 1, MAX_LIMIT, 200), offset=_int(offset, "offset", 0, 10**7, 0))
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        parsed, elapsed, early = _run(tool, "status_get.ipy", args, write=False, tool_executor=tool_executor, approved_executor=None)
+        if early is not None or parsed is None:
+            return early or {}
+        result = assemble_result(tool, parsed, page, row_types=_status_row_types(), elapsed_ms=elapsed, workspace=workspace)
+        totals = _status_meta_totals(parsed.meta)
+        totals["by_status"] = _status_counts(parsed.rows)
+        result["status_parameter"] = args["status_parameter"]
+        result["status_labels"] = labels
+        result["transitions"] = TRANSITIONS
+        note = _setup_note(parsed.meta, args["status_parameter"])
+        if note:
+            result["setup"] = note
+        if totals["truncated"]:
+            result["limits"]["truncated"] = True
+            result["limits"]["partial"] = True
+        return _summary_first(result, totals)
+
+    def status_summary(
+        self,
+        group_by: Any = None,
+        tag: Any = None,
+        family_name: Any = None,
+        ids: Any = None,
+        status_parameter: Any = None,
+        status_labels: Any = None,
+        discipline_parameter: Any = None,
+        max_elements: Any = None,
+        workspace: Any = None,
+        tool_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_sparing_status_summary"
+        try:
+            args, labels = self._status_read_args(tag, family_name, ids, status_parameter, status_labels, discipline_parameter, None, max_elements)
+            groups = _group_by(group_by)
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        parsed, elapsed, early = _run(tool, "status_get.ipy", args, write=False, tool_executor=tool_executor, approved_executor=None)
+        if early is not None or parsed is None:
+            return early or {}
+        grouped = _group_rows(parsed.rows, groups)
+        synthetic = ScriptOutput(
+            summary="%d sparingen in %d groups by %s" % (len(parsed.rows), len(grouped), ", ".join(groups)),
+            fails=list(parsed.fails),
+            infos=list(parsed.infos),
+            rows=[{k: str(v) for k, v in g.items()} for g in grouped],
+            meta=dict(parsed.meta),
+            counts={"fail": parsed.counts.get("fail", len(parsed.fails)), "info": parsed.counts.get("info", len(parsed.infos)), "row": len(grouped)},
+        )
+        result = assemble_result(tool, synthetic, PageSpec(limit=MAX_LIMIT), row_types={"count": "int"}, elapsed_ms=elapsed, workspace=workspace)
+        totals = _status_meta_totals(parsed.meta)
+        totals["by_status"] = _status_counts(parsed.rows)
+        totals["group_by"] = groups
+        result["status_parameter"] = args["status_parameter"]
+        result["status_labels"] = labels
+        note = _setup_note(parsed.meta, args["status_parameter"])
+        if note:
+            result["setup"] = note
+        if totals["truncated"]:
+            result["limits"]["truncated"] = True
+            result["limits"]["partial"] = True
+        return _summary_first(result, totals)
+
+    def status_set(
+        self,
+        tag: Any = None,
+        family_name: Any = None,
+        ids: Any = None,
+        changes: Any = None,
+        status: Any = None,
+        from_status: Any = None,
+        status_parameter: Any = None,
+        status_labels: Any = None,
+        max_changes: Any = None,
+        on_error: Any = None,
+        dry_run: Any = None,
+        workspace: Any = None,
+        approved_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_sparing_status_set"
+        try:
+            labels = _labels(status_labels)
+            sel = _selection(tag, family_name, ids)
+            max_n = _int(max_changes, "max_changes", 1, 500, 200)
+            explicit = bool(sel["ids"]) or changes not in (None, [])
+            scope = bool(sel["tag"] or sel["family_name"])
+            if explicit and scope:
+                raise ValueError("give either ids / changes (explicit sparingen) or tag / family_name (every match), not both")
+            if not explicit and not scope:
+                raise ValueError("say which sparingen: ids with status, changes (id and status per sparing), or tag / family_name with status")
+            pairs: List[List[Any]] = []
+            target = ""
+            if changes not in (None, []):
+                if sel["ids"] or status not in (None, ""):
+                    raise ValueError("changes carries its own status per id; leave ids and status out")
+                if not isinstance(changes, list) or len(changes) > max_n:
+                    raise ValueError(f"changes must be a list of at most {max_n} objects with id and status")
+                seen: List[int] = []
+                for c in changes:
+                    if not isinstance(c, dict) or set(c) - {"id", "status"}:
+                        raise ValueError("each change is an object with id and status only")
+                    cid = _int(c.get("id"), "changes.id", 1, 2**62, 0)
+                    if cid == 0 or cid in seen:
+                        raise ValueError(f"changes.id {c.get('id')!r} is missing or listed twice")
+                    seen.append(cid)
+                    pairs.append([cid, _status_key(c.get("status"), labels, "changes.status")])
+            else:
+                if status in (None, ""):
+                    raise ValueError("status is required: one of " + ", ".join(STATUS_KEYS))
+                target = _status_key(status, labels, "status")
+                if sel["ids"]:
+                    if len(sel["ids"]) > max_n:
+                        raise ValueError(f"{len(sel['ids'])} ids is more than max_changes={max_n}")
+                    pairs = [[i, target] for i in sel["ids"]]
+            froms = _status_words(from_status, labels, "from_status")
+            if froms and not scope:
+                raise ValueError("from_status only filters the tag / family_name form")
+            args: Dict[str, Any] = {
+                "status_parameter": _status_parameter(status_parameter),
+                "labels": labels,
+                "transitions": {k: list(v) for k, v in TRANSITIONS.items()},
+                "from_unset": list(FROM_UNSET),
+                "changes": pairs,
+                "tag": sel["tag"],
+                "family_name": sel["family_name"],
+                "status": target,
+                "from_status": froms,
+                "max_changes": max_n,
+                "on_error": _choice(on_error, ("abort", "skip"), "on_error", "abort"),
+                "dry_run": _bool(dry_run, "dry_run", False),
+            }
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        parsed, elapsed, early = _run(tool, "status_set.ipy", args, write=True, tool_executor=None, approved_executor=approved_executor)
+        if early is not None or parsed is None:
+            return early or {}
+        extra = {"status_parameter": args["status_parameter"], "status_labels": labels, "transitions": TRANSITIONS}
+        item_rows = [r for r in parsed.rows if r.get("row_type") == "item"]
+        totals = {"requested": len(pairs) if pairs else None, "set": len([r for r in item_rows if r.get("action") == "set"]),
+                  "unchanged": len([r for r in item_rows if r.get("action") == "unchanged"])}
+        return _finish_write(tool, parsed, elapsed, workspace, extra=extra, dry_run_asked=args["dry_run"], totals=totals)
+
+    def status_setup(
+        self,
+        status_parameter: Any = None,
+        group_name: Any = None,
+        categories: Any = None,
+        shared_parameter_file: Any = None,
+        on_error: Any = None,
+        dry_run: Any = None,
+        workspace: Any = None,
+        approved_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_sparing_status_setup"
+        try:
+            cats = _setup_categories(categories)
+            path = ""
+            if shared_parameter_file not in (None, ""):
+                path = str(shared_parameter_file)
+                if len(path) > 260 or any(ord(c) < 32 for c in path) or any(c in path for c in '<>"|*?') or not path.lower().endswith(".txt"):
+                    raise ValueError("shared_parameter_file must be a path (at most 260 characters) to a shared parameter .txt file")
+            args: Dict[str, Any] = {
+                "status_parameter": _status_parameter(status_parameter),
+                "group_name": _name(group_name if group_name not in (None, "") else DEFAULT_GROUP, "group_name"),
+                "categories": [SETUP_CATEGORIES[c] for c in cats],
+                "shared_parameter_file": path,
+                "on_error": _choice(on_error, ("abort", "skip"), "on_error", "abort"),
+                "dry_run": _bool(dry_run, "dry_run", False),
+            }
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        parsed, elapsed, early = _run(tool, "status_setup.ipy", args, write=True, tool_executor=None, approved_executor=approved_executor)
+        if early is not None or parsed is None:
+            return early or {}
+        totals = {"status_parameter": args["status_parameter"], "group_name": args["group_name"], "categories": cats}
+        return _finish_write(tool, parsed, elapsed, workspace, dry_run_asked=args["dry_run"], totals=totals)

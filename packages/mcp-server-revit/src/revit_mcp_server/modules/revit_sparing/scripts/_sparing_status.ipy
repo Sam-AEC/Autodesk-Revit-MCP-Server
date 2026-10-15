@@ -1,0 +1,286 @@
+# Shared by the sparing status and spec scripts (IronPython 2.7): status_get, status_set, status_setup, export_spec,
+# place_spec. Definitions only; nothing in this file changes the model. Loaded after the revit module's _prelude.ipy and
+# the revit_docs _tags_read.ipy.
+#
+# ARGS keys used: status_parameter (name of the text parameter), labels {status key -> stored text}, discipline_parameter,
+# and the selection {tag, family_name, ids, max_elements}.
+# Status keys: proposed, requested, approved, rejected, built. Stored text is the label (default Dutch: Voorstel,
+# Aangevraagd, Akkoord, Afgewezen, Gebouwd). A stored text that is empty means "unset"; a text that matches no label and no
+# key means "unknown" (reported, never guessed).
+# UNVERIFIED against a live Revit: see the module docstring.
+SP_KEY_PREFIX = "sparing:"
+SP_HOST_CATS = {"OST_Walls": "walls", "OST_Floors": "floors", "OST_Roofs": "roofs", "OST_StructuralFraming": "structuralframing"}
+SP_MEP_DISCIPLINE = {"OST_PipeCurves": ("pipes", "piping"), "OST_DuctCurves": ("ducts", "hvac"),
+                     "OST_Conduit": ("conduits", "electrical"), "OST_CableTray": ("cabletrays", "electrical")}
+
+
+# ---- status text <-> key -------------------------------------------------------------------------------------------------
+def status_key(text):
+    """Key of a stored status text: "" when unset, None when the text is not one of the labels or keys."""
+    t = (text or "").strip().lower()
+    if not t:
+        return ""
+    labels = ARGS["labels"]
+    for k in labels:
+        if k == t or labels[k].strip().lower() == t:
+            return k
+    return None
+
+
+def status_text(key):
+    if not key:
+        return ""
+    return ARGS["labels"].get(key, key)
+
+
+def status_param(e):
+    try:
+        return e.LookupParameter(ARGS["status_parameter"])
+    except Exception:
+        return None
+
+
+def status_param_ok(p):
+    """True when p is a writable text parameter."""
+    if p is None:
+        return False
+    try:
+        return (not p.IsReadOnly) and str(p.StorageType) == "String"
+    except Exception:
+        return False
+
+
+def raw_status(p):
+    if p is None:
+        return None
+    try:
+        return p.AsString() or ""
+    except Exception:
+        return ""
+
+
+# ---- the crossing key a sparing carries -----------------------------------------------------------------------------------
+def _key_part(text):
+    """'L700.101' -> (700, 101); '101' -> (None, 101)."""
+    if text.startswith("L"):
+        a, _, b = text[1:].partition(".")
+        return int(a), int(b)
+    return None, int(text)
+
+
+def parse_key(key):
+    """(mep_link, mep_id, host_link, host_id) of a crossing id such as '301x101', 'L701.402x101' or '301xL700.101#2'; None when it does not parse."""
+    try:
+        base = key.split("#")[0]
+        a, sep, b = base.partition("x")
+        if not sep:
+            return None
+        ml, mid = _key_part(a)
+        hl, hid = _key_part(b)
+        return (ml, mid, hl, hid)
+    except Exception:
+        return None
+
+
+def bic_key(e, table):
+    """Short key (walls, floors, ...) for the category of e, or None."""
+    try:
+        cid = eid(e.Category)
+    except Exception:
+        return None
+    for name in table:
+        b = getattr(BuiltInCategory, name, None)
+        if b is not None and int(b) == cid:
+            return table[name]
+    return None
+
+
+def link_document(link_id):
+    """(link instance, link document) for the id of a link instance of the active model, else (None, None)."""
+    try:
+        li = doc.GetElement(ElementId(int(link_id)))
+        if li is None:
+            return None, None
+        return li, li.GetLinkDocument()
+    except Exception:
+        return None, None
+
+
+def element_in(link_id, el_id):
+    """Element el_id of the active model, or of the link instance link_id; None when it cannot be reached."""
+    try:
+        if link_id is None:
+            return doc.GetElement(ElementId(int(el_id)))
+        li, ld = link_document(link_id)
+        if ld is None:
+            return None
+        return ld.GetElement(ElementId(int(el_id)))
+    except Exception:
+        return None
+
+
+# ---- the sparingen themselves ---------------------------------------------------------------------------------------------
+def sparing_tagged(tag):
+    """Elements this module made (any tag when tag is empty)."""
+    out = []
+    for e in owned_elements(None, tag or None, None):
+        t = read_tag(e)
+        if t is not None and t[2].startswith("sparing_") and t[1].startswith(SP_KEY_PREFIX):
+            out.append(e)
+    return out
+
+
+def family_instances(name):
+    out = []
+    for f in FilteredElementCollector(doc).OfClass(Family):
+        if ename(f) != name:
+            continue
+        for sid in f.GetFamilySymbolIds():
+            for fi in FilteredElementCollector(doc).WherePasses(FamilyInstanceFilter(doc, sid)):
+                out.append(fi)
+    return out
+
+
+def select_sparings(sel):
+    """(elements, truncated). sel = {tag, family_name, ids, max_elements}: ids win; else the tagged sparingen (all tags
+    when tag is empty) plus the instances of family_name; with neither tag nor family, every sparing this module made."""
+    found = []
+    seen = []
+    cap = int(sel.get("max_elements") or 5000)
+    truncated = False
+
+    def add(e):
+        i = eid(e)
+        if i not in seen:
+            seen.append(i)
+            found.append(e)
+
+    ids = sel.get("ids") or []
+    if ids:
+        missing = []
+        for i in ids:
+            e = doc.GetElement(ElementId(int(i)))
+            if e is None:
+                missing.append(int(i))
+            else:
+                add(e)
+        if missing:
+            info("ID_NOT_FOUND", "%d id(s) are not in the active document: %s" % (len(missing), ",".join([str(x) for x in missing[:20]])))
+    else:
+        if sel.get("tag") or not sel.get("family_name"):
+            for e in sparing_tagged(sel.get("tag")):
+                add(e)
+        if sel.get("family_name"):
+            for e in family_instances(sel["family_name"]):
+                add(e)
+    if len(found) > cap:
+        found = found[:cap]
+        truncated = True
+        info("TRUNCATED", "more than %d sparingen selected; only the first %d are used. Narrow with tag, family_name or ids." % (cap, cap))
+    return found, truncated
+
+
+def level_name_of(e):
+    for x in (e, host_of(e)):
+        if x is None:
+            continue
+        try:
+            lv = doc.GetElement(x.LevelId)
+            if lv is not None and eid(lv) > 0:
+                return lv.Name
+        except Exception:
+            pass
+    return ""
+
+
+def host_of(e):
+    try:
+        return e.Host
+    except Exception:
+        return None
+
+
+def family_type_names(e):
+    """(family name, type name) of a family instance, ("", "") for anything else."""
+    try:
+        sym = e.Symbol
+        return ename(sym.Family), ename(sym)
+    except Exception:
+        return "", ""
+
+
+def discipline_of(e, parts):
+    """(discipline, mep category) from the discipline parameter when set, else from the MEP element of the crossing key."""
+    dp = ARGS.get("discipline_parameter") or ""
+    if dp:
+        try:
+            p = e.LookupParameter(dp)
+            if p is not None and p.AsString():
+                return p.AsString(), ""
+        except Exception:
+            pass
+    if parts is None:
+        return "unknown", ""
+    m = element_in(parts[0], parts[1])
+    if m is None:
+        return "unknown", ""
+    try:
+        cid = eid(m.Category)
+    except Exception:
+        return "unknown", ""
+    for name in SP_MEP_DISCIPLINE:
+        b = getattr(BuiltInCategory, name, None)
+        if b is not None and int(b) == cid:
+            return SP_MEP_DISCIPLINE[name][1], SP_MEP_DISCIPLINE[name][0]
+    return "unknown", ""
+
+
+def describe(e):
+    """Plain facts about one sparing (no status)."""
+    t = read_tag(e)
+    key = t[1][len(SP_KEY_PREFIX):] if (t is not None and t[1].startswith(SP_KEY_PREFIX)) else ""
+    parts = parse_key(key) if key else None
+    fam, typ = family_type_names(e)
+    h = host_of(e)
+    host_id = eid(h) if h is not None else None
+    host_cat = bic_key(h, SP_HOST_CATS) if h is not None else None
+    host_link = None
+    if parts is not None:
+        host_link = parts[2]
+        if host_id is None:
+            host_id = parts[3]
+    discipline, mep_cat = discipline_of(e, parts)
+    return {"id": eid(e), "tag": t[0] if t is not None else "", "kind": t[2] if t is not None else "foreign", "crossing_id": key,
+            "family": fam, "type": typ, "category": cat_name(e), "level": level_name_of(e), "host_id": host_id,
+            "host_link": host_link, "host_cat": host_cat or "", "mep_cat": mep_cat, "discipline": discipline, "parts": parts}
+
+
+# ---- project parameter bindings --------------------------------------------------------------------------------------------
+def binding_info(name):
+    """{found, shared, categories} of the project parameter called name; found is None when the bindings cannot be read."""
+    out = {"found": False, "shared": False, "categories": [], "category_objs": [], "definition": None}
+    try:
+        it = doc.ParameterBindings.ForwardIterator()
+        while it.MoveNext():
+            if it.Key.Name == name:
+                out["found"] = True
+                out["definition"] = it.Key
+                out["shared"] = hasattr(it.Key, "GUID")
+                try:
+                    out["category_objs"] = [c for c in it.Current.Categories]
+                    out["categories"] = [c.Name for c in out["category_objs"]]
+                except Exception:
+                    pass
+                break
+    except Exception:
+        out["found"] = None
+    return out
+
+
+# ---- geometry of a sparing (needs _sparing_detect.ipy: vectors, boxes) ---------------------------------------------------------
+def frame_n(n):
+    """(n, u, v) for a host normal n, the same convention as the detection: u = width direction, v = height direction."""
+    if abs(n[2]) > 0.999:
+        return n, (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)
+    u = vunit(vcross(Z_AXIS, n))
+    return n, u, vcross(n, u)

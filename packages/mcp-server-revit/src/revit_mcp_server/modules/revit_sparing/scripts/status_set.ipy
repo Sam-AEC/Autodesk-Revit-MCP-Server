@@ -1,0 +1,129 @@
+# revit_sparing_status_set (write mode): moves sparingen to a new approval status. One Transaction per sparing in one
+# TransactionGroup (Runner of the revit_docs write prelude); each value is read back after the commit.
+# ARGS = {status_parameter, labels, transitions {key: [allowed next keys]}, from_unset [keys allowed from an unset status],
+#         changes [[id, key], ...], tag, family_name, status (key, for the scope form), from_status [keys], max_changes,
+#         on_error, dry_run}
+# Either changes (explicit ids) or the scope form (tag and/or family_name, every match with a status in from_status, or any
+# status when from_status is empty). The whole call is refused, nothing changed, when one target lacks a writable text
+# parameter, holds an unknown text, or would take an illegal transition. UNVERIFIED against a live Revit.
+
+
+def allowed_from(cur):
+    if cur == "":
+        return ARGS["from_unset"]
+    return ARGS["transitions"].get(cur, [])
+
+
+def targets():
+    """[(element, target key)] or None after a refusal."""
+    out = []
+    if ARGS["changes"]:
+        missing = []
+        for pair in ARGS["changes"]:
+            e = doc.GetElement(ElementId(int(pair[0])))
+            if e is None:
+                missing.append(int(pair[0]))
+            else:
+                out.append((e, pair[1]))
+        if missing:
+            refuse("element_not_found", "%d id(s) are not in the active document: %s" % (len(missing), ",".join([str(i) for i in missing[:20]])), missing)
+            return None
+        return out
+    found, truncated = select_sparings({"tag": ARGS["tag"], "family_name": ARGS["family_name"], "ids": [], "max_elements": ARGS["max_changes"] + 1})
+    if len(found) > ARGS["max_changes"]:
+        refuse("too_many_sparings", "more than max_changes=%d sparingen match; narrow with tag, family_name or ids" % ARGS["max_changes"])
+        return None
+    only = ARGS["from_status"]
+    for e in found:
+        p = status_param(e)
+        cur = status_key(raw_status(p)) if p is not None else None
+        word = "unset" if cur == "" else cur
+        if only and word not in only:
+            continue
+        out.append((e, ARGS["status"]))
+    return out
+
+
+def main():
+    doc_meta()
+    sel = targets()
+    if sel is None:
+        return
+    if not sel:
+        meta("outcome", "ok")
+        meta("changed_ids", "")
+        summary("nothing to change: no sparing matched")
+        return
+    problems = []
+    bad_ids = []
+    plan = []
+    same = []
+    illegal = []
+    for e, to in sel:
+        i = eid(e)
+        p = status_param(e)
+        if not status_param_ok(p):
+            problems.append("%d" % i)
+            bad_ids.append(i)
+            continue
+        cur = status_key(raw_status(p))
+        if cur is None:
+            illegal.append("id %d: stored text '%s' is none of the status labels (%s)" % (i, raw_status(p), ", ".join([ARGS["labels"][k] for k in ARGS["labels"]])))
+            bad_ids.append(i)
+            continue
+        if cur == to:
+            same.append((e, cur))
+            continue
+        if to not in allowed_from(cur):
+            nxt = allowed_from(cur)
+            illegal.append("id %d: %s -> %s is not allowed (from %s: %s)" % (i, cur or "unset", to, cur or "unset", ", ".join(nxt) if nxt else "no further status"))
+            bad_ids.append(i)
+            continue
+        plan.append((e, cur, to))
+    if problems:
+        first = sel[0][0]
+        names = []
+        try:
+            for q in first.Parameters:
+                names.append(q.Definition.Name)
+        except Exception:
+            pass
+        refuse("missing_parameter", "%d sparingen have no writable text parameter '%s' (ids %s). Create it first with revit_sparing_status_setup (a documented step, never done silently). Parameters of the first one: %s" % (
+            len(problems), ARGS["status_parameter"], ",".join(problems[:30]), ", ".join(sorted(set(names))[:40]) or "none readable"), bad_ids)
+        return
+    if illegal:
+        refuse("illegal_transition", "%d of %d sparingen refused, nothing changed: %s" % (len(illegal), len(sel), " | ".join(illegal[:20])), bad_ids)
+        return
+    for e, cur in same:
+        item([("kind", "unchanged"), ("id", eid(e)), ("from", cur), ("to", cur), ("action", "unchanged")])
+    if not plan:
+        meta("outcome", "ok")
+        meta("changed_ids", "")
+        summary("nothing to change: %d sparingen already have the requested status" % len(same))
+        return
+    run = Runner("AEC sparing status", ARGS["on_error"])
+    done = []
+    for e, cur, to in plan:
+        def work(e=e, to=to):
+            q = status_param(e)
+            if not status_param_ok(q):
+                raise StepError("the status parameter cannot be written on this sparing", [eid(e)])
+            if q.Set(status_text(to)) is False:
+                raise StepError("Revit refused to set the status parameter", [eid(e)])
+            return e
+
+        r = run.step("Status %d to %s" % (eid(e), to), work, ids=[eid(e)])
+        if r is None:
+            continue
+        run.changed.append(eid(e))
+        done.append((e, cur, to))
+    for e, cur, to in done:
+        got = get_by_id(eid(e))
+        q = status_param(got) if got is not None else None
+        have = raw_status(q) if q is not None else None
+        post("%d: status read back" % eid(e), have is not None and status_key(have) == to, "'%s' (wanted '%s')" % (have, status_text(to)))
+        item([("kind", "status"), ("id", eid(e)), ("from", cur), ("to", to), ("action", "set")])
+    summary("%d of %d sparingen set (%d already at the requested status)%s" % (len(done), len(plan), len(same), " - DRY RUN" if ARGS["dry_run"] else ""))
+
+
+__output__ = run_write(main)
