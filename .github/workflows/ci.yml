@@ -274,6 +274,54 @@ jobs:
           tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint" -color
 
+  # CycloneDX SBOM of the Python package's locked runtime dependencies (uv.lock).
+  # Not in ci-success yet: it is observational until it has proven stable. A failure
+  # here is a real red check, never hidden. To make it required, add `sbom` to the
+  # ci-success needs list below.
+  sbom:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      CYCLONEDX_BOM_VERSION: "7.2.1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+
+      - name: Generate CycloneDX SBOM from uv.lock
+        working-directory: packages/mcp-server-revit
+        run: |
+          python -m pip install "cyclonedx-bom==${CYCLONEDX_BOM_VERSION}"
+          uv export --frozen --no-dev --no-hashes --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/sbom-requirements.txt"
+          cyclonedx-py requirements "$RUNNER_TEMP/sbom-requirements.txt" \
+            --pyproject pyproject.toml --sv 1.6 --of JSON --validate \
+            -o "$RUNNER_TEMP/aec-model-bridge.cdx.json"
+          count="$(python -c 'import json, os, sys; print(len(json.load(open(sys.argv[1]))["components"]))' "$RUNNER_TEMP/aec-model-bridge.cdx.json")"
+          echo "CycloneDX SBOM generated with ${count} components." | tee -a "$GITHUB_STEP_SUMMARY"
+          test "$count" -gt 0
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom-cyclonedx
+          path: ${{ runner.temp }}/aec-model-bridge.cdx.json
+          if-no-files-found: error
+          retention-days: 14
+
   # One stable name for branch protection: require "ci-success" instead of each
   # matrix leg, so adding or renaming a job never silently drops a required check.
   ci-success:

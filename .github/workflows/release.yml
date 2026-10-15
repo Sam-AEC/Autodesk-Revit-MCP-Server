@@ -140,6 +140,40 @@ jobs:
           -Installer "dist/release/AECModelBridge-Setup-${{ steps.tag.outputs.version }}.exe"
           -AllowOverwrite
 
+      # Software Bill of Materials for the Python package, from the locked dependency
+      # set (uv.lock), as CycloneDX JSON. It lands in dist/release, so it is uploaded
+      # with the release, listed in SHA256SUMS.txt and covered by the provenance
+      # attestation below (which attests dist/release/*).
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+
+      - name: Generate CycloneDX SBOM and refresh SHA256SUMS.txt
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.tag.outputs.version }}
+          CYCLONEDX_BOM_VERSION: "7.2.1"
+        run: |
+          python -m pip install "cyclonedx-bom==$env:CYCLONEDX_BOM_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "cyclonedx-bom install failed" }
+          $req = Join-Path $env:RUNNER_TEMP 'sbom-requirements.txt'
+          Push-Location packages/mcp-server-revit
+          uv export --frozen --no-dev --no-hashes --no-emit-project --format requirements-txt -o $req
+          if ($LASTEXITCODE -ne 0) { throw "uv export failed" }
+          $sbom = Join-Path $env:GITHUB_WORKSPACE "dist/release/aec-model-bridge-$env:RELEASE_VERSION.cdx.json"
+          cyclonedx-py requirements $req --pyproject pyproject.toml --sv 1.6 --of JSON --validate -o $sbom
+          if ($LASTEXITCODE -ne 0) { throw "SBOM generation failed" }
+          Pop-Location
+          # Rewrite the checksum file so it also lists the SBOM (same format as build-release.ps1).
+          $dir = 'dist/release'
+          Get-ChildItem -Path $dir -File |
+            Where-Object Name -ne 'SHA256SUMS.txt' |
+            Sort-Object Name |
+            ForEach-Object { "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)" } |
+            Set-Content -LiteralPath (Join-Path $dir 'SHA256SUMS.txt') -Encoding ascii
+          Get-Content (Join-Path $dir 'SHA256SUMS.txt')
+
       - name: Write release notes from CHANGELOG
         shell: pwsh
         run: |
@@ -148,7 +182,7 @@ jobs:
           if (Test-Path "dist/release/AECModelBridge-Setup-$version.exe") {
             Add-Content -Encoding utf8 release-notes.md @"
 
-          **Easiest install:** download ``AECModelBridge-Setup-$version.exe`` below, double-click it and follow the wizard. It detects your Revit versions and sets everything up. Checksums are in ``SHA256SUMS.txt``.
+          **Easiest install:** download ``AECModelBridge-Setup-$version.exe`` below, double-click it and follow the wizard. It detects your Revit versions and sets everything up. Checksums are in ``SHA256SUMS.txt``, and the Python dependency SBOM (CycloneDX) is ``aec-model-bridge-$version.cdx.json``. See docs/supply-chain.md for how to verify downloads.
           "@
           }
 
