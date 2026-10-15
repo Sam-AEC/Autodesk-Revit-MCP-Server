@@ -1,0 +1,44 @@
+{
+  "id": "schedule_consistency",
+  "name": "Door and Room Schedule Consistency",
+  "version": "1.0.0",
+  "schema_version": 1,
+  "min_hub_version": "1.2.0",
+  "description": "Read-only check of door and room schedules in a saved snapshot: duplicate or missing door Marks, doors with missing or identical From/To rooms, unnumbered or duplicate room numbers, rooms with zero area, and Marks that do not fit a pattern you supply. Proposes unique Marks but never changes the model.",
+  "author": "AEC Model Bridge",
+  "license": "GPL-3.0-or-later",
+  "requires_providers": ["revit", "semantic"],
+  "permissions": ["model.read"],
+  "commands": [
+    {
+      "id": "check_doors_and_rooms",
+      "title": "Check Door and Room Schedules",
+      "surface": ["mcp", "panel"],
+      "execution_mode": "sync",
+      "is_mutating": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "snapshot_id": {
+            "type": "string",
+            "description": "Saved snapshot to check. Leave empty only in mock mode."
+          },
+          "mark_pattern": {
+            "type": "string",
+            "description": "Optional regular expression every door Mark must fully match, for example the format your office uses. Nothing is assumed; if empty, the pattern check is skipped."
+          },
+          "suggest_prefix": {
+            "type": "string",
+            "description": "Optional text to start proposed Marks with. If empty, no Mark proposal is made."
+          },
+          "suggest_digits": {
+            "type": "integer",
+            "description": "How many digits to pad proposed Mark numbers to (default 3).",
+            "default": 3
+          }
+        },
+        "required": []
+      }
+    }
+  ]
+}
