@@ -56,11 +56,10 @@ def _post(port: int, path: str, body: dict):
         return e.code, json.loads(e.read())
 
 
-def test_health_reports_tool_count(running_server):
+def test_health_reports_status_only(running_server):
     status, body = _get(running_server, "/health")
     assert status == 200
-    assert body["status"] == "healthy"
-    assert body["tools"] > 100  # ~218 across all providers/modules
+    assert body == {"status": "healthy"}
 
 
 def test_execute_runs_a_real_readonly_tool(running_server):
@@ -340,3 +339,87 @@ def test_diagnostics_reports_missing_revit_bridge(running_server, monkeypatch):
     checks = {c["id"]: c for c in body["checks"]}
     assert checks["revit_bridge"]["ok"] is False
     assert "add-in" in checks["revit_bridge"]["next_step"]
+
+
+# --- Host / Origin / Content-Type checks ------------------------------------
+
+
+def _raw(port, method, path, headers=None, body=None):
+    """Request with full header control (urllib would override Host)."""
+    import http.client
+
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        conn.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
+        hdrs = {"Host": f"127.0.0.1:{port}"}
+        hdrs.update(headers or {})
+        data = body.encode("utf-8") if body is not None else None
+        if data is not None:
+            hdrs["Content-Length"] = str(len(data))
+        for k, v in hdrs.items():
+            conn.putheader(k, v)
+        conn.endheaders(data)
+        resp = conn.getresponse()
+        return resp.status, dict(resp.getheaders()), json.loads(resp.read() or b"{}")
+    finally:
+        conn.close()
+
+
+JSON_CT = {"Content-Type": "application/json"}
+EXEC_BODY = json.dumps({"tool": "list_pending_plans", "arguments": {}})
+
+
+def test_post_requires_json_content_type(running_server):
+    for ctype in ("text/plain", "application/x-www-form-urlencoded", "multipart/form-data"):
+        status, _, _ = _raw(running_server, "POST", "/execute", {"Content-Type": ctype}, EXEC_BODY)
+        assert status == 415, ctype
+    status, _, _ = _raw(running_server, "POST", "/execute", None, EXEC_BODY)  # no header
+    assert status == 415
+
+
+def test_json_content_type_with_charset_is_accepted(running_server):
+    status, _, body = _raw(
+        running_server, "POST", "/execute", {"Content-Type": "application/json; charset=utf-8"}, EXEC_BODY
+    )
+    assert status == 200 and body["ok"] is True
+
+
+@pytest.mark.parametrize("host", ["evil.example", "evil.example:%d", "127.0.0.1", "localhost:1", "127.0.0.1.evil.example:%d"])
+def test_bad_host_rejected(running_server, host):
+    host = host.replace("%d", str(running_server))
+    status, _, _ = _raw(running_server, "POST", "/execute", {**JSON_CT, "Host": host}, EXEC_BODY)
+    assert status == 403
+    status, _, _ = _raw(running_server, "GET", "/health", {"Host": host})
+    assert status == 403
+
+
+def test_localhost_host_is_allowed(running_server):
+    status, _, _ = _raw(running_server, "GET", "/health", {"Host": f"localhost:{running_server}"})
+    assert status == 200
+
+
+@pytest.mark.parametrize("origin", ["https://evil.example", "null", "http://127.0.0.1", "http://localhost:8787"])
+def test_any_origin_rejected(running_server, origin):
+    status, _, _ = _raw(running_server, "POST", "/execute", {**JSON_CT, "Origin": origin}, EXEC_BODY)
+    assert status == 403
+    status, _, _ = _raw(running_server, "GET", "/diagnostics", {"Origin": origin})
+    assert status == 403
+    status, _, _ = _raw(running_server, "GET", "/health", {"Origin": origin})
+    assert status == 403
+
+
+def test_no_cors_headers_and_options_not_served(running_server):
+    status, headers, _ = _raw(running_server, "GET", "/health")
+    assert status == 200
+    assert not any(k.lower().startswith("access-control-") for k in headers)
+    import http.client
+
+    conn = http.client.HTTPConnection("127.0.0.1", running_server, timeout=5)
+    try:
+        conn.request("OPTIONS", "/execute", headers={"Origin": "https://evil.example"})
+        resp = conn.getresponse()
+        resp.read()
+        assert resp.status >= 400
+        assert not any(k.lower().startswith("access-control-") for k, _ in resp.getheaders())
+    finally:
+        conn.close()
