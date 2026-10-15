@@ -202,3 +202,11 @@ def test_failed_group_assimilation_is_a_failure():
     runner.close()
     assert runner.outcome == "group_close_failed"
     assert any(r[0] == "GROUP_CLOSE_FAILED" for r in records)
+
+
+def test_make_view_crops_a_3d_view_to_its_scope():
+    # Live: without a crop the export fits the whole model and a small scope is a few pixels on a blank page.
+    source = (SCRIPT_DIR / "make_view.ipy").read_text(encoding="utf-8")
+    assert "def frame_3d(view, lo, hi)" in source
+    assert "    frame_3d(view, lo, hi)\n" in source
+    assert "crop_frames_scope" in source

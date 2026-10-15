@@ -78,7 +78,27 @@ def fit_3d(view, box, direction, margin):
     view.SetOrientation(ViewOrientation3D(eye, XYZ(up[0], up[1], up[2]), XYZ(d[0], d[1], d[2])))
     view.SetSectionBox(make_box(lo, hi, None))
     view.IsSectionBoxActive = True
+    frame_3d(view, lo, hi)
     return (lo, hi)
+
+
+def frame_3d(view, lo, hi):
+    """Crop the view to the scope. Without a crop Revit fits the export to the whole model, so a small scope in a
+    big project exports as a few pixels on a blank page (seen live: a 12 x 9 m house 500 m from the rest)."""
+    doc.Regenerate()
+    inv = view.CropBox.Transform.Inverse
+    pts = []
+    for x in (lo[0], hi[0]):
+        for y in (lo[1], hi[1]):
+            for z in (lo[2], hi[2]):
+                pts.append(inv.OfPoint(XYZ(x, y, z)))
+    nb = BoundingBoxXYZ()
+    nb.Transform = view.CropBox.Transform
+    nb.Min = XYZ(min(p.X for p in pts), min(p.Y for p in pts), min(p.Z for p in pts))
+    nb.Max = XYZ(max(p.X for p in pts), max(p.Y for p in pts), max(p.Z for p in pts))
+    view.CropBox = nb
+    view.CropBoxActive = True
+    view.CropBoxVisible = False
 
 
 def crop_plan(view, box, margin):
@@ -287,6 +307,7 @@ def main():
                 and sb.Min.Z <= state["box"][0][2] + 1e-6 and sb.Max.X >= state["box"][1][0] - 1e-6 \
                 and sb.Max.Y >= state["box"][1][1] - 1e-6 and sb.Max.Z >= state["box"][1][2] - 1e-6
             post("section_box_fits_scope", ok, "section box active=%s" % got.IsSectionBoxActive)
+            post("crop_frames_scope", bool(got.CropBoxActive), "crop active=%s (an export fits to the crop, not the whole model)" % got.CropBoxActive)
         if kind == "3d" and ARGS.get("display_style") not in (None, "keep"):
             post("display_style", str(got.DisplayStyle) == STYLES[ARGS["display_style"]], "%s" % got.DisplayStyle)
         item([
