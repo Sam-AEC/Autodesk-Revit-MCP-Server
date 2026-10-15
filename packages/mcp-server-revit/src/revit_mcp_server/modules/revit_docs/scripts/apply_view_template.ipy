@@ -1,0 +1,83 @@
+# revit_apply_view_template (write mode).
+# ARGS = {template, template_id, views: [{view_id | view_name}], on_error, dry_run}
+# Assigns one view template to the listed views. Each view is its own transaction. A view that already has the template is
+# reported as unchanged and not touched. A view the template cannot be applied to (wrong view type) fails with its id.
+# The tool never edits the template itself and never removes a template from a view.
+
+
+def current_template(v):
+    try:
+        tid = v.ViewTemplateId
+        if tid is None or eid(tid) < 0:
+            return None
+        return doc.GetElement(tid)
+    except Exception:
+        return None
+
+
+def main():
+    doc_meta()
+    tpl = None
+    if ARGS.get("template_id") is not None:
+        tpl = get_by_id(ARGS["template_id"])
+        if tpl is None or not isinstance(tpl, View) or not tpl.IsTemplate:
+            refuse("template_not_found", "id %s is not a view template; templates in the document: %s" % (ARGS["template_id"], ", ".join(template_names(15)) or "(none)"))
+            return
+    else:
+        tpl = find_view_template(ARGS["template"])
+        if tpl is None:
+            refuse("template_not_found", "no view template named '%s'; templates in the document: %s" % (ARGS["template"], ", ".join(template_names(15)) or "(none)"))
+            return
+
+    views = []
+    seen = {}
+    for i, spec in enumerate(ARGS.get("views") or []):
+        v, why = resolve_view(spec, "views[%d]" % i)
+        if v is None:
+            refuse("view_not_found", why)
+            return
+        if v.IsTemplate or isinstance(v, ViewSheet):
+            refuse("view_not_found", "%s is a %s; only views and schedules can take a view template" % (vlabel(v), "view template" if v.IsTemplate else "sheet"), [eid(v)])
+            return
+        if eid(v) in seen:
+            continue
+        seen[eid(v)] = 1
+        views.append(v)
+
+    run = Runner("AEC apply view template", ARGS.get("on_error"))
+    status = {}
+    previous = {}
+    for v in views:
+        old = current_template(v)
+        previous[eid(v)] = old.Name if old is not None else ""
+        if old is not None and eid(old) == eid(tpl):
+            status[eid(v)] = "unchanged"
+            continue
+
+        def apply(v=v):
+            if not v.IsValidViewTemplate(tpl.Id):
+                raise StepError("view template '%s' (%s) cannot be applied to %s, a %s" % (tpl.Name, view_type_text(tpl), vlabel(v), view_type_text(v)), [eid(v)])
+            v.ViewTemplateId = tpl.Id
+            return v
+
+        done = run.step("Apply template '%s' to view '%s'" % (tpl.Name, v.Name), apply, ids=[eid(v)])
+        if done is not None:
+            status[eid(v)] = "applied"
+
+    applied = 0
+    for v in views:
+        st = status.get(eid(v))
+        if st is None:
+            continue
+        got = get_by_id(eid(v))
+        ok = got is not None and eid(got.ViewTemplateId) == eid(tpl)
+        post("template_assigned", ok, "view %s has template id %s (expected %d)" % (vlabel(v), eid(got.ViewTemplateId) if got is not None else "?", eid(tpl)))
+        if st == "applied":
+            applied += 1
+            run.changed.append(eid(v))
+        item([("kind", "view"), ("id", eid(v)), ("name", v.Name), ("view_type", view_type_text(v)), ("template", tpl.Name), ("previous", previous.get(eid(v), "")), ("status", st)])
+    unchanged = len([1 for v in views if status.get(eid(v)) == "unchanged"])
+    summary("template '%s' applied to %d of %d views (%d already had it)" % (tpl.Name, applied, len(views), unchanged))
+
+
+__output__ = run_write(main)

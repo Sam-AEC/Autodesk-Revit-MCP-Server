@@ -1,0 +1,59 @@
+# revit_list_view_templates (read only).
+# ARGS = {name_contains, only_unused}
+# One ROW per view template: id, name, view_type, used_by (number of views that have it assigned), controlled (number of
+# view parameters the template controls). Unused templates are reported as INFO.
+
+
+def template_id_of(v):
+    try:
+        tid = v.ViewTemplateId
+        if tid is None or eid(tid) < 0:
+            return -1
+        return eid(tid)
+    except Exception:
+        return -1
+
+
+def controlled_count(t):
+    try:
+        everything = len(list(t.GetTemplateParameterIds()))
+        off = len(list(t.GetNonControlledTemplateParameterIds()))
+        return everything - off
+    except Exception:
+        return ""
+
+
+def main():
+    doc_meta()
+    needle = (ARGS.get("name_contains") or "").lower()
+    only_unused = bool(ARGS.get("only_unused"))
+    used = {}
+    templates = []
+    for v in FilteredElementCollector(doc).OfClass(View):
+        if v.IsTemplate:
+            templates.append(v)
+            continue
+        tid = template_id_of(v)
+        if tid >= 0:
+            used[tid] = used.get(tid, 0) + 1
+    templates.sort(key=lambda t: t.Name.lower())
+    unused = 0
+    shown = 0
+    for t in templates:
+        n = used.get(eid(t), 0)
+        if n == 0:
+            unused += 1
+        if needle and needle not in t.Name.lower():
+            continue
+        if only_unused and n > 0:
+            continue
+        shown += 1
+        row([("kind", "template"), ("id", eid(t)), ("name", t.Name), ("view_type", view_type_text(t)), ("used_by", n), ("controlled", controlled_count(t))])
+    meta("n_templates", len(templates))
+    meta("n_unused", unused)
+    if unused:
+        info("UNUSED_TEMPLATES", "%d of %d view templates are not assigned to any view (only_unused=true lists them)" % (unused, len(templates)))
+    summary("%d view templates in the document (%d unused); %d rows match" % (len(templates), unused, shown))
+
+
+__output__ = run_main(main)
