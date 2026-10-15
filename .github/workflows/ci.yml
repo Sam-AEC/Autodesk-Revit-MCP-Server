@@ -99,12 +99,14 @@ jobs:
         working-directory: packages/mcp-server-revit
         run: uv lock --check
 
+      # Run from the package directory: [tool.coverage.run] source is a relative path.
       - name: Run Python tests with coverage
+        working-directory: packages/mcp-server-revit
         run: |
           mkdir -p "$REPORTS_DIR"
-          python -m pytest packages/mcp-server-revit/tests \
+          python -m pytest tests \
             --junitxml="$REPORTS_DIR/junit.xml" \
-            --cov --cov-config=packages/mcp-server-revit/pyproject.toml \
+            --cov --cov-config=pyproject.toml \
             --cov-report=term \
             --cov-report="xml:$REPORTS_DIR/coverage.xml"
 

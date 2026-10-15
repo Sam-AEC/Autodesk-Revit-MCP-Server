@@ -96,8 +96,18 @@ filterwarnings = [
 
 [tool.coverage.run]
 branch = true
-source_pkgs = ["revit_mcp_server"]
+# Measure by directory, not package name: several tests load modules by file path
+# (importlib.util.spec_from_file_location), which source_pkgs would report at 0%.
+source = ["src/revit_mcp_server"]
+relative_files = true
 omit = ["*/tests/*", "*/_version.py"]
+
+[tool.coverage.paths]
+# An installed (site-packages) copy and the src tree are the same code.
+source = [
+    "src/revit_mcp_server",
+    "*/site-packages/revit_mcp_server",
+]
 
 [tool.coverage.report]
 # Measured at 59% (line + branch) when this gate was introduced; the floor sits a
