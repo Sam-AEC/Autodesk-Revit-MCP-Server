@@ -169,6 +169,7 @@ DESCRIPTIONS: dict[str, str] = {
     "clash_triage_match_clashes": "Match each clash from a Navisworks clash test to the Revit elements it involves, by UniqueId or IFC GUID, and say how sure each match is (exact, ambiguous or unmatched). Never guesses and never changes the model; records the result as issues in the workspace.",
     "clash_triage_list_clash_issues": "List the clash issues recorded by clash triage, optionally filtered by status and match confidence. Read-only.",
     "qaqc_checker_list_rules": "List the QA/QC rules that are available, optionally for one rule pack. Read-only.",
+    "sheet_view_audit_run_audit": "Check the sheets and views in a saved snapshot for empty sheets, unplaced views, duplicate sheet numbers, missing sheet parameters and default view names. Read-only.",
     "warnings_triage_review_warnings": "Group the open project's Revit warnings by type, rank them by how many elements they touch, flag duplicate marks, overlapping elements and rooms not enclosed for the coordinator, and suggest a next step for each group. Read-only.",
     "bcf_exchange_export_bcf": "Save issues (your own list and/or the recorded QA/QC issues) to a BCF 2.1 .bcfzip file in the workspace. Writes a file; does not change the model. Not yet checked against other BCF tools.",
     "bcf_exchange_import_bcf": "Read a BCF .bcfzip file from the workspace and return its issues (title, description, status, priority, element ids). Read-only; unsafe zip files are refused.",

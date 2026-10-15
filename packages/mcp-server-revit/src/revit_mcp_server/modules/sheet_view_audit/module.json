@@ -1,0 +1,36 @@
+{
+  "id": "sheet_view_audit",
+  "name": "Sheet and View Audit",
+  "version": "1.0.0",
+  "schema_version": 1,
+  "min_hub_version": "1.2.0",
+  "description": "Read-only audit of sheets and views in a saved snapshot: empty sheets, views not on any sheet, duplicate sheet numbers, missing sheet parameters, default view names, and sheet counts per discipline prefix.",
+  "author": "AEC Model Bridge",
+  "license": "GPL-3.0-or-later",
+  "requires_providers": ["revit", "semantic"],
+  "permissions": ["model.read"],
+  "commands": [
+    {
+      "id": "run_audit",
+      "title": "Audit Sheets and Views",
+      "surface": ["mcp", "panel"],
+      "execution_mode": "sync",
+      "is_mutating": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "snapshot_id": {
+            "type": "string",
+            "description": "Saved snapshot to audit. The snapshot must contain sheet and view data."
+          },
+          "required_sheet_parameters": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Sheet parameters that must be filled in. Defaults to Sheet Number and Sheet Name."
+          }
+        },
+        "required": ["snapshot_id"]
+      }
+    }
+  ]
+}
