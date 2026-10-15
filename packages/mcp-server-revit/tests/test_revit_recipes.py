@@ -742,6 +742,16 @@ def test_starter_recipes_are_consistent_read_only_and_python27_safe(tmp_path, mo
     validate_read_script(w.revit.calls[-1][1]["script"])
 
 
+def test_starters_still_verify_after_a_crlf_checkout(tmp_path):
+    copy = tmp_path / "starter"
+    copy.mkdir()
+    for path in recipes.STARTER_DIR.iterdir():
+        data = path.read_bytes().replace(b"\r\n", b"\n")
+        copy.joinpath(path.name).write_bytes(data.replace(b"\n", b"\r\n") if path.suffix == ".ipy" else data)
+    store = RecipeStore(tmp_path / "ws", starter_dir=copy)
+    assert [store.load(rid).sha256 for rid in STARTERS] == [RecipeStore(tmp_path / "ws", starter_dir=recipes.STARTER_DIR).load(rid).sha256 for rid in STARTERS]
+
+
 def test_a_workspace_recipe_replaces_a_starter_with_the_same_id(tmp_path, monkeypatch):
     w = wire(tmp_path, monkeypatch)
     save(w, "level_list", READ_CODE, title="Mine")
