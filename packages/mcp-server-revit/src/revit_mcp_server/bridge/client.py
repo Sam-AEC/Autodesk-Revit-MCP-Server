@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import httpx
+import threading
 import time
 import uuid
 from typing import Any
@@ -14,6 +15,9 @@ class BridgeClient:
         self.timeout = timeout
         self.token = token
         self._tool_catalog: list[str] | None = None
+        self._http: httpx.Client | None = None
+        self._http_key: tuple[Any, ...] | None = None
+        self._http_lock = threading.Lock()
 
     def initialize(self) -> None:
         """Check bridge health and fetch tool catalog on startup."""
@@ -92,25 +96,42 @@ class BridgeClient:
         return self.call_tool(tool_name, payload)
 
     def _get_client(self) -> httpx.Client:
-        headers = {}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
-        return httpx.Client(headers=headers, timeout=self.timeout)
+        """Return the shared httpx.Client, rebuilding it if the token or timeout changed."""
+        key = (self.token, self.timeout)
+        with self._http_lock:
+            if self._http is None or self._http_key != key:
+                old = self._http
+                headers = {}
+                if self.token:
+                    headers["Authorization"] = f"Bearer {self.token}"
+                self._http = httpx.Client(headers=headers, timeout=self.timeout)
+                self._http_key = key
+                if old is not None:
+                    old.close()
+            return self._http
+
+    def close(self) -> None:
+        """Close the shared HTTP client. A later call transparently rebuilds it."""
+        with self._http_lock:
+            client, self._http, self._http_key = self._http, None, None
+        if client is not None:
+            client.close()
+
+    def __enter__(self) -> "BridgeClient":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
     def _get(self, path: str) -> dict[str, Any]:
-        with self._get_client() as client:
-            resp = client.get(f"{self.base_url}{path}")
-            resp.raise_for_status()
-            return resp.json()
+        resp = self._get_client().get(f"{self.base_url}{path}")
+        resp.raise_for_status()
+        return resp.json()
 
     def _post(self, path: str, data: dict[str, Any]) -> dict[str, Any]:
-        with self._get_client() as client:
-            resp = client.post(
-                f"{self.base_url}{path}",
-                json=data
-            )
-            resp.raise_for_status()
-            return resp.json()
+        resp = self._get_client().post(f"{self.base_url}{path}", json=data)
+        resp.raise_for_status()
+        return resp.json()
 
     def _normalize_element_ids(self, result: dict[str, Any]) -> None:
         """Normalize specific element ID keys to generic element_id for consistency."""

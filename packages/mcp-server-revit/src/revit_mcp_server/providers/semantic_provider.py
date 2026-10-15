@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 import uuid
-import ifcopenshell.guid
 
 from revit_mcp_server.errors import BridgeError
 from revit_mcp_server.providers.base import AECProvider, ProviderTool
@@ -103,6 +102,8 @@ class SemanticProvider(AECProvider):
             mapper = self.registry.get_provider("mapper")
             if mapper:
                 mappings = []
+                import ifcopenshell.guid  # lazy: heavy import, only needed here
+
                 for el in snapshot.elements:
                     if el.uid:
                         # Extract GUID prefix deterministically

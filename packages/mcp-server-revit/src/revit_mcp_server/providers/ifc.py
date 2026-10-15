@@ -1,24 +1,28 @@
+import importlib
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import ifcopenshell
-import ifcopenshell.util
-import ifcopenshell.util.placement
-try:
-    import ifcopenshell.geom
-    HAS_GEOM = True
-except ImportError:
-    HAS_GEOM = False
-
-try:
-    import ifcopenshell.validate
-    HAS_VALIDATE = True
-except ImportError:
-    HAS_VALIDATE = False
-
 from ..security.workspace import WorkspaceMonitor
 from .base import AECProvider, ProviderTool
+
+
+def _ifcopenshell() -> Any:
+    """Import ifcopenshell on first use (it is slow to import)."""
+    import ifcopenshell
+    import ifcopenshell.util
+    import ifcopenshell.util.placement
+
+    return ifcopenshell
+
+
+def _has_submodule(name: str) -> bool:
+    try:
+        importlib.import_module(f"ifcopenshell.{name}")
+        return True
+    except ImportError:
+        return False
+
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +38,13 @@ class IfcProvider(AECProvider):
         return self._capabilities
 
     async def check_health(self) -> Dict[str, Any]:
+        ifcopenshell = _ifcopenshell()
         return {
             "status": "healthy",
             "provider": "ifc",
-            "ifcopenshell_version": ifcopenshell.__version__ if hasattr(ifcopenshell, "__version__") else "0.7.0",
-            "has_geom": HAS_GEOM,
-            "has_validate": HAS_VALIDATE
+            "ifcopenshell_version": getattr(ifcopenshell, "__version__", "0.7.0"),
+            "has_geom": _has_submodule("geom"),
+            "has_validate": _has_submodule("validate")
         }
 
     async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -57,7 +62,7 @@ class IfcProvider(AECProvider):
 
         # Open the file
         try:
-            ifc_file = ifcopenshell.open(str(resolved_path))
+            ifc_file = _ifcopenshell().open(str(resolved_path))
         except Exception as e:
             raise ValueError(f"Failed to open IFC file: {e}") from e
 
@@ -458,7 +463,7 @@ class IfcProvider(AECProvider):
         # Placement extraction
         if hasattr(element, "ObjectPlacement") and element.ObjectPlacement:
             try:
-                matrix = ifcopenshell.util.placement.get_local_placement(element.ObjectPlacement)
+                matrix = _ifcopenshell().util.placement.get_local_placement(element.ObjectPlacement)
                 # Convert matrix array to list
                 summary["placement"] = {
                     "matrix": matrix.tolist() if hasattr(matrix, "tolist") else list(matrix)
@@ -467,10 +472,11 @@ class IfcProvider(AECProvider):
                 summary["placement_error"] = str(e)
 
         # Bounding box geometry extraction
-        if HAS_GEOM:
+        if _has_submodule("geom"):
             try:
-                settings = ifcopenshell.geom.settings()
-                shape = ifcopenshell.geom.create_shape(settings, element)
+                geom = importlib.import_module("ifcopenshell.geom")
+                settings = geom.settings()
+                shape = geom.create_shape(settings, element)
                 # Compute min/max from vertices
                 verts = shape.geometry.verts
                 if verts:
@@ -513,10 +519,11 @@ class IfcProvider(AECProvider):
 
     def _validate(self, ifc_file) -> Dict[str, Any]:
         errors = []
-        if HAS_VALIDATE:
+        if _has_submodule("validate"):
             try:
                 # Runs standard validation
-                for error in ifcopenshell.validate.validate(ifc_file):
+                validate = importlib.import_module("ifcopenshell.validate")
+                for error in validate.validate(ifc_file):
                     errors.append({
                         "message": error.message,
                         "element_id": error.instance.id() if error.instance else None,

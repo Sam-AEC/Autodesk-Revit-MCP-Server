@@ -1890,4 +1890,6 @@ class RevitProvider(AECProvider):
     ]
 
     async def shutdown(self) -> None:
-        pass
+        close = getattr(getattr(self, "_bridge", None), "close", None)
+        if callable(close):
+            close()

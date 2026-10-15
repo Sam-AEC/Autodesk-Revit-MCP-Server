@@ -4,8 +4,6 @@ from itertools import combinations
 from math import isfinite
 from typing import Any, Dict, List, Optional, Sequence
 
-import networkx as nx
-
 from .base import AECProvider, ProviderTool
 
 
@@ -23,11 +21,25 @@ MAX_LIMIT = 500
 
 class SemanticGraphProvider(AECProvider):
     def __init__(self) -> None:
-        self._graph = nx.MultiDiGraph()
+        # networkx is imported lazily so a cold start that never touches the
+        # graph tools does not pay for it; the graph is built on first use.
+        self._graph_obj: Any = None
         self._init_capabilities()
 
     @property
-    def graph(self) -> nx.MultiDiGraph:
+    def _graph(self) -> Any:
+        if self._graph_obj is None:
+            import networkx as nx
+
+            self._graph_obj = nx.MultiDiGraph()
+        return self._graph_obj
+
+    @_graph.setter
+    def _graph(self, value: Any) -> None:
+        self._graph_obj = value
+
+    @property
+    def graph(self) -> Any:
         """Access the underlying NetworkX MultiDiGraph instance."""
         return self._graph
 
@@ -259,6 +271,8 @@ class SemanticGraphProvider(AECProvider):
                 "Dangling edges reference missing node ids: " + ", ".join(unique_missing)
             )
 
+        import networkx as nx
+
         staged = nx.MultiDiGraph() if replace else self._graph.copy(as_view=False)
 
         for node in node_records:
@@ -430,6 +444,8 @@ class SemanticGraphProvider(AECProvider):
                 "total": 0,
                 "truncated": False,
             }
+
+        import networkx as nx
 
         filtered = nx.Graph()
         filtered.add_nodes_from(selected_nodes)

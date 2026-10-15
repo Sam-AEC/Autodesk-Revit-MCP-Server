@@ -14,14 +14,49 @@ from urllib.parse import quote, urlencode, urlparse
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from specklepy.api.client import SpeckleClient
-from specklepy.api.credentials import get_default_account
-from specklepy.transports.server import ServerTransport
-from specklepy.api import operations
-from specklepy.objects.base import Base
-
 from .base import AECProvider, ProviderTool, enrich_mutation_metadata
 from ..errors import RevitMCPError
+
+
+# specklepy is slow to import (~300 ms) and only needed by the Speckle send and
+# receive tools, so these names resolve it on first use. They stay module-level
+# attributes so existing code and tests can still patch them.
+class _LazySpeckleModule:
+    def __init__(self, module_name: str) -> None:
+        self._module_name = module_name
+
+    def __getattr__(self, name: str) -> Any:
+        import importlib
+
+        return getattr(importlib.import_module(self._module_name), name)
+
+
+operations = _LazySpeckleModule("specklepy.api.operations")
+
+
+def SpeckleClient(*args: Any, **kwargs: Any) -> Any:  # noqa: N802
+    from specklepy.api.client import SpeckleClient as _SpeckleClient
+
+    return _SpeckleClient(*args, **kwargs)
+
+
+def get_default_account(*args: Any, **kwargs: Any) -> Any:
+    from specklepy.api.credentials import get_default_account as _get_default_account
+
+    return _get_default_account(*args, **kwargs)
+
+
+def ServerTransport(*args: Any, **kwargs: Any) -> Any:  # noqa: N802
+    from specklepy.transports.server import ServerTransport as _ServerTransport
+
+    return _ServerTransport(*args, **kwargs)
+
+
+def Base(*args: Any, **kwargs: Any) -> Any:  # noqa: N802
+    from specklepy.objects.base import Base as _Base
+
+    return _Base(*args, **kwargs)
+
 
 CredentialCallback = Callable[[str], str | None] | Callable[[str], Awaitable[str | None]]
 SpeckleMergeBuilder = Callable[[Dict[str, Any]], Dict[str, Any]]
@@ -729,7 +764,7 @@ class SpeckleProvider(CloudProviderBase):
             raise RuntimeError("Speckle merge did not succeed")
         return {"merged": True}
 
-    def _ensure_local_account(self, project_id: str) -> tuple[SpeckleClient, ServerTransport]:
+    def _ensure_local_account(self, project_id: str) -> tuple[Any, Any]:
         account = get_default_account()
         if not account:
             raise RevitMCPError("No local Speckle account found. Please authenticate via Speckle Manager.")

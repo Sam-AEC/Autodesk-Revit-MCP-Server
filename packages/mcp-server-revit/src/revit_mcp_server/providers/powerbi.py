@@ -41,7 +41,9 @@ class PowerBIProvider(AECProvider):
         return {"status": "healthy", "mode": "mock"}
 
     async def shutdown(self) -> None:
-        pass
+        close = getattr(getattr(self, "_bridge", None), "close", None)
+        if callable(close):
+            close()
 
     async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         if name != "powerbi_health":

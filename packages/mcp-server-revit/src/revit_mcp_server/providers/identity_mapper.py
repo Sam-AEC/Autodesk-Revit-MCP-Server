@@ -3,7 +3,6 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import ifcopenshell.guid
 
 from ..security.workspace import WorkspaceMonitor
 from .base import AECProvider, ProviderTool
@@ -130,6 +129,8 @@ class AECMapperProvider(AECProvider):
 
         # 2. Deterministic conversion between Revit UniqueId/GUID and IFC GlobalId
         if {source_format, target_format} == {"revit_unique_id", "ifc_guid"}:
+            import ifcopenshell.guid  # lazy: heavy import, only needed here
+
             if source_format == "revit_unique_id":
                 try:
                     # Revit UniqueIds consist of a 36-char GUID followed by instance details (e.g., -0002ab1f)
