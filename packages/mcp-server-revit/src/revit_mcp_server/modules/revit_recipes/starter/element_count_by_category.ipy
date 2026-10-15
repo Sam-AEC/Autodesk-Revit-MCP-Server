@@ -1,0 +1,23 @@
+# Starter recipe: how many model elements each category has (read only).
+# Parameter: top, the number of categories to list (most elements first).
+
+
+def main():
+    doc_meta()
+    p = load_params()
+    top = int(p.get("top", 100))
+    counts = {}
+    for e in FilteredElementCollector(doc).WhereElementIsNotElementType():
+        c = e.Category
+        if c is None:
+            continue
+        counts[c.Name] = counts.get(c.Name, 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    for name, n in ordered[:top]:
+        row([("category", name), ("count", n)])
+    if len(ordered) > top:
+        info("LIST_CUT", "%d more categories not listed (raise top)" % (len(ordered) - top))
+    summary("%d elements in %d categories" % (sum(counts.values()), len(counts)))
+
+
+__output__ = run_main(main)

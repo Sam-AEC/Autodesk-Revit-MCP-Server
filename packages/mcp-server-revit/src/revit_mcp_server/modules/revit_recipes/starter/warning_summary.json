@@ -1,0 +1,22 @@
+{
+  "approval": "per_run",
+  "created_at": "2026-10-15T00:00:00Z",
+  "description": "Groups the document's warnings by description with count, severity and example element ids, most frequent first.",
+  "id": "warning_summary",
+  "mode": "read",
+  "params": [
+    {
+      "default": 20,
+      "description": "Warning kinds to list.",
+      "max": 500,
+      "min": 1,
+      "name": "top",
+      "required": false,
+      "type": "integer"
+    }
+  ],
+  "sha256": "3f657c20076636cb0314a7a6ade44e9e5096519b85e2c40820ea97cecb883415",
+  "title": "Warning summary",
+  "updated_at": "2026-10-15T00:00:00Z",
+  "version": 1
+}

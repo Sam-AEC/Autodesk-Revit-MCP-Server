@@ -1,0 +1,12 @@
+{
+  "approval": "per_run",
+  "created_at": "2026-10-15T00:00:00Z",
+  "description": "Lists the levels of the open document with id, name and elevation in metres, lowest first.",
+  "id": "level_list",
+  "mode": "read",
+  "params": [],
+  "sha256": "cd64a46197e23e218bc694bd5c220b96c1e28ce3bec91351dc01b5efa46720ae",
+  "title": "Level list",
+  "updated_at": "2026-10-15T00:00:00Z",
+  "version": 1
+}
