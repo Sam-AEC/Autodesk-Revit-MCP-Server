@@ -68,6 +68,7 @@ internal static class PythonScriptRunner
         EventHandler<DocumentChangedEventArgs>? onChanged = null;
         EventHandler<DocumentSavingEventArgs>? onSaving = null;
         EventHandler<DocumentSavingAsEventArgs>? onSavingAs = null;
+        TransactionGroup? readGuard = null;
 
         try
         {
@@ -98,6 +99,12 @@ internal static class PythonScriptRunner
                 app.Application.DocumentChanged += onChanged;
                 app.Application.DocumentSaving += onSaving;
                 app.Application.DocumentSavingAs += onSavingAs;
+
+                // The name check above only catches scripts that spell out Transaction. A script that builds the name
+                // at run time (seen live on Revit 2024: getattr(DB, 'Trans' + 'action')) changed the model without
+                // approval. Everything a read-mode script does therefore runs inside a group that is always rolled back.
+                readGuard = new TransactionGroup(doc, "AEC Model Bridge read-mode guard");
+                readGuard.Start();
             }
 
             ActiveProgress = progress;
@@ -122,12 +129,17 @@ internal static class PythonScriptRunner
                     mode, progress, "transaction_left_open", changedCount, runtime, left.RolledBack);
             }
 
+            var guardNote = EndReadGuard(ref readGuard, app, onChanged, ref changedCount);
             if (changedCount > 0 || savesBlocked > 0)
             {
                 return Result(false, output,
                     $"Read-mode violation: the script touched the model ({changedCount} element changes, {savesBlocked} save attempts blocked). "
-                    + "Changes made before this report are NOT rolled back; check the model.",
+                    + guardNote,
                     mode, progress, "read_mode_violation", changedCount, runtime);
+            }
+            if (guardNote.Length > 0)
+            {
+                return Result(false, output, guardNote, mode, progress, "read_mode_guard_failed", changedCount, runtime);
             }
 
             return Result(true, output, "", mode, progress, null, 0, runtime);
@@ -145,8 +157,11 @@ internal static class PythonScriptRunner
             {
                 error = ex.Message;
             }
-            var kind = changedCount > 0 || savesBlocked > 0 ? "read_mode_violation" : null;
             var left = RollBackOpenTransactions(doc, scope);
+            var guardNote = EndReadGuard(ref readGuard, app, onChanged, ref changedCount);
+            if (guardNote.Length > 0) error += "
+" + guardNote;
+            var kind = changedCount > 0 || savesBlocked > 0 ? "read_mode_violation" : null;
             if (left.RolledBack > 0 || left.StillOpen)
             {
                 error += $"\nThe failed script left {left.RolledBack} transaction(s) open; they were rolled back so the next command can run."
@@ -160,11 +175,47 @@ internal static class PythonScriptRunner
         finally
         {
             ActiveProgress = null;
+            if (readGuard != null)
+            {
+                int unused = 0;
+                EndReadGuard(ref readGuard, app, onChanged, ref unused);
+            }
             // Shut the runtime down after every script, success or failure, so nothing carries over.
             PythonEngineFactory.ShutdownQuietly(engine);
             if (onChanged != null) app.Application.DocumentChanged -= onChanged;
             if (onSaving != null) app.Application.DocumentSaving -= onSaving;
             if (onSavingAs != null) app.Application.DocumentSavingAs -= onSavingAs;
+        }
+    }
+
+    /// <summary>
+    /// Closes the read-mode guard group by rolling it back, so nothing a read-mode script did stays in the model.
+    /// The change counter is frozen first (the roll-back itself raises DocumentChanged). Returns a sentence for the
+    /// result, empty when nothing needs saying.
+    /// </summary>
+    private static string EndReadGuard(ref TransactionGroup? guard, UIApplication app,
+        EventHandler<DocumentChangedEventArgs>? onChanged, ref int changedCount)
+    {
+        if (guard == null) return "";
+        var group = guard;
+        guard = null;
+        if (onChanged != null) app.Application.DocumentChanged -= onChanged;
+        try
+        {
+            if (group.IsValidObject && group.GetStatus() == TransactionStatus.Started)
+            {
+                group.RollBack();
+                return changedCount > 0
+                    ? "The bridge rolled those changes back; the model is as it was. Use mode='write' with an approved plan for scripts that change the model."
+                    : "";
+            }
+            return changedCount > 0
+                ? "The read-mode guard group was already closed by the script, so the changes could not be rolled back; check the model."
+                : "The read-mode guard group was closed by the script; nothing was rolled back. Check the model before relying on this result.";
+        }
+        catch (Exception ex)
+        {
+            return "The read-mode guard could not be rolled back (" + ex.Message + "); check the model.";
         }
     }
 

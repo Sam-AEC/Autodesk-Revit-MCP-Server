@@ -226,3 +226,13 @@ def test_run_job_gate_follows_the_wrapped_call(stack):
     assert gated({"command": "nope"}) is True
     with pytest.raises(ReadModeViolation):
         gated({"script": "Transaction(doc, 'x')", "mode": "read"})
+
+
+def test_read_mode_runs_inside_a_group_that_is_always_rolled_back():
+    # Live (Revit 2024, 2026-10-15): getattr(DB, 'Trans' + 'action') got past the name check and changed a wall
+    # parameter without approval. The name check is a rail; the roll-back guard is what makes read mode safe.
+    source = (PROVIDER_SOURCE.parent / "PythonScriptRunner.cs").read_text(encoding="utf-8")
+    assert 'new TransactionGroup(doc, "AEC Model Bridge read-mode guard")' in source
+    assert "EndReadGuard(ref readGuard" in source
+    assert "group.RollBack();" in source
+    assert "group.Commit" not in source.split("EndReadGuard")[1].split("RollBackOpenTransactions")[0]

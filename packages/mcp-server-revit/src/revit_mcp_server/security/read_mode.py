@@ -6,7 +6,11 @@ gate is skipped and must fail closed. The add-in repeats the same check and adds
 a runtime backstop (`PythonScriptRunner.cs`); keep the two token lists in step
 (tests/test_python_read_mode.py compares them).
 
-What it catches: any mention of Transaction, SubTransaction or TransactionGroup
+The name check is only a first filter. The add-in also runs every read-mode script inside a transaction group that it
+always rolls back, so a script that gets past the names (seen live: getattr(DB, 'Trans' + 'action')) leaves no change in
+the model and is reported as a read_mode_violation.
+
+What the name check catches: any mention of Transaction, SubTransaction or TransactionGroup
 (including `from Autodesk.Revit.DB import Transaction`), the calls that save or
 synchronise a document, and dynamic-code builtins that could assemble those
 names at run time. What it cannot catch: reflection or string tricks that reach
