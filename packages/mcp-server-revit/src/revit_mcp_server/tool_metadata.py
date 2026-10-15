@@ -149,6 +149,7 @@ DESCRIPTIONS: dict[str, str] = {
     "module_list_commands": "List all registered modules and the commands they expose to the dockable Revit panel. Read-only.",
     "familytype_mapper_audit_families": "Audit the families in a saved snapshot and report problems such as unmapped or inconsistent family types. Read-only.",
     "familytype_mapper_list_type_mappings": "List family-type mappings found in a saved snapshot, optionally for one category. Read-only.",
+    "model_bloat_audit": "Check a saved snapshot for model bloat: unused families and types (purge candidates), in-place families, families with very many types, imported CAD files, and a rough cleanliness score, sorted by likely impact. Read-only: it never deletes or purges; any clean-up must go through an approved plan.",
     "hello_world_say_hello": "Example module command that returns a greeting; use it to confirm the module system works.",
     "model_inspector_summarize_model": "Summarise a saved snapshot, for example element counts by category. Read-only.",
     "model_inspector_ask": "Answer a question about a saved snapshot by filtering its element records with the filter DSL. Read-only.",

@@ -1,0 +1,30 @@
+{
+  "id": "model_bloat",
+  "name": "Model Bloat Audit",
+  "version": "1.0.0",
+  "schema_version": 1,
+  "min_hub_version": "1.2.0",
+  "description": "Read-only model clean-up report: unused families and types, in-place families, families with very many types, imported CAD files, and an overall cleanliness estimate. Never deletes or purges anything.",
+  "author": "AEC Model Bridge",
+  "license": "GPL-3.0-or-later",
+  "requires_providers": ["revit", "semantic"],
+  "permissions": ["model.read"],
+  "commands": [
+    {
+      "id": "audit",
+      "title": "Model Bloat Audit",
+      "surface": ["mcp", "panel"],
+      "execution_mode": "sync",
+      "is_mutating": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "snapshot_id": {"type": "string", "description": "ID of a saved semantic snapshot (returned by snapshot_take or revit_extract_snapshot). Leave empty to audit the built-in sample model."},
+          "large_type_threshold": {"type": "integer", "description": "A family with more types than this is reported as having very many types. Default 25."},
+          "max_items": {"type": "integer", "description": "Maximum number of items listed per section (the counts always cover everything). Default 50."}
+        },
+        "required": []
+      }
+    }
+  ]
+}
