@@ -1,0 +1,148 @@
+# Shared helpers of the sheet, view-template, crop and revision scripts of revit_docs (IronPython 2.7 source).
+# Loaded after the revit module's _prelude.ipy and _tags_read.ipy (and, for write scripts, _write_prelude.ipy).
+# Nothing here opens a transaction or changes the model, so read-only scripts can load it too.
+MM_PER_FT = 304.8
+
+
+def mm(feet):
+    return round(feet * MM_PER_FT, 1)
+
+
+def vlabel(v):
+    return "'%s' (id %d)" % (v.Name, eid(v))
+
+
+def view_type_text(v):
+    try:
+        return str(v.ViewType)
+    except Exception:
+        return ""
+
+
+def is_legend(v):
+    return view_type_text(v) == "Legend"
+
+
+def resolve_view(spec, what):
+    """(view, None) or (None, reason). spec = {view_id} or {view_name}; a name must match exactly one non-template, non-sheet view."""
+    if spec.get("view_id") is not None:
+        v = doc.GetElement(ElementId(int(spec["view_id"])))
+        if v is None or not isinstance(v, View):
+            return None, "%s: id %s is not a view in the document" % (what, spec["view_id"])
+        return v, None
+    name = spec.get("view_name")
+    hits = []
+    for v in FilteredElementCollector(doc).OfClass(View):
+        if v.IsTemplate or isinstance(v, ViewSheet):
+            continue
+        if v.Name == name:
+            hits.append(v)
+    if len(hits) != 1:
+        return None, "%s: %d views are named '%s'%s" % (what, len(hits), name, (" (ids %s); use view_id" % ",".join([str(eid(h)) for h in hits])) if hits else "")
+    return hits[0], None
+
+
+def viewports_by_view():
+    """{view id: [Viewport, ...]} over every sheet in the document."""
+    out = {}
+    for vp in FilteredElementCollector(doc).OfClass(Viewport):
+        out.setdefault(eid(vp.ViewId), []).append(vp)
+    return out
+
+
+def sheet_number_of(vp):
+    sh = doc.GetElement(vp.SheetId)
+    if sh is None:
+        return ""
+    return sh.SheetNumber
+
+
+def sheets_by_number(number):
+    hits = []
+    for s in FilteredElementCollector(doc).OfClass(ViewSheet):
+        if s.SheetNumber == number:
+            hits.append(s)
+    return hits
+
+
+def title_block_instance(sheet):
+    for tb in FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_TitleBlocks).WhereElementIsNotElementType():
+        if eid(tb.OwnerViewId) == eid(sheet):
+            return tb
+    return None
+
+
+def title_block_area(sheet, margin_ft):
+    """(x0, y0, x1, y1) in feet: the title block's bounding box on the sheet shrunk by the margin, or None without a title block."""
+    tb = title_block_instance(sheet)
+    if tb is None:
+        return None
+    bb = tb.get_BoundingBox(sheet)
+    if bb is None:
+        return None
+    return (bb.Min.X + margin_ft, bb.Min.Y + margin_ft, bb.Max.X - margin_ft, bb.Max.Y - margin_ft)
+
+
+def vp_rect(vp):
+    """(x0, y0, x1, y1) of a viewport box in sheet feet, or None."""
+    try:
+        ol = vp.GetBoxOutline()
+        return (ol.MinimumPoint.X, ol.MinimumPoint.Y, ol.MaximumPoint.X, ol.MaximumPoint.Y)
+    except Exception:
+        return None
+
+
+def rects_overlap(a, b, tol):
+    return a[0] < b[2] - tol and b[0] < a[2] - tol and a[1] < b[3] - tol and b[1] < a[3] - tol
+
+
+def all_revisions():
+    """Revisions in sequence order."""
+    revs = []
+    for r in FilteredElementCollector(doc).OfClass(Revision):
+        revs.append(r)
+    revs.sort(key=lambda r: r.SequenceNumber)
+    return revs
+
+
+def resolve_revision(rid, number):
+    """(Revision, None) or (None, reason): by element id, or by its revision number text (must be unique)."""
+    if rid is not None:
+        r = doc.GetElement(ElementId(int(rid)))
+        if r is None or not isinstance(r, Revision):
+            return None, "id %s is not a revision in the document" % rid
+        return r, None
+    hits = []
+    for r in all_revisions():
+        if r.RevisionNumber == number:
+            hits.append(r)
+    if len(hits) != 1:
+        known = "; ".join(["%s = '%s' (id %d)" % (r.RevisionNumber, r.Description, eid(r)) for r in all_revisions()][:12])
+        return None, "%d revisions have the number '%s'; revisions in the document: %s" % (len(hits), number, known or "(none)")
+    return hits[0], None
+
+
+def revision_ids_on(sheet):
+    """Set of revision ids shown on a sheet (clouds in its views plus the ones added to it)."""
+    try:
+        return set([eid(i) for i in sheet.GetAllRevisionIds()])
+    except Exception:
+        return set()
+
+
+def additional_revision_ids(sheet):
+    try:
+        return [eid(i) for i in sheet.GetAdditionalRevisionIds()]
+    except Exception:
+        return []
+
+
+def param_text(e, bip):
+    """String value of a built-in parameter, '' when missing."""
+    try:
+        p = e.get_Parameter(bip)
+        if p is None:
+            return ""
+        return p.AsString() or ""
+    except Exception:
+        return ""

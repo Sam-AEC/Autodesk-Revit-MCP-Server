@@ -1,0 +1,175 @@
+# revit_place_views (write mode, one sheet per call).
+# ARGS = {sheet, views: [{view_id | view_name, x_mm, y_mm}], layout: grid|row|column, columns, align: center|top_left,
+#         margin_mm, gutter_mm, area_mm, on_error, dry_run}
+# Adds viewports to an existing sheet (any sheet, not only ones this tool made). Nothing is moved or deleted: a view that is
+# already on a sheet (this one or another) is refused with the sheet number and the viewport id, except legends, which Revit
+# lets you place on many sheets. Every viewport is made in its own transaction. Sheet positions are millimetres in sheet space.
+
+
+def cells_for(area, count, columns, gutter):
+    """Grid cells (x0, y0, x1, y1) in feet, row by row from the top left."""
+    cols = max(1, min(columns, count))
+    rows = int((count + cols - 1) / cols)
+    cw = (area[2] - area[0] - gutter * (cols - 1)) / float(cols)
+    ch = (area[3] - area[1] - gutter * (rows - 1)) / float(rows)
+    out = []
+    for i in range(count):
+        r = int(i / cols)
+        c = i % cols
+        x0 = area[0] + c * (cw + gutter)
+        y1 = area[3] - r * (ch + gutter)
+        out.append((x0, y1 - ch, x0 + cw, y1))
+    return out
+
+
+def main():
+    doc_meta()
+    number = ARGS["sheet"]
+    hits = sheets_by_number(number)
+    if len(hits) != 1:
+        refuse("sheet_not_found", "%d sheets have the number '%s'; make the sheet first (revit_make_sheet) or check the number (revit_sheet_index)" % (len(hits), number))
+        return
+    sheet = hits[0]
+    sid = eid(sheet)
+    try:
+        if sheet.IsPlaceholder:
+            refuse("sheet_not_found", "sheet %s is a placeholder sheet and cannot hold views" % number, [sid])
+            return
+    except Exception:
+        pass
+
+    views = []
+    seen = {}
+    for i, spec in enumerate(ARGS.get("views") or []):
+        v, why = resolve_view(spec, "views[%d]" % i)
+        if v is None:
+            refuse("view_not_found", why)
+            return
+        if v.IsTemplate or isinstance(v, ViewSheet) or isinstance(v, ViewSchedule):
+            what = "view template" if v.IsTemplate else ("sheet" if isinstance(v, ViewSheet) else "schedule (use revit_make_schedule)")
+            refuse("view_not_found", "%s is a %s and cannot be placed as a viewport" % (vlabel(v), what), [eid(v)])
+            return
+        if eid(v) in seen:
+            refuse("duplicate_view", "view %s is listed twice; a view can be on a sheet once" % vlabel(v), [eid(v)])
+            return
+        seen[eid(v)] = 1
+        views.append((v, spec))
+
+    on_view = viewports_by_view()
+    for v, spec in views:
+        if is_legend(v):
+            continue
+        for vp in on_view.get(eid(v), []):
+            refuse("view_already_placed", "view %s is already on sheet %s (viewport id %d); a view can be on one sheet only and this tool never moves it" % (vlabel(v), sheet_number_of(vp), eid(vp)), [eid(v), eid(vp)])
+            return
+
+    margin = ARGS["margin_mm"] / MM_PER_FT
+    gutter = ARGS["gutter_mm"] / MM_PER_FT
+    auto = [(v, s) for v, s in views if s.get("x_mm") is None]
+    area = None
+    if auto:
+        if ARGS.get("area_mm"):
+            a = ARGS["area_mm"]
+            area = (a[0] / MM_PER_FT, a[1] / MM_PER_FT, a[2] / MM_PER_FT, a[3] / MM_PER_FT)
+        else:
+            area = title_block_area(sheet, margin)
+        if area is None:
+            refuse("no_layout_area", "sheet %s has no title block to measure; give area_mm or x_mm and y_mm for every view" % number, [sid])
+            return
+        if area[2] <= area[0] or area[3] <= area[1]:
+            refuse("no_layout_area", "the layout area is empty (title block minus margin_mm); lower margin_mm or give area_mm", [sid])
+            return
+    layout = ARGS.get("layout") or "grid"
+    if layout == "row":
+        columns = max(1, len(auto))
+    elif layout == "column":
+        columns = 1
+    else:
+        columns = ARGS.get("columns") or int(len(auto) ** 0.5 + 0.999)
+    cells = cells_for(area, len(auto), columns, gutter) if auto else []
+    cell_of = {}
+    for (v, s), cell in zip(auto, cells):
+        cell_of[eid(v)] = cell
+    align = ARGS.get("align") or "center"
+
+    before = {}
+    for vp in FilteredElementCollector(doc).OfClass(Viewport):
+        if eid(vp.SheetId) == sid:
+            before[eid(vp)] = vp_rect(vp)
+
+    run = Runner("AEC place views", ARGS.get("on_error"))
+    expect = {}
+    placed = []
+
+    for v, spec in views:
+        cell = cell_of.get(eid(v))
+        if cell is not None:
+            cx, cy = (cell[0] + cell[2]) / 2.0, (cell[1] + cell[3]) / 2.0
+        else:
+            cx, cy = spec["x_mm"] / MM_PER_FT, spec["y_mm"] / MM_PER_FT
+
+        def place(v=v, cx=cx, cy=cy, cell=cell):
+            if not Viewport.CanAddViewToSheet(doc, sheet.Id, v.Id):
+                raise StepError("Revit says view %s cannot be added to sheet %s" % (vlabel(v), number), [eid(v)])
+            vp = Viewport.Create(doc, sheet.Id, v.Id, XYZ(cx, cy, 0.0))
+            want = (cx, cy)
+            if cell is not None and align == "top_left":
+                doc.Regenerate()
+                r = vp_rect(vp)
+                if r is None:
+                    raise StepError("Revit gave no outline for the new viewport of %s, so it cannot be aligned" % vlabel(v), [eid(v), eid(vp)])
+                want = (cell[0] + (r[2] - r[0]) / 2.0, cell[3] - (r[3] - r[1]) / 2.0)
+                vp.SetBoxCenter(XYZ(want[0], want[1], 0.0))
+            expect[eid(v)] = want
+            return vp
+
+        vp = run.step("Place view '%s' on sheet %s" % (v.Name, number), place, ids=[eid(v), sid])
+        if vp is not None:
+            placed.append((v, cell))
+
+    after = viewports_by_view()
+    now = {}
+    for vp in FilteredElementCollector(doc).OfClass(Viewport):
+        if eid(vp.SheetId) == sid:
+            now[eid(vp)] = vp
+    rects = []
+    for v, cell in placed:
+        mine = [vp for vp in after.get(eid(v), []) if eid(vp.SheetId) == sid]
+        post("viewport_for_view", len(mine) == 1, "view %s has %d viewport(s) on sheet %s" % (vlabel(v), len(mine), number))
+        if len(mine) != 1:
+            continue
+        real = mine[0]
+        run.changed.append(eid(real))
+        c = real.GetBoxCenter()
+        want = expect.get(eid(v))
+        off = ((c.X - want[0]) ** 2 + (c.Y - want[1]) ** 2) ** 0.5 * MM_PER_FT if want is not None else 999.0
+        post("viewport_position", off < 1.0, "view %s centre is %.2f mm from the requested position" % (vlabel(v), off))
+        if not is_legend(v):
+            post("view_on_one_sheet", len(after.get(eid(v), [])) == 1, "view %s has %d viewports in the document" % (vlabel(v), len(after.get(eid(v), []))))
+        r = vp_rect(real)
+        note = ""
+        if r is not None:
+            if cell is not None and ((r[2] - r[0]) > (cell[2] - cell[0]) + 1.0 / MM_PER_FT or (r[3] - r[1]) > (cell[3] - cell[1]) + 1.0 / MM_PER_FT):
+                note = "larger than its grid cell"
+                info("VIEWPORT_OVERSIZE", "view %s is %.0f x %.0f mm, its grid cell is %.0f x %.0f mm" % (vlabel(v), (r[2] - r[0]) * MM_PER_FT, (r[3] - r[1]) * MM_PER_FT, (cell[2] - cell[0]) * MM_PER_FT, (cell[3] - cell[1]) * MM_PER_FT))
+            for oid in before:
+                if before[oid] is not None and rects_overlap(r, before[oid], 1.0 / MM_PER_FT):
+                    note = (note + "; " if note else "") + "overlaps viewport %d" % oid
+                    info("VIEWPORT_OVERLAP", "viewport %d of view %s overlaps viewport %d already on sheet %s" % (eid(real), vlabel(v), oid, number))
+            for other_id, other in rects:
+                if rects_overlap(r, other, 1.0 / MM_PER_FT):
+                    note = (note + "; " if note else "") + "overlaps viewport %d" % other_id
+                    info("VIEWPORT_OVERLAP", "viewport %d of view %s overlaps viewport %d placed in this call" % (eid(real), vlabel(v), other_id))
+            rects.append((eid(real), r))
+        item([
+            ("kind", "viewport"), ("id", eid(real)), ("view_id", eid(v)), ("name", v.Name), ("sheet", number),
+            ("x_mm", mm(c.X)), ("y_mm", mm(c.Y)),
+            ("width_mm", mm(r[2] - r[0]) if r is not None else ""), ("height_mm", mm(r[3] - r[1]) if r is not None else ""),
+            ("status", "placed"), ("note", note),
+        ])
+    post("viewport_count", len(placed) == len(views) or run.on_error == "skip",
+         "%d of %d views placed (%d viewports now on sheet %s)" % (len(placed), len(views), len(now), number))
+    summary("placed %d of %d views on sheet %s%s" % (len(placed), len(views), number, (" (viewport ids %s)" % ",".join([str(i) for i in run.changed])) if run.changed else ""))
+
+
+__output__ = run_write(main)

@@ -1,0 +1,120 @@
+# revit_update_sheets (write mode).
+# ARGS = {sheets: [{number, new_number, new_name}], on_error, dry_run}
+# Renumbers and renames the listed sheets from a table (number = the sheet's current number). The final numbering of the whole
+# document is checked first: if two sheets would end up with one number (a listed sheet or one that is not in the table),
+# the call is refused and nothing is changed. Numbers that swap or chain (A1 -> A2 while A2 -> A3) are done in two passes
+# through temporary numbers, which needs on_error abort so a failure cannot leave a temporary number behind. Only the number
+# and the name are written; sheets that are not in the table are never touched. Each sheet is its own transaction.
+
+
+def main():
+    doc_meta()
+    rows = []
+    seen = {}
+    for i, spec in enumerate(ARGS.get("sheets") or []):
+        hits = sheets_by_number(spec["number"])
+        if len(hits) != 1:
+            refuse("sheet_not_found", "sheets[%d]: %d sheets have the number '%s' (revit_sheet_index lists the sheets)" % (i, len(hits), spec["number"]))
+            return
+        s = hits[0]
+        if eid(s) in seen:
+            refuse("duplicate_sheet", "sheets[%d]: sheet '%s' (id %d) is in the table twice" % (i, spec["number"], eid(s)), [eid(s)])
+            return
+        seen[eid(s)] = 1
+        new_number = spec.get("new_number") if spec.get("new_number") is not None else s.SheetNumber
+        new_name = spec.get("new_name") if spec.get("new_name") is not None else s.Name
+        rows.append((s, new_number, new_name))
+
+    before = {}
+    final = {}
+    for s in FilteredElementCollector(doc).OfClass(ViewSheet):
+        before[eid(s)] = (s.SheetNumber, s.Name)
+        final[eid(s)] = s.SheetNumber
+    for s, n, nm in rows:
+        final[eid(s)] = n
+    users = {}
+    for sid in final:
+        users.setdefault(final[sid], []).append(sid)
+    touched = set([eid(s) for s, n, nm in rows])
+    clashes = []
+    for number in sorted(users):
+        if len(users[number]) > 1 and [i for i in users[number] if i in touched]:
+            clashes.append("'%s' would be used by sheets %s%s" % (number, ",".join([str(i) for i in users[number]]), "".join([" (id %d is not in the table)" % i for i in users[number] if i not in touched])))
+    if clashes:
+        ids = []
+        for number in sorted(users):
+            if len(users[number]) > 1:
+                ids.extend(users[number])
+        refuse("sheet_number_conflict", "the table would give two sheets one number, so nothing was changed: " + "; ".join(clashes), ids)
+        return
+
+    changing = [(s, n, nm) for s, n, nm in rows if n != s.SheetNumber]
+    moving = set([s.SheetNumber for s, n, nm in changing])
+    two_phase = len([1 for s, n, nm in changing if n in moving]) > 0
+    if two_phase and ARGS.get("on_error") != "abort":
+        refuse("invalid_input", "some numbers swap or chain (a new number is the current number of another listed sheet); that needs on_error 'abort' so a failure cannot leave a temporary number behind")
+        return
+
+    run = Runner("AEC update sheets", ARGS.get("on_error"))
+    parked = {}
+    if two_phase:
+        taken = set(final.values()) | set([v[0] for v in before.values()])
+        for s, n, nm in changing:
+            temp = "ZZ-PARK-%d" % eid(s)
+            while temp in taken:
+                temp = temp + "x"
+            taken.add(temp)
+
+            def park(s=s, temp=temp):
+                s.SheetNumber = temp
+                return s
+
+            if run.step("Park sheet %s under a temporary number" % s.SheetNumber, park, ids=[eid(s)]) is None:
+                return
+            parked[eid(s)] = 1
+
+    status = {}
+    for s, n, nm in rows:
+        old_number, old_name = before[eid(s)]
+        renumber = n != old_number
+        rename = nm != old_name
+        if not renumber and not rename:
+            status[eid(s)] = "unchanged"
+            continue
+
+        def write(s=s, n=n, nm=nm, renumber=renumber, rename=rename):
+            if renumber:
+                s.SheetNumber = n
+            if rename:
+                s.Name = nm
+            return s
+
+        if run.step("Update sheet %s" % old_number, write, ids=[eid(s)]) is not None:
+            status[eid(s)] = "renumbered and renamed" if (renumber and rename) else ("renumbered" if renumber else "renamed")
+
+    changed = 0
+    for s, n, nm in rows:
+        st = status.get(eid(s))
+        if st is None:
+            continue
+        got = get_by_id(eid(s))
+        post("sheet_number", got is not None and got.SheetNumber == n, "sheet id %d number '%s' (expected '%s')" % (eid(s), got.SheetNumber if got is not None else "?", n))
+        post("sheet_name", got is not None and got.Name == nm, "sheet id %d name '%s' (expected '%s')" % (eid(s), got.Name if got is not None else "?", nm))
+        if st != "unchanged":
+            changed += 1
+            run.changed.append(eid(s))
+        item([("kind", "sheet"), ("id", eid(s)), ("sheet", n), ("name", nm), ("previous_number", before[eid(s)][0]), ("previous_name", before[eid(s)][1]), ("status", st)])
+    seen_numbers = {}
+    odd = []
+    for s in FilteredElementCollector(doc).OfClass(ViewSheet):
+        seen_numbers.setdefault(s.SheetNumber, []).append(eid(s))
+        if eid(s) not in touched and before.get(eid(s)) != (s.SheetNumber, s.Name):
+            odd.append(eid(s))
+    dups = [k for k in seen_numbers if len(seen_numbers[k]) > 1]
+    post("numbers_unique", not dups, "duplicate sheet numbers after the update: %s" % (", ".join(dups) if dups else "none"))
+    post("other_sheets_untouched", not odd, "sheets outside the table that changed: %s" % (",".join([str(i) for i in odd]) if odd else "none"))
+    post("no_temporary_numbers", not [k for k in seen_numbers if k.startswith("ZZ-PARK-")], "no temporary sheet number is left")
+    summary("updated %d of %d listed sheets (%d unchanged)" % (changed, len(rows), len([1 for s, n, nm in rows if status.get(eid(s)) == "unchanged"])))
+
+
+__output__ = run_write(main)
