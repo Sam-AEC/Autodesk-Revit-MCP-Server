@@ -1,6 +1,13 @@
 """AEC Model Bridge server entrypoint."""
 
-__all__ = ["run_server"]
+from importlib.metadata import PackageNotFoundError, version as _dist_version
+
+try:
+    __version__ = _dist_version("aec-model-bridge")
+except PackageNotFoundError:  # running from a source tree that was never installed
+    __version__ = "0+unknown"
+
+__all__ = ["run_server", "__version__"]
 
 
 def __getattr__(name: str):

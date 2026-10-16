@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-AEC Model Bridge contains a large set of tools (over 170) spanning multiple software hosts (Revit, Rhino, Navisworks) and workflows (QA/QC, massing, parameters). Hardcoding these into a single monolithic server makes the code brittle, degrades LLM tool selection performance, and prevents firms from writing custom company-standard checking rules. We need a modular plugin system that encapsulates commands, schemas, UI files, and QA rules.
+AEC Model Bridge contains a large set of tools (over 270) spanning multiple software hosts (Revit, Rhino, Navisworks) and workflows (QA/QC, massing, parameters). Hardcoding these into a single monolithic server makes the code brittle, degrades LLM tool selection performance, and prevents firms from writing custom company-standard checking rules. We need a modular plugin system that encapsulates commands, schemas, UI files, and QA rules.
 
 ## Decisions
 

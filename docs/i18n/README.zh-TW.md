@@ -105,16 +105,16 @@ the plan in Revit, apply it and read the values back to confirm the result.
 
 | 領域 | 工具數 | 功能 |
 | --- | --- | --- |
-| Revit | 103 | 讀取模型，建立與編輯元件、參數、視圖、圖紙、明細表，匯出，工作共享(worksharing) |
-| 核准 | 6 | 規劃、檢視、核准、執行並復原模型變更 |
-| 模組 | 34 | 快照檢查、參數表格、QA/QC 檢查、配方、報告、選取集 |
+| Revit | 110 | 讀取模型，建立與編輯元件、參數、視圖、圖紙、明細表，匯出，工作共享(worksharing) |
+| 核准 | 5 | 規劃、檢視、核准、執行並復原模型變更 |
+| 模組 | 83 | 快照檢查、參數表格、QA/QC 檢查、配方、報告、選取集 |
 | Rhino 與 Grasshopper | 19 | 幾何、圖層、材質、布林運算 |
 | Speckle | 17 | 專案、模型、版本、傳送與接收 |
 | Navisworks | 15 | 模型樹、視點、碰撞檢查（開發中） |
 | IFC | 7 | 無需 Revit 即可讀取 IFC 檔案：結構、屬性、驗證 |
-| 圖譜、快照、匯出、作業 | 18 | 語意圖譜稽核、快照差異比對、SQLite 匯出、背景作業 |
+| 圖譜、快照、匯出、作業 | 21 | 語意圖譜稽核、快照差異比對、SQLite 匯出、背景作業 |
 
-預設設定下共列出 219 個工具（在 mock 模式下由目前的伺服器統計）。設定 APS 憑證後，Autodesk Data 工具才會出現。[工具參考](../tools-generated.md)列出所有工具。每個工具都帶有 MCP 註解（`readOnlyHint`、`destructiveHint`、`idempotentHint`、`openWorldHint`），讓用戶端能分辨讀取與寫入。
+預設設定下共列出 277 個工具（在 mock 模式下由目前的伺服器統計）。設定 APS 憑證後，Autodesk Data 工具才會出現。[工具參考](../tools-generated.md)列出所有工具。每個工具都帶有 MCP 註解（`readOnlyHint`、`destructiveHint`、`idempotentHint`、`openWorldHint`），讓用戶端能分辨讀取與寫入。
 
 ### 進階 Revit 自動化
 

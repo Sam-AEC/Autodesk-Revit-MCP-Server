@@ -100,7 +100,7 @@ def _build_tools(registry) -> List[Dict[str, Any]]:
     offered to the model (see that constant for why).
 
     The last tool carries an ephemeral cache_control breakpoint: the full
-    tool list is large (~200 tools, tens of KB of schema) and identical on
+    tool list is large (~280 tools, tens of KB of schema) and identical on
     every one of up to _MAX_TURNS model calls per turn, so caching the tools
     prefix avoids re-processing it uncached on each call."""
     tools: List[Dict[str, Any]] = [

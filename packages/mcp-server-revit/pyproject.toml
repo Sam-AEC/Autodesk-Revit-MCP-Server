@@ -10,6 +10,17 @@ authors = [
     { name = "Sam-AEC" },
 ]
 keywords = ["mcp", "revit", "autodesk", "bim", "ai"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     "pydantic>=2.5",
     "pydantic-settings>=1.3",
@@ -59,7 +70,7 @@ build-backend = "setuptools.build_meta"
 
 # Module manifests, QA/QC rules and recipes are data files next to the code. Without
 # this they were left out of the wheel, so a pip/uvx install silently lacked the
-# ~34 module tools that a source checkout has.
+# ~80 module tools that a source checkout has.
 [tool.setuptools.package-data]
 revit_mcp_server = [
     "modules/*/module.json",

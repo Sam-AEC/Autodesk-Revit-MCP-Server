@@ -38,7 +38,7 @@ npm ci
 npm run compile
 npm test
 npm run package
-code --install-extension aec-model-bridge-1.3.3.vsix
+code --install-extension aec-model-bridge-<version>.vsix
 ```
 
 Use the filename printed by the package command if the repository version has

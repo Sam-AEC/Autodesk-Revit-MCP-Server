@@ -5,7 +5,7 @@
 Key facts:
 
 - Protocol: Model Context Protocol (MCP), stdio transport. Any MCP client that can start a local server can use it.
-- Tools: 219 in the default setup, counted in mock mode. Revit has 103 of them.
+- Tools: 277 in the default setup, counted in mock mode. Revit has 110 of them.
 - Safety: tools that change the model are blocked until a plan is approved. This is the default. An unattended mode exists and is opt-in.
 - Platform: live Revit work needs Windows and a licensed Revit. Mock mode needs neither.
 - Licence: GPL-3.0 with a commercial option.

@@ -390,3 +390,11 @@ Date, commit, Revit version, fixture generation command, snapshot ids (before
 and after), prompts used, the actual counts at each step, plan ids, and
 what failed. The roadmap asks for the same list. Publish a recording only after a
 run matches the expected counts twice.
+
+## Recording a GIF
+
+[scripts/demo/shot-list.md](../scripts/demo/shot-list.md) lists the shots and
+`scripts/demo/demo-commands.ps1` prints the prompts and commands for each step
+above. The script records nothing and changes nothing. Record only after a run
+has matched the expected counts twice, and leave out the write steps until a
+write has passed on a throwaway model.
