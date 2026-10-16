@@ -10,6 +10,9 @@ Commands (the MCP tool name is the ``mcp_tool`` of the command in module.json):
   route            WRITE      pipe or duct between two connectors or points, with elbows, unions, transitions, takeoffs, tees
   connect          WRITE      join two touching connectors (direct, union, transition or elbow); reports open ends
   circuit          WRITE      native electrical circuits (ElectricalSystem.Create) from elements and a panel
+  hanger_plan      read-only  hanger positions along straight pipes, ducts and cable trays from a spacing table you fill in,
+                              with the support host (floor, beam, ceiling) above each position and the rod length
+  hanger_place     WRITE      place a loaded hanger family at those positions (or at positions taken from the plan)
 
 The category guard (every tool, before anything is changed): an element may take part in a pipe, duct or electrical
 system only when its CATEGORY is an MEP category of that domain and it really has a connector of the requested system.
@@ -38,6 +41,18 @@ Safety of the write commands (same rules as revit_docs):
     then the group is always rolled back (the shared revit_docs Runner). The result says ``dry_run: true``,
     ``committed: false`` and ``would_change``; revit_system_report is skipped because nothing is left to report on.
 
+Hangers (hanger_plan, hanger_place): a layout aid, not an engineering calculation. The maximum spacing comes only from the
+rules in conventions/hanger_spacing.json (or the spacing_rules argument): per kind, material and size range, each with a
+named ``source``. The table ships empty apart from an example row, and a rule without a source (or an example row) is never
+used: that run is reported as "no spacing rule" and gets no positions. Positions are spread evenly at the largest spacing the
+rule allows, no closer to a fitting than the minimum distance; runs steeper than 15 degrees are risers and are skipped. The
+support host is found with a ReferenceIntersector ray straight up from the top of the run, in the active model and, when
+asked, in loaded links; a position with no floor, beam or ceiling within max_reach_mm is reported "no support host" and is
+not placed unless place_without_host is true. hanger_place never deletes or moves anything: a position that already has a
+hanger of the family (ours or foreign) is skipped, so a rerun does nothing. It is guarded like the other tools: the family
+must be in a hanger category, level based and without MEP connectors, and every hanger is read back (tag, marker, family,
+position, rod length). The hanger tools are UNVERIFIED in a live Revit: see the list at the end of this docstring.
+
 Post-check: the script verifies its own work inside the group (pieces exist and carry the tag, requested connectors are
 connected, no unplanned open end, sizes and system class as asked, circuit membership/panel/name). After the group is
 committed this module runs the existing read-only ``revit_system_report`` (modules/revit, not rewritten) on the created
@@ -50,10 +65,17 @@ Pipe.Create / Duct.Create overloads with connectors, NewElbowFitting / NewUnionF
 generated pieces, NewTakeoffFitting, PlumbingUtils / MechanicalUtils.BreakCurve + NewTeeFitting, setting size by
 built-in parameter after creation, system-type lookup by SystemClassification, ElectricalSystem.Create + SelectPanel +
 Load Name, and reading BaseEquipment / Elements.Size back. Treat the first real run as a trial on a scratch model.
+Also unproven for the hanger tools: ReferenceIntersector against floors, beams and ceilings (it only sees what the chosen 3D
+view shows, including linked models when FindReferencesInRevitLinks works as assumed), the ReferenceWithContext
+Proximity / LinkedElementId read-out, reading nominal size and insulation from the built-in parameters of cable trays and
+ducts, tap fittings appearing as extra connectors of a pipe, NewFamilyInstance(point, symbol, level, NonStructural) honouring
+the Z of the point for a level based family, rotating the instance by its HandOrientation, and the Comments marker and
+instance length parameter being writable on the chosen family.
 """
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
 import re
 import sys
@@ -66,6 +88,7 @@ from revit_mcp_server.check_contract import (
     PageSpec,
     ScriptOutput,
     assemble_result,
+    cast_rows,
     error_result,
     mock_result,
     parse_script_output,
@@ -81,6 +104,8 @@ TAGS_READ = DOCS_SCRIPT_DIR / "_tags_read.ipy"
 WRITE_PRELUDE = DOCS_SCRIPT_DIR / "_write_prelude.ipy"
 GUARD = "_mep_guard.ipy"
 WRITE_HELPERS = "_mep_write.ipy"
+HANGER_PLANNER = "_hanger_plan.ipy"
+HANGER_TABLE = MODULE_DIR / "conventions" / "hanger_spacing.json"
 EXECUTE_TOOL = "revit_execute_python"
 
 ToolExecutor = Callable[[str, Dict[str, Any]], Any]
@@ -91,7 +116,10 @@ SCRIPTS: Dict[str, Tuple[bool, bool]] = {
     "connect.ipy": (True, True),
     "circuit.ipy": (True, False),
     "check_elements.ipy": (False, False),
+    "hanger_plan.ipy": (False, False),
+    "hanger_place.ipy": (True, False),
 }
+HANGER_SCRIPTS = ("hanger_plan.ipy", "hanger_place.ipy")
 
 _TAG = re.compile(r"^[ -~]{1,80}$")  # printable ASCII only
 _IDENT = re.compile(r"^[A-Za-z0-9_.-]{1,60}$")
@@ -148,6 +176,13 @@ _HINTS = {
     "panel_in_circuit": "Remove the panel from the element list. Nothing was changed.",
     "element_in_two_circuits": "An element can be on one circuit of a system. Nothing was changed.",
     "empty_circuit": "List at least one element. Nothing was changed.",
+    "hanger_category_mismatch": "The hanger family must be in Generic Models, Pipe Accessories, Duct Accessories, Cable Tray Fittings or Specialty Equipment. Pick another family or fix its category in the family editor. Nothing was changed.",
+    "placement_unsupported": "Only level based (unhosted) hanger families are placed; face based, work plane based and hosted families are not. Pick or make a level based one. Nothing was changed.",
+    "family_has_connectors": "A family with MEP connectors is a valve or fitting, not a hanger. Use a hanger family without connectors. Nothing was changed.",
+    "position_off_run": "Each position must lie on the axis of its run (within 25 mm). Take the positions from revit_mep_hanger_plan unchanged. Nothing was changed.",
+    "not_straight": "Only straight pipes, ducts and cable trays carry hangers. Nothing was changed.",
+    "too_many_hangers": "Narrow the scope, or raise max_hangers (at most 500). Nothing was changed.",
+    "placement_failed": "Revit could not place the first hanger. Check the family and the levels. Nothing was changed.",
     "rolled_back": "Nothing was changed: the whole call was rolled back. Fix the cause named in fails and call again, or pass on_error='skip' to keep what worked.",
     "partial_failure": "The steps that worked were kept (see changed_ids); the failed ones are in fails with element ids. Run the same call again to replace what this tool made, or fix the cause first.",
     "post_check_failed": "The model changed but a check afterwards failed (see post_check). Inspect the listed ids with revit_system_report, or run the call again to replace what this tool made.",
@@ -205,6 +240,8 @@ def build_script(script_name: str, args: Dict[str, Any]) -> str:
     parts.append((SCRIPT_DIR / GUARD).read_text(encoding="utf-8"))
     if needs_helpers:
         parts.append((SCRIPT_DIR / WRITE_HELPERS).read_text(encoding="utf-8"))
+    if script_name in HANGER_SCRIPTS:
+        parts.append((SCRIPT_DIR / HANGER_PLANNER).read_text(encoding="utf-8"))
     parts.append(f"ARGS = {py2_literal(args)}")
     parts.append((SCRIPT_DIR / script_name).read_text(encoding="utf-8"))
     return "\n\n".join(parts) + "\n"
@@ -523,10 +560,235 @@ def _on_error(value: Any) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Hangers: the spacing table, argument checks and the plan result
+# --------------------------------------------------------------------------- #
+HANGER_KINDS = ("pipe", "duct", "cabletray")
+HANGER_CATEGORIES = ("pipes", "ducts", "cabletrays")
+HANGER_HOST_CATEGORIES = ("floors", "structuralframing", "ceilings")
+_HANGER_ALIASES = {
+    "pipe": "pipes", "pipes": "pipes", "duct": "ducts", "ducts": "ducts", "cabletray": "cabletrays", "cabletrays": "cabletrays",
+    "floor": "floors", "floors": "floors", "structuralframing": "structuralframing", "framing": "structuralframing",
+    "beam": "structuralframing", "beams": "structuralframing", "ceiling": "ceilings", "ceilings": "ceilings",
+}
+RULE_KEYS = {"id", "example", "kind", "material", "size_min_mm", "size_max_mm", "max_spacing_mm", "min_fitting_distance_mm", "source", "note"}
+DEFAULT_FITTING_MM = 100.0  # layout clearance used when neither the call nor the rule gives one; not an engineering value
+HANGER_DISCLAIMER = (
+    "Layout aid only, not an engineering calculation. The spacing comes from the table you filled in; the tool does not "
+    "check any code, load, support or structural capacity."
+)
+HANGER_TYPES = {
+    "id": "int", "length_m": "float", "spacing_mm": "float", "fitting_distance_mm": "float", "hangers": "int",
+    "with_host": "int", "no_host": "int", "rod_min_mm": "float", "rod_max_mm": "float", "run_id": "int", "idx": "int",
+    "station_mm": "float", "x_m": "float", "y_m": "float", "z_m": "float", "host_id": "int", "rod_mm": "float",
+}
+HANGER_TOTAL_KEYS = ("runs", "runs_planned", "runs_no_rule", "hangers", "hangers_with_host", "hangers_no_host", "hangers_host_unknown", "selected")
+
+
+def _plain_text(value: Any, what: str, limit: int) -> str:
+    text = str(value if value is not None else "").strip()
+    if len(text) > limit or any(ord(c) < 32 for c in text):
+        raise ValueError(f"{what} must be at most {limit} printable characters")
+    return text
+
+
+def _opt_number(value: Any, what: str, lo: float, hi: float) -> Optional[float]:
+    if value is None:
+        return None
+    number = _num(value, what)
+    if not lo <= number <= hi:
+        raise ValueError(f"{what} must be between {lo:g} and {hi:g}")
+    return number
+
+
+def _bounded(value: Any, what: str, lo: float, hi: float, default: float) -> float:
+    if value is None:
+        return default
+    number = _num(value, what)
+    if not lo <= number <= hi:
+        raise ValueError(f"{what} must be between {lo:g} and {hi:g}")
+    return number
+
+
+def _bounded_int(value: Any, what: str, lo: int, hi: int, default: int) -> int:
+    if value is None:
+        return default
+    number = _int(value, what)
+    if not lo <= number <= hi:
+        raise ValueError(f"{what} must be between {lo} and {hi}")
+    return number
+
+
+def clean_rules(raw: Any, what: str) -> List[Dict[str, Any]]:
+    """Validated spacing rules. A rule without a source passes here on purpose: the script reports it when it matches."""
+    if not isinstance(raw, list) or len(raw) > 500:
+        raise ValueError(f"{what} must be a list of at most 500 rules")
+    out: List[Dict[str, Any]] = []
+    seen: set = set()
+    for i, rule in enumerate(raw):
+        w = f"{what}[{i}]"
+        if not isinstance(rule, dict):
+            raise ValueError(f"{w} must be an object")
+        unknown = set(rule) - RULE_KEYS
+        if unknown:
+            raise ValueError(f"{w} has unknown keys: {', '.join(sorted(unknown))}")
+        rid = _ident(rule.get("id"), f"{w}.id")
+        if rid in seen:
+            raise ValueError(f"{w}.id '{rid}' is used twice")
+        seen.add(rid)
+        lo = _bounded(rule.get("size_min_mm"), f"{w}.size_min_mm", 0.0, 20000.0, 0.0)
+        hi = _bounded(rule.get("size_max_mm"), f"{w}.size_max_mm", 0.0, 20000.0, 20000.0)
+        if hi < lo:
+            raise ValueError(f"{w}: size_max_mm is smaller than size_min_mm")
+        spacing = _opt_number(rule.get("max_spacing_mm"), f"{w}.max_spacing_mm", 0.0, 20000.0)
+        if spacing is not None and spacing <= 0:
+            raise ValueError(f"{w}.max_spacing_mm must be greater than 0 (or null while the row is not filled in)")
+        out.append({
+            "id": rid,
+            "example": _flag(rule.get("example"), f"{w}.example"),
+            "kind": _choice(rule.get("kind"), HANGER_KINDS, f"{w}.kind"),
+            "material": _plain_text(rule.get("material"), f"{w}.material", 60),
+            "size_min_mm": lo,
+            "size_max_mm": hi,
+            "max_spacing_mm": spacing,
+            "min_fitting_distance_mm": _opt_number(rule.get("min_fitting_distance_mm"), f"{w}.min_fitting_distance_mm", 0.0, 5000.0),
+            "source": _plain_text(rule.get("source"), f"{w}.source", 300),
+        })
+    return out
+
+
+def load_spacing_table(path: Path = HANGER_TABLE) -> Tuple[List[Dict[str, Any]], str]:
+    """(rules, disclaimer) of the shipped spacing table. Raises ValueError when the file is unreadable or invalid."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"the spacing table {path.name} cannot be read: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"the spacing table {path.name} must be a JSON object with a 'rules' list")
+    disclaimer = str(data.get("disclaimer") or HANGER_DISCLAIMER)
+    return clean_rules(data.get("rules", []), f"{path.name} rules"), disclaimer
+
+
+def usable_rule(rule: Dict[str, Any]) -> bool:
+    return (not rule["example"]) and bool(rule["source"].strip()) and rule["max_spacing_mm"] is not None
+
+
+def hanger_categories(value: Any, allowed: Tuple[str, ...], default: Tuple[str, ...], what: str) -> List[str]:
+    if value in (None, []):
+        return list(default)
+    if not isinstance(value, list) or len(value) > 10:
+        raise ValueError(f"{what} must be a list of: {', '.join(allowed)}")
+    out: List[str] = []
+    for v in value:
+        key = _HANGER_ALIASES.get(str(v).lower().replace(" ", "").replace("_", ""))
+        if key not in allowed:
+            raise ValueError(f"{what}: unknown value {v!r}; use {', '.join(allowed)}")
+        if key not in out:
+            out.append(key)
+    return out
+
+
+def hanger_plan_args(
+    categories: Any = None,
+    ids: Any = None,
+    system: Any = None,
+    level: Any = None,
+    view_id: Any = None,
+    material: Any = None,
+    spacing_rules: Any = None,
+    min_fitting_distance_mm: Any = None,
+    host_categories: Any = None,
+    include_links: Any = None,
+    max_reach_mm: Any = None,
+    max_elements: Any = None,
+    max_hangers: Any = None,
+    time_budget_s: Any = None,
+    *,
+    need_scope: bool = True,
+    hangers_cap: int = 3000,
+    hangers_default: int = 1000,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """The validated planning arguments shared by hanger_plan and hanger_place (raises ValueError), and the table summary."""
+    clean_ids: List[int] = []
+    if ids not in (None, []):
+        if not isinstance(ids, list) or len(ids) > 2000:
+            raise ValueError("ids must be a list of at most 2000 element ids")
+        for i in ids:
+            clean_ids.append(_bounded_int(i, "ids", 1, 2**62, 0))
+    sys_text = _plain_text(system, "system", 100) if system not in (None, "") else ""
+    level_name = _name(level, "level") if level not in (None, "") else ""
+    view = _bounded_int(view_id, "view_id", 1, 2**62, 0) if view_id is not None else 0
+    if need_scope and not (clean_ids or sys_text or level_name or view):
+        raise ValueError("give a scope: ids, system, level or view_id. These tools never scan the whole model unasked")
+    if spacing_rules is not None:
+        rules = clean_rules(spacing_rules, "spacing_rules")
+        disclaimer, table_source = HANGER_DISCLAIMER, "the spacing_rules argument"
+    else:
+        rules, disclaimer = load_spacing_table()
+        table_source = f"conventions/{HANGER_TABLE.name}"
+    table = {
+        "source": table_source,
+        "rules": len(rules),
+        "usable": sum(1 for r in rules if usable_rule(r)),
+        "example_rows": sum(1 for r in rules if r["example"]),
+        "without_source": sum(1 for r in rules if not r["example"] and not r["source"].strip()),
+        "disclaimer": disclaimer,
+    }
+    args: Dict[str, Any] = {
+        "categories": hanger_categories(categories, HANGER_CATEGORIES, HANGER_CATEGORIES, "categories"),
+        "ids": clean_ids,
+        "system": sys_text,
+        "level": level_name,
+        "view_id": view,
+        "material": _plain_text(material, "material", 60),
+        "rules": rules,
+        "min_fitting_mm": _opt_number(min_fitting_distance_mm, "min_fitting_distance_mm", 0.0, 5000.0),
+        "default_fitting_mm": DEFAULT_FITTING_MM,
+        "host_categories": hanger_categories(host_categories, HANGER_HOST_CATEGORIES, ("floors", "structuralframing"), "host_categories"),
+        "include_links": True if include_links is None else _flag(include_links, "include_links"),
+        "max_reach_mm": _bounded(max_reach_mm, "max_reach_mm", 100.0, 20000.0, 3000.0),
+        "max_elements": _bounded_int(max_elements, "max_elements", 1, 2000, 500),
+        "max_hangers": _bounded_int(max_hangers, "max_hangers", 1, hangers_cap, hangers_default),
+        "time_budget_s": _bounded(time_budget_s, "time_budget_s", 1.0, 25.0, 15.0),
+    }
+    return args, table
+
+
+def _hanger_totals(meta: Dict[str, str]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for key in HANGER_TOTAL_KEYS:
+        try:
+            out[key] = int(meta.get(key, "0") or 0)
+        except ValueError:
+            out[key] = 0
+    out["truncated"] = meta.get("truncated", "0") == "1"
+    if meta.get("truncated_reason"):
+        out["truncated_reason"] = meta["truncated_reason"]
+    return out
+
+
+def nest_hanger_rows(parsed: ScriptOutput) -> List[Dict[str, Any]]:
+    """One dict per run, with its hangers as ``positions``."""
+    typed = cast_rows(parsed.rows, HANGER_TYPES)
+    runs: List[Dict[str, Any]] = []
+    by_key: Dict[str, Dict[str, Any]] = {}
+    for row in typed:
+        if row.get("kind") == "run":
+            run = {k: v for k, v in row.items() if k != "kind"}
+            run["positions"] = []
+            runs.append(run)
+            by_key[str(row.get("run"))] = run
+    for row in typed:
+        if row.get("kind") == "hanger" and str(row.get("run")) in by_key:
+            by_key[str(row["run"])]["positions"].append({k: v for k, v in row.items() if k not in ("kind", "run")})
+    return runs
+
+
+# --------------------------------------------------------------------------- #
 # Result assembly
 # --------------------------------------------------------------------------- #
 ITEM_TYPES = {
     "id": "int", "a_id": "int", "b_id": "int", "panel_id": "int", "elements": "int", "length_mm": "float",
+    "run_id": "int", "host_id": "int", "rod_mm": "float", "x_m": "float", "y_m": "float", "z_m": "float",
 }
 SYSTEM_CHECK_NAME = "revit_system_report on the changed pipes, ducts and fittings"
 
@@ -935,6 +1197,166 @@ class RevitMepModule:
         except (TypeError, ValueError) as exc:
             return _bad_input(tool, exc)
         return self._write(tool, "circuit.ipy", args, workspace, approved_executor, hard_codes=(), report=False)
+
+    # ---- hangers ------------------------------------------------------------ #
+    def hanger_plan(
+        self,
+        categories: Any = None,
+        ids: Any = None,
+        system: Any = None,
+        level: Any = None,
+        view_id: Any = None,
+        material: Any = None,
+        spacing_rules: Any = None,
+        min_fitting_distance_mm: Any = None,
+        host_categories: Any = None,
+        include_links: Any = None,
+        max_reach_mm: Any = None,
+        max_elements: Any = None,
+        max_hangers: Any = None,
+        time_budget_s: Any = None,
+        limit: Any = None,
+        offset: Any = None,
+        workspace: Any = None,
+        tool_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_mep_hanger_plan"
+        try:
+            args, table = hanger_plan_args(
+                categories, ids, system, level, view_id, material, spacing_rules, min_fitting_distance_mm, host_categories,
+                include_links, max_reach_mm, max_elements, max_hangers, time_budget_s,
+            )
+            page = PageSpec.from_args(limit, offset)
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        parsed, elapsed, early = _run(tool, "hanger_plan.ipy", args, write=False, tool_executor=tool_executor, approved_executor=None)
+        if early is not None or parsed is None:
+            return early or {}
+        runs = nest_hanger_rows(parsed)
+        infos = list(parsed.infos)
+        if not table["usable"]:
+            infos.insert(0, "NO_USABLE_SPACING_RULE: the spacing table has no usable rule (a rule needs a source text, a max_spacing_mm and must not be an example row), so no positions are computed. Fill in conventions/hanger_spacing.json or pass spacing_rules.")
+        synthetic = ScriptOutput(
+            summary=parsed.summary,
+            fails=list(parsed.fails),
+            infos=infos,
+            rows=runs,  # type: ignore[arg-type]
+            meta=dict(parsed.meta),
+            counts={"fail": parsed.counts.get("fail", len(parsed.fails)), "info": max(parsed.counts.get("info", 0), len(infos)), "row": len(runs)},
+        )
+        totals = _hanger_totals(parsed.meta)
+        result = assemble_result(
+            tool, synthetic, page, row_types={}, elapsed_ms=elapsed, workspace=workspace,
+            extra={
+                "totals": totals,
+                "spacing_table": table,
+                "disclaimer": table["disclaimer"],
+                "notes": [
+                    "Coordinates are the model's internal coordinates in metres. Rod length is measured from the top of the run (insulation included) up to the underside of the support host.",
+                    "A position with support 'no support host' has no floor, beam or ceiling within max_reach_mm; 'host_unknown' means the project has no 3D view to search with.",
+                ],
+            },
+        )
+        if totals["truncated"]:
+            result["limits"]["truncated"] = True
+            result["limits"]["partial"] = True
+        return result
+
+    @staticmethod
+    def _hanger_items(value: Any) -> List[Dict[str, Any]]:
+        if not isinstance(value, list) or not 1 <= len(value) <= 500:
+            raise ValueError("hangers must be a list of 1 to 500 positions")
+        allowed = {"run_id", "x_m", "y_m", "z_m", "rod_mm", "rod_length_mm", "support", "idx", "station_mm", "host_id", "host_category", "host_link"}
+        out: List[Dict[str, Any]] = []
+        for i, h in enumerate(value):
+            w = f"hangers[{i}]"
+            if not isinstance(h, dict):
+                raise ValueError(f"{w} must be an object")
+            unknown = set(h) - allowed
+            if unknown:
+                raise ValueError(f"{w} has unknown keys: {', '.join(sorted(unknown))}")
+            rod = h.get("rod_length_mm", h.get("rod_mm"))
+            if rod in ("", None):
+                rod = None
+            else:
+                rod = _positive(rod, f"{w}.rod_length_mm", 20000.0)
+            if h.get("run_id") is None:
+                raise ValueError(f"{w}.run_id is required: the element id of the pipe, duct or cable tray")
+            out.append({
+                "run_id": _bounded_int(h["run_id"], f"{w}.run_id", 1, 2**62, 0),
+                "position_m": [_num(h.get("x_m"), f"{w}.x_m"), _num(h.get("y_m"), f"{w}.y_m"), _num(h.get("z_m"), f"{w}.z_m")],
+                "rod_length_mm": rod,
+                "support": _plain_text(h.get("support"), f"{w}.support", 40),
+            })
+        return out
+
+    def hanger_place(
+        self,
+        tag: Any = None,
+        family_name: Any = None,
+        type_name: Any = None,
+        hangers: Any = None,
+        rod_length_parameter: Any = None,
+        place_without_host: Any = None,
+        existing_tolerance_mm: Any = None,
+        align_to_run: Any = None,
+        on_error: Any = None,
+        dry_run: Any = False,
+        categories: Any = None,
+        ids: Any = None,
+        system: Any = None,
+        level: Any = None,
+        view_id: Any = None,
+        material: Any = None,
+        spacing_rules: Any = None,
+        min_fitting_distance_mm: Any = None,
+        host_categories: Any = None,
+        include_links: Any = None,
+        max_reach_mm: Any = None,
+        max_elements: Any = None,
+        max_hangers: Any = None,
+        time_budget_s: Any = None,
+        workspace: Any = None,
+        approved_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_mep_hanger_place"
+        table: Optional[Dict[str, Any]] = None
+        try:
+            explicit = hangers not in (None, [])
+            scope_given = any(v not in (None, [], "") for v in (ids, system, level, view_id))
+            if explicit and scope_given:
+                raise ValueError("give hangers (positions from revit_mep_hanger_plan) or a scope (ids, system, level, view_id), not both")
+            if explicit:
+                args, _table = hanger_plan_args(spacing_rules=[], need_scope=False, hangers_cap=500, hangers_default=200, max_hangers=max_hangers)
+                args["hangers"] = self._hanger_items(hangers)
+            else:
+                args, table = hanger_plan_args(
+                    categories, ids, system, level, view_id, material, spacing_rules, min_fitting_distance_mm, host_categories,
+                    include_links, max_reach_mm, max_elements, max_hangers, time_budget_s,
+                    need_scope=True, hangers_cap=500, hangers_default=200,
+                )
+                args["hangers"] = []
+            args.update({
+                "tag": _tag(tag),
+                "family_name": _name(family_name, "family_name"),
+                "type_name": _name(type_name, "type_name"),
+                "rod_length_parameter": _name(rod_length_parameter, "rod_length_parameter") if rod_length_parameter not in (None, "") else "",
+                "place_without_host": _flag(place_without_host, "place_without_host"),
+                "existing_tolerance_mm": _bounded(existing_tolerance_mm, "existing_tolerance_mm", 1.0, 1000.0, 50.0),
+                "align_to_run": True if align_to_run is None else _flag(align_to_run, "align_to_run"),
+                "on_error": _on_error(on_error),
+                "dry_run": _flag(dry_run, "dry_run"),
+            })
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        result = self._write(tool, "hanger_place.ipy", args, workspace, approved_executor, hard_codes=(), report=False)
+        if isinstance(result, dict) and "ok" in result:
+            result["disclaimer"] = HANGER_DISCLAIMER
+            if table is not None:
+                result["spacing_table"] = table
+        return result
 
     # ---- shared write path -------------------------------------------------- #
     def _write(
