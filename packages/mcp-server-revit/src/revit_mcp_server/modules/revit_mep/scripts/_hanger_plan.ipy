@@ -1,0 +1,528 @@
+# Shared planner of revit_mep_hanger_plan and revit_mep_hanger_place (IronPython 2.7). Loaded after the revit module's
+# _prelude.ipy and this module's _mep_guard.ipy. Nothing in this file changes the model, so hanger_plan.ipy stays a read
+# script (it avoids every word read mode refuses).
+#
+# What it does: for pipes, ducts and cable trays it works out hanger positions along each straight run from a spacing
+# rule, keeps a minimum distance to fittings, and looks upward for a support host (floor, beam, ceiling) with a ray, in
+# the active model and optionally in its loaded links.
+#
+# ARGS = {categories: [pipes|ducts|cabletrays], ids, system, level, view_id, material, rules: [rule], min_fitting_mm (or
+#         None), default_fitting_mm, host_categories: [floors|structuralframing|ceilings], include_links, max_reach_mm,
+#         max_elements, max_hangers, time_budget_s}
+# rule = {id, example, kind (pipe|duct|cabletray), material, size_min_mm, size_max_mm, max_spacing_mm (or None),
+#         min_fitting_distance_mm (or None), source}
+#
+# No engineering claims: the spacing is whatever the rule table says, and a rule is used only when it names a source. A run
+# with no matching rule gets no positions ("no_spacing_rule"). All coordinates are the active model's internal coordinates.
+# UNVERIFIED against a live Revit: see the module docstring.
+import math
+from System.Diagnostics import Stopwatch
+
+HG_MM = 304.8
+HG_FT = 1.0 / 304.8
+HG_CATS = {"pipes": "OST_PipeCurves", "ducts": "OST_DuctCurves", "cabletrays": "OST_CableTray"}
+HG_KIND = {"pipes": "pipe", "ducts": "duct", "cabletrays": "cabletray"}
+HG_HOST_CATS = {"floors": "OST_Floors", "structuralframing": "OST_StructuralFraming", "ceilings": "OST_Ceilings"}
+HG_FITTING_CATS = ["OST_PipeFitting", "OST_DuctFitting", "OST_CableTrayFitting", "OST_ConduitFitting",
+                   "OST_PipeAccessory", "OST_DuctAccessory"]
+HG_MAX_SLOPE_DEG = 15.0   # a run steeper than this is a riser, not a horizontal run: no hangers are planned on it
+HG_SIZE_TOL_MM = 0.5
+HG_CACHE = {"fitting_ids": None}
+
+
+def hg_bic(name):
+    return getattr(BuiltInCategory, name, None)
+
+
+def hg_cat_key(e):
+    try:
+        cid = eid(e.Category)
+    except Exception:
+        return None
+    for k in HG_CATS:
+        b = hg_bic(HG_CATS[k])
+        if b is not None and int(b) == cid:
+            return k
+    return None
+
+
+def hg_fitting_ids():
+    if HG_CACHE["fitting_ids"] is None:
+        out = {}
+        for n in HG_FITTING_CATS:
+            b = hg_bic(n)
+            if b is not None:
+                out[int(b)] = n
+        HG_CACHE["fitting_ids"] = out
+    return HG_CACHE["fitting_ids"]
+
+
+def hg_pnum(e, names):
+    """First positive length (feet) among the built-in parameters named, else None."""
+    for name in names:
+        bip = getattr(BuiltInParameter, name, None)
+        if bip is None:
+            continue
+        try:
+            p = e.get_Parameter(bip)
+        except Exception:
+            p = None
+        if p is None:
+            continue
+        try:
+            if not p.HasValue:
+                continue
+        except Exception:
+            pass
+        try:
+            v = p.AsDouble()
+        except Exception:
+            continue
+        if v is not None and v > 0:
+            return v
+    return None
+
+
+def hg_pstr(e, name):
+    bip = getattr(BuiltInParameter, name, None)
+    if bip is None or e is None:
+        return ""
+    try:
+        p = e.get_Parameter(bip)
+        if p is None:
+            return ""
+        return p.AsString() or ""
+    except Exception:
+        return ""
+
+
+def hg_v(p):
+    return (p.X, p.Y, p.Z)
+
+
+def hg_sub(a, b):
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def hg_dot(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def hg_len(a):
+    return math.sqrt(hg_dot(a, a))
+
+
+def hg_at(p0, d, feet):
+    return (p0[0] + d[0] * feet, p0[1] + d[1] * feet, p0[2] + d[2] * feet)
+
+
+def hg_axis(e):
+    """(p0, p1, unit direction, length in feet) of a straight run in internal coordinates, else None."""
+    crv = None
+    try:
+        crv = e.Location.Curve
+    except Exception:
+        crv = None
+    if crv is None or not isinstance(crv, Line):
+        return None
+    p0 = hg_v(crv.GetEndPoint(0))
+    p1 = hg_v(crv.GetEndPoint(1))
+    v = hg_sub(p1, p0)
+    n = hg_len(v)
+    if n < 1e-6:
+        return None
+    return (p0, p1, (v[0] / n, v[1] / n, v[2] / n), n)
+
+
+def hg_size(e, key):
+    """{'nominal': mm used to pick the rule, 'h': vertical extent in feet incl. insulation, 'text'} or None."""
+    insul = hg_pnum(e, ["RBS_REFERENCE_INSULATION_THICKNESS"]) or 0.0
+    if key == "pipes":
+        nominal = hg_pnum(e, ["RBS_PIPE_DIAMETER_PARAM"])
+        outer = hg_pnum(e, ["RBS_PIPE_OUTER_DIAMETER"]) or nominal
+        if nominal is None or outer is None:
+            return None
+        return {"nominal": nominal * HG_MM, "h": outer + 2 * insul, "text": "dia %d" % int(round(nominal * HG_MM))}
+    if key == "ducts":
+        rect = False
+        for c in element_connectors(e):
+            try:
+                if "Rect" in str(c.Shape):
+                    rect = True
+            except Exception:
+                pass
+            break
+        if rect:
+            w = hg_pnum(e, ["RBS_CURVE_WIDTH_PARAM"])
+            h = hg_pnum(e, ["RBS_CURVE_HEIGHT_PARAM"])
+            if w is None or h is None:
+                return None
+            return {"nominal": w * HG_MM, "h": h + 2 * insul, "text": "%dx%d" % (int(round(w * HG_MM)), int(round(h * HG_MM)))}
+        d = hg_pnum(e, ["RBS_CURVE_DIAMETER_PARAM"])
+        if d is None:
+            return None
+        return {"nominal": d * HG_MM, "h": d + 2 * insul, "text": "dia %d" % int(round(d * HG_MM))}
+    w = hg_pnum(e, ["RBS_CABLETRAY_WIDTH_PARAM"])
+    h = hg_pnum(e, ["RBS_CABLETRAY_HEIGHT_PARAM"])
+    if w is None or h is None:
+        return None
+    return {"nominal": w * HG_MM, "h": h, "text": "%dx%d" % (int(round(w * HG_MM)), int(round(h * HG_MM)))}
+
+
+def hg_system(e):
+    name = hg_pstr(e, "RBS_SYSTEM_NAME_PARAM")
+    if name:
+        return name
+    try:
+        s = e.MEPSystem
+        if s is not None:
+            return ename(s) or ""
+    except Exception:
+        pass
+    return ""
+
+
+def hg_level_name(e):
+    try:
+        lv = e.ReferenceLevel
+        if lv is not None:
+            return ename(lv)
+    except Exception:
+        pass
+    bip = getattr(BuiltInParameter, "RBS_START_LEVEL_PARAM", None)
+    if bip is not None:
+        try:
+            p = e.get_Parameter(bip)
+            return ename(doc.GetElement(p.AsElementId()))
+        except Exception:
+            pass
+    return ""
+
+
+# ---- spacing rules ------------------------------------------------------------------------------------------------------
+def hg_resolve_rule(kind, size_mm):
+    """(status, rule): status is 'ok' or one of no_spacing_rule, rule_ambiguous, example_rule, rule_without_source, rule_incomplete."""
+    material = (ARGS.get("material") or "").strip().lower()
+    hits = []
+    for r in ARGS["rules"]:
+        if r["kind"] != kind:
+            continue
+        if size_mm < r["size_min_mm"] - HG_SIZE_TOL_MM or size_mm > r["size_max_mm"] + HG_SIZE_TOL_MM:
+            continue
+        rm = (r.get("material") or "").strip().lower()
+        if rm and rm != material:
+            continue
+        hits.append(r)
+    specific = [r for r in hits if (r.get("material") or "").strip()]
+    if specific:
+        hits = specific
+    if not hits:
+        return "no_spacing_rule", None
+    if len(hits) > 1:
+        return "rule_ambiguous", hits[0]
+    r = hits[0]
+    if r.get("example"):
+        return "example_rule", r
+    if not (r.get("source") or "").strip():
+        return "rule_without_source", r
+    sp = r.get("max_spacing_mm")
+    if sp is None or sp <= 0:
+        return "rule_incomplete", r
+    return "ok", r
+
+
+# ---- positions ----------------------------------------------------------------------------------------------------------
+def hg_fixed_stations(e, p0, d, length_ft):
+    """Stations (millimetres from p0) where a fitting or accessory is connected to the run: its ends and any tap."""
+    fids = hg_fitting_ids()
+    out = []
+    for c in element_connectors(e):
+        hit = False
+        try:
+            for r in c.AllRefs:
+                o = r.Owner
+                if o is None or eid(o) == eid(e):
+                    continue
+                cat = None
+                try:
+                    cat = eid(o.Category)
+                except Exception:
+                    cat = None
+                if cat in fids:
+                    hit = True
+        except Exception:
+            hit = False
+        if not hit:
+            continue
+        s = hg_dot(hg_sub(hg_v(c.Origin), p0), d)
+        if s < 0:
+            s = 0.0
+        if s > length_ft:
+            s = length_ft
+        out.append(s * HG_MM)
+    out.sort()
+    return out
+
+
+def hg_windows(length, stations, margin):
+    """Stretches of [0, length] (millimetres) at least margin away from every station."""
+    cuts = []
+    for s in stations:
+        a = s - margin
+        b = s + margin
+        if a < 0:
+            a = 0.0
+        if b > length:
+            b = length
+        cuts.append((a, b))
+    cuts.sort()
+    out = []
+    cursor = 0.0
+    for cut in cuts:
+        if cut[0] > cursor + 1e-6:
+            out.append((cursor, cut[0]))
+        if cut[1] > cursor:
+            cursor = cut[1]
+    if length > cursor + 1e-6:
+        out.append((cursor, length))
+    return out
+
+
+def hg_spread(a, b, spacing):
+    """Hangers exactly spacing apart, centred in the stretch a..b: the largest spacing the rule allows."""
+    w = b - a
+    n = int(math.floor(w / spacing + 1e-9)) + 1
+    tail = w - (n - 1) * spacing
+    first = a + tail / 2.0
+    return [first + i * spacing for i in range(n)]
+
+
+# ---- support hosts ------------------------------------------------------------------------------------------------------
+def hg_make_intersector():
+    """(ReferenceIntersector or None, reason). Needs a 3D view that is not perspective."""
+    view = None
+    for v in FilteredElementCollector(doc).OfClass(View3D):
+        try:
+            if v.IsTemplate or v.IsPerspective:
+                continue
+        except Exception:
+            continue
+        view = v
+        break
+    if view is None:
+        return None, "the project has no 3D view that is not a template or perspective, so no support host can be searched"
+    typed = List[BuiltInCategory]()
+    n = 0
+    for k in ARGS["host_categories"]:
+        b = hg_bic(HG_HOST_CATS[k])
+        if b is not None:
+            typed.Add(b)
+            n += 1
+    if n == 0:
+        return None, "none of the host categories exists in this Revit version"
+    try:
+        ri = ReferenceIntersector(ElementMulticategoryFilter(typed), FindReferenceTarget.Element, view)
+        ri.FindReferencesInRevitLinks = bool(ARGS.get("include_links"))
+    except Exception as ex:
+        return None, "the support host search could not be set up: %s: %s" % (ex.__class__.__name__, ex)
+    return ri, ""
+
+
+def hg_find_host(ri, pt, reach_ft):
+    """Nearest host straight above pt within reach: {id, cat, link, rod_ft} or None."""
+    try:
+        hits = ri.Find(XYZ(pt[0], pt[1], pt[2]), XYZ(0.0, 0.0, 1.0))
+    except Exception:
+        return None
+    best = None
+    for h in hits:
+        try:
+            prox = h.Proximity
+        except Exception:
+            continue
+        if prox < 0 or prox > reach_ft:
+            continue
+        if best is None or prox < best[0]:
+            best = (prox, h)
+    if best is None:
+        return None
+    ref = best[1].GetReference()
+    link_id = ""
+    host_id = eid(ref.ElementId)
+    cat = ""
+    linked = -1
+    try:
+        linked = eid(ref.LinkedElementId)
+    except Exception:
+        linked = -1
+    if linked > 0:
+        link_id = str(host_id)
+        host_id = linked
+        try:
+            li = doc.GetElement(ref.ElementId)
+            cat = cat_name(li.GetLinkDocument().GetElement(ref.LinkedElementId))
+        except Exception:
+            cat = "?"
+    else:
+        cat = cat_name(doc.GetElement(ref.ElementId))
+    return {"id": host_id, "cat": cat, "link": link_id, "rod_ft": best[0]}
+
+
+# ---- selecting runs -----------------------------------------------------------------------------------------------------
+def hg_scope_ok(e):
+    key = hg_cat_key(e)
+    if key is None or key not in ARGS["categories"]:
+        return False
+    if ARGS.get("system") and ARGS["system"].lower() not in hg_system(e).lower():
+        return False
+    if ARGS.get("level") and hg_level_name(e) != ARGS["level"]:
+        return False
+    return True
+
+
+def hg_select(state):
+    cap = ARGS["max_elements"]
+    found = []
+    if ARGS.get("ids"):
+        for i in ARGS["ids"]:
+            e = doc.GetElement(ElementId(int(i)))
+            if e is None:
+                info("ID_NOT_FOUND", "element id %s is not in the document" % i)
+                continue
+            if hg_cat_key(e) is None or hg_cat_key(e) not in ARGS["categories"]:
+                info("NOT_A_RUN", "element id %s (%s) is not one of the selected pipe, duct or cable tray categories; skipped" % (i, cat_name(e)))
+                continue
+            if hg_scope_ok(e):
+                found.append(e)
+    else:
+        view_id = ARGS.get("view_id")
+        view = None
+        if view_id:
+            view = doc.GetElement(ElementId(int(view_id)))
+            if view is None:
+                error("invalid_input", "view_id %s is not a view of this document" % view_id)
+                return None
+        for key in ARGS["categories"]:
+            b = hg_bic(HG_CATS[key])
+            if b is None:
+                continue
+            if view is not None:
+                col = FilteredElementCollector(doc, view.Id)
+            else:
+                col = FilteredElementCollector(doc)
+            for e in col.OfCategory(b).WhereElementIsNotElementType():
+                if hg_scope_ok(e):
+                    found.append(e)
+                if len(found) > cap:
+                    break
+            if len(found) > cap:
+                break
+    found.sort(key=lambda x: eid(x))
+    if len(found) > cap:
+        found = found[:cap]
+        state["stopped"] = "max_elements"
+    return found
+
+
+# ---- one run ------------------------------------------------------------------------------------------------------------
+def hg_run_record(e):
+    key = hg_cat_key(e)
+    rec = {"id": eid(e), "key": "R%d" % eid(e), "e": e, "cat": key, "kind": HG_KIND[key], "system": hg_system(e),
+           "size": "", "size_mm": None, "length_mm": 0.0, "status": "planned", "rule": None, "spacing": None, "fit_mm": None,
+           "hangers": [], "axis": None, "size_info": None, "windows": 0}
+    ax = hg_axis(e)
+    if ax is None:
+        rec["status"] = "not_straight"
+        return rec
+    rec["axis"] = ax
+    rec["length_mm"] = ax[3] * HG_MM
+    sz = hg_size(e, key)
+    if sz is None:
+        rec["status"] = "size_unreadable"
+        return rec
+    rec["size_info"] = sz
+    rec["size"] = sz["text"]
+    rec["size_mm"] = sz["nominal"]
+    slope = math.degrees(math.asin(min(1.0, abs(ax[2][2]))))
+    rec["slope_deg"] = slope
+    if slope > HG_MAX_SLOPE_DEG:
+        rec["status"] = "not_horizontal"
+        return rec
+    status, rule = hg_resolve_rule(rec["kind"], sz["nominal"])
+    rec["rule"] = rule
+    if status != "ok":
+        rec["status"] = status
+        return rec
+    rec["spacing"] = float(rule["max_spacing_mm"])
+    fit = ARGS.get("min_fitting_mm")
+    if fit is None:
+        fit = rule.get("min_fitting_distance_mm")
+    if fit is None:
+        fit = ARGS["default_fitting_mm"]
+    rec["fit_mm"] = float(fit)
+    stations = hg_fixed_stations(e, ax[0], ax[2], ax[3])
+    wins = hg_windows(rec["length_mm"], stations, rec["fit_mm"])
+    rec["windows"] = len(wins)
+    spots = []
+    for w in wins:
+        spots.extend(hg_spread(w[0], w[1], rec["spacing"]))
+    if not spots:
+        rec["status"] = "too_short"
+        return rec
+    top = sz["h"] / 2.0
+    for i in range(len(spots)):
+        pt = hg_at(ax[0], ax[2], spots[i] * HG_FT)
+        rec["hangers"].append({"idx": i, "s_mm": spots[i], "pt": pt, "attach_z": pt[2] + top, "host": None, "rod_mm": None})
+    return rec
+
+
+def hg_attach_hosts(rec, ri, reach_ft):
+    for h in rec["hangers"]:
+        hit = hg_find_host(ri, (h["pt"][0], h["pt"][1], h["attach_z"]), reach_ft)
+        if hit is not None:
+            h["host"] = hit
+            h["rod_mm"] = hit["rod_ft"] * HG_MM
+
+
+def hg_plan():
+    """{runs, state, rules_used}. Never raises for model content; budgets stop the work and set state['stopped']."""
+    state = {"stopped": "", "no_3d": "", "unmeasured": 0}
+    watch = Stopwatch.StartNew()
+    budget_ms = int(float(ARGS["time_budget_s"]) * 1000)
+    elements = hg_select(state)
+    if elements is None:
+        return None
+    ri = None
+    ri_reason = ""
+    reach_ft = float(ARGS["max_reach_mm"]) * HG_FT
+    runs = []
+    total = 0
+    for e in elements:
+        if watch.ElapsedMilliseconds > budget_ms:
+            state["stopped"] = "time_budget_s"
+            break
+        rec = hg_run_record(e)
+        if rec["status"] in ("size_unreadable", "not_straight"):
+            state["unmeasured"] += 1
+        if rec["hangers"]:
+            if total > 0 and total + len(rec["hangers"]) > ARGS["max_hangers"]:
+                state["stopped"] = "max_hangers"
+                break
+            if ri is None and not ri_reason:
+                ri, ri_reason = hg_make_intersector()
+                if ri is None:
+                    state["no_3d"] = ri_reason
+            if ri is not None:
+                hg_attach_hosts(rec, ri, reach_ft)
+            total += len(rec["hangers"])
+        runs.append(rec)
+    state["elements"] = len(elements)
+    state["time_ms"] = watch.ElapsedMilliseconds
+    return {"runs": runs, "state": state}
+
+
+def hg_run_rule_text(rec):
+    r = rec["rule"]
+    if r is None:
+        return ""
+    return r.get("id") or ""

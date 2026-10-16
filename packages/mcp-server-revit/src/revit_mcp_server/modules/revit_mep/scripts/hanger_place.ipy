@@ -1,0 +1,434 @@
+# revit_mep_hanger_place (write mode). Places a named loaded hanger family at the positions worked out by _hanger_plan.ipy
+# (or at positions handed in from revit_mep_hanger_plan). One Transaction per run, all runs in one TransactionGroup (the
+# Runner of the revit_docs write prelude).
+# ARGS = planning args (see _hanger_plan.ipy) + {tag, family_name, type_name, hangers: [{run_id, position_m [x, y, z],
+#         rod_length_mm}] (empty: plan from the scope), rod_length_parameter, place_without_host, existing_tolerance_mm,
+#         align_to_run, on_error, dry_run}
+#
+# Idempotent and non-destructive: every hanger carries the Extensible Storage tag (tag, key 'hanger:<run id>:<station mm>',
+# kind 'hanger') and a Comments marker 'AEC-HANGER <tag> <key>'. A position that already has a hanger of this family type
+# within existing_tolerance_mm (ours or foreign), or one of ours with the same key, is skipped. Nothing is ever deleted or
+# moved, so a hanger left over from an earlier plan is only reported.
+# Category guard: the family must be in a category a hanger may live in, be level based, and must not carry MEP connectors.
+# UNVERIFIED against a live Revit: see the module docstring.
+from Autodesk.Revit.DB.Structure import StructuralType
+
+KEY_PREFIX = "hanger:"
+MARKER = "AEC-HANGER"
+SYM = [None]
+ALLOWED_FAMILY_CATS = ["OST_GenericModel", "OST_PipeAccessory", "OST_DuctAccessory", "OST_CableTrayFitting", "OST_SpecialityEquipment"]
+POSITION_TOL_MM = 25.0
+
+
+def find_symbol():
+    fams = [f for f in FilteredElementCollector(doc).OfClass(Family) if ename(f) == ARGS["family_name"]]
+    if not fams:
+        names = sorted(set([ename(f) for f in FilteredElementCollector(doc).OfClass(Family)]))
+        return None, "family '%s' is not loaded in this project; loaded families include: %s" % (ARGS["family_name"], ", ".join(names[:40]))
+    types = []
+    for sid in fams[0].GetFamilySymbolIds():
+        s = doc.GetElement(sid)
+        if s is None:
+            continue
+        types.append(ename(s))
+        if ename(s) == ARGS["type_name"]:
+            return s, None
+    types.sort()
+    return None, "family '%s' has no type '%s'; its types: %s" % (ARGS["family_name"], ARGS["type_name"], ", ".join(types[:40]))
+
+
+def family_category_problem(sym):
+    """None when the family may be a hanger, else (code, message)."""
+    cat = None
+    try:
+        cat = sym.Category
+    except Exception:
+        cat = None
+    if cat is None:
+        try:
+            cat = sym.Family.FamilyCategory
+        except Exception:
+            cat = None
+    allowed = {}
+    for n in ALLOWED_FAMILY_CATS:
+        b = hg_bic(n)
+        if b is not None:
+            allowed[int(b)] = n.replace("OST_", "")
+    cid = None
+    if cat is not None:
+        cid = eid(cat)
+    if cid not in allowed:
+        label = "(no category)"
+        if cat is not None:
+            label = cat.Name
+        return ("hanger_category_mismatch", "family '%s' is in category %s; a hanger family must be one of: %s. It was not used." % (
+            ARGS["family_name"], label, ", ".join(sorted(allowed.values()))))
+    ptype = ""
+    try:
+        ptype = str(sym.Family.FamilyPlacementType)
+    except Exception:
+        ptype = ""
+    if ptype != "OneLevelBased":
+        return ("placement_unsupported", "family '%s' has placement type %s; only level based (unhosted) hanger families are placed by this tool" % (
+            ARGS["family_name"], ptype or "unknown"))
+    return None
+
+
+def level_for(z):
+    levels = []
+    for lv in FilteredElementCollector(doc).OfClass(Level):
+        levels.append((lv.Elevation, lv))
+    if not levels:
+        return None
+    levels.sort(key=lambda t: t[0])
+    pick = levels[0][1]
+    for t in levels:
+        if t[0] <= z + 0.01:
+            pick = t[1]
+    return pick
+
+
+def marker_text(key):
+    return "%s %s %s" % (MARKER, ARGS["tag"], key)
+
+
+# ---- the wanted hangers -------------------------------------------------------------------------------------------------
+def want_from_plan(res, skipped):
+    out = []
+    unknown = bool(res["state"]["no_3d"])
+    for rec in res["runs"]:
+        if rec["status"] != "planned":
+            skipped.append({"run": rec, "status": "run_" + rec["status"]})
+            continue
+        for h in rec["hangers"]:
+            w = {"run_id": rec["id"], "run_key": rec["key"], "idx": h["idx"], "s_mm": h["s_mm"], "pt": h["pt"], "dir": rec["axis"][2],
+                 "rod_mm": h["rod_mm"], "host": h["host"], "key": "%s%d:%d" % (KEY_PREFIX, rec["id"], int(round(h["s_mm"])))}
+            if h["host"] is None and not ARGS["place_without_host"]:
+                w["status"] = "skipped_host_unknown" if unknown else "skipped_no_host"
+            else:
+                w["status"] = "new"
+            out.append(w)
+    return out
+
+
+def want_from_list(items, problems):
+    out = []
+    counters = {}
+    for k in range(len(items)):
+        it = items[k]
+        e = doc.GetElement(ElementId(int(it["run_id"])))
+        if e is None:
+            problems.append(("element_not_found", "hangers[%d]: run id %s does not exist" % (k, it["run_id"]), []))
+            continue
+        if hg_cat_key(e) is None:
+            problems.append(("category_mismatch", "hangers[%d]: element %s is a %s, not a pipe, duct or cable tray" % (k, it["run_id"], cat_name(e)), [eid(e)]))
+            continue
+        ax = hg_axis(e)
+        if ax is None:
+            problems.append(("not_straight", "hangers[%d]: run %s has no straight location line" % (k, it["run_id"]), [eid(e)]))
+            continue
+        pt = (it["position_m"][0] / FT_TO_M, it["position_m"][1] / FT_TO_M, it["position_m"][2] / FT_TO_M)
+        rel = hg_sub(pt, ax[0])
+        s = hg_dot(rel, ax[2])
+        foot = hg_at(ax[0], ax[2], s)
+        off = hg_len(hg_sub(pt, foot)) * HG_MM
+        if s < -POSITION_TOL_MM * HG_FT or s > ax[3] + POSITION_TOL_MM * HG_FT or off > POSITION_TOL_MM:
+            problems.append(("position_off_run", "hangers[%d]: the position is %.0f mm from the axis of run %s (at most %.0f mm is accepted)" % (
+                k, off, it["run_id"], POSITION_TOL_MM), [eid(e)]))
+            continue
+        s_mm = s * HG_MM
+        status = "new"
+        if it.get("support") in ("no support host", "host_unknown") and not ARGS["place_without_host"]:
+            status = "skipped_no_host"
+        idx = counters.get(eid(e), 0)
+        counters[eid(e)] = idx + 1
+        out.append({"run_id": eid(e), "run_key": "R%d" % eid(e), "idx": idx, "s_mm": s_mm, "pt": pt, "dir": ax[2],
+                    "rod_mm": it.get("rod_length_mm"), "host": None, "key": "%s%d:%d" % (KEY_PREFIX, eid(e), int(round(s_mm))),
+                    "status": status})
+    return out
+
+
+def owned_by_key():
+    out = {}
+    for e in owned_elements(None, ARGS["tag"], None):
+        t = read_tag(e)
+        if t is not None and t[1].startswith(KEY_PREFIX):
+            out.setdefault(t[1], []).append(e)
+    return out
+
+
+def existing_instances(sym):
+    out = []
+    for e in FilteredElementCollector(doc).WherePasses(FamilyInstanceFilter(doc, sym.Id)):
+        try:
+            out.append((eid(e), hg_v(e.Location.Point)))
+        except Exception:
+            pass
+    return out
+
+
+def classify(wanted, owned, existing):
+    """Marks every 'new' hanger skipped_existing / skipped_existing_foreign when something is already there."""
+    ours = set()
+    for k in owned:
+        for e in owned[k]:
+            ours.add(eid(e))
+    tol = float(ARGS["existing_tolerance_mm"]) * HG_FT
+    for w in wanted:
+        if w["status"] != "new":
+            continue
+        if w["key"] in owned:
+            w["status"] = "skipped_existing"
+            w["existing_id"] = eid(owned[w["key"]][0])
+            continue
+        for item in existing:
+            if hg_len(hg_sub(item[1], w["pt"])) <= tol:
+                w["status"] = "skipped_existing" if item[0] in ours else "skipped_existing_foreign"
+                w["existing_id"] = item[0]
+                break
+
+
+# ---- placing ------------------------------------------------------------------------------------------------------------
+def param_names(e):
+    names = []
+    try:
+        for p in e.Parameters:
+            names.append(p.Definition.Name)
+    except Exception:
+        pass
+    return sorted(set(names))[:60]
+
+
+def instance_problem(inst):
+    """(code, message) when a placed instance cannot serve as a hanger or lacks a parameter this call writes, else None."""
+    if element_connectors(inst):
+        return ("family_has_connectors", "family '%s' type '%s' carries MEP connectors, so it is an MEP component (a valve, a fitting), not a hanger" % (
+            ARGS["family_name"], ARGS["type_name"]))
+    bad = []
+    cp = inst.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)
+    if cp is None or cp.IsReadOnly:
+        bad.append("the Comments parameter (used for the marker) is missing or read-only")
+    name = ARGS["rod_length_parameter"]
+    if name:
+        p = inst.LookupParameter(name)
+        if p is None:
+            on_type = SYM[0] is not None and SYM[0].LookupParameter(name) is not None
+            bad.append("'%s' (rod_length_parameter) %s" % (name, "is a type parameter; this tool sets instance parameters only" if on_type else "does not exist"))
+        elif p.IsReadOnly or str(p.StorageType) != "Double":
+            bad.append("'%s' (rod_length_parameter) is read-only or not a length" % name)
+    if not bad:
+        return None
+    return ("missing_parameter", "family '%s' type '%s': %s. Instance parameters it has: %s" % (
+        ARGS["family_name"], ARGS["type_name"], "; ".join(bad), ", ".join(param_names(inst)) or "none"))
+
+
+def create_instance(w):
+    sym = SYM[0]
+    if not sym.IsActive:
+        sym.Activate()
+    lv = level_for(w["pt"][2])
+    if lv is None:
+        raise StepError("the project has no level to place the hanger on", [w["run_id"]])
+    pt = XYZ(w["pt"][0], w["pt"][1], w["pt"][2])
+    return doc.Create.NewFamilyInstance(pt, sym, lv, StructuralType.NonStructural)
+
+
+def align(inst, w):
+    d = w["dir"]
+    if math.sqrt(d[0] * d[0] + d[1] * d[1]) < 1e-6:
+        return
+    hand = inst.HandOrientation
+    ang = math.atan2(d[1], d[0]) - math.atan2(hand.Y, hand.X)
+    while ang > math.pi:
+        ang -= 2 * math.pi
+    while ang <= -math.pi:
+        ang += 2 * math.pi
+    if abs(ang) < 1e-9:
+        return
+    axis = Line.CreateBound(XYZ(w["pt"][0], w["pt"][1], w["pt"][2]), XYZ(w["pt"][0], w["pt"][1], w["pt"][2] + 1.0))
+    ElementTransformUtils.RotateElement(doc, inst.Id, axis, ang)
+
+
+def make_hanger(w):
+    inst = create_instance(w)
+    if ARGS["align_to_run"]:
+        align(inst, w)
+    name = ARGS["rod_length_parameter"]
+    if name and w["rod_mm"] is not None:
+        p = inst.LookupParameter(name)
+        if p is None or p.IsReadOnly or not p.Set(w["rod_mm"] * HG_FT):
+            raise StepError("parameter '%s' cannot be set on the new hanger" % name, [eid(inst)])
+    cp = inst.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)
+    if cp is None or cp.IsReadOnly or not cp.Set(marker_text(w["key"])):
+        raise StepError("the Comments marker cannot be written on the new hanger", [eid(inst)])
+    set_tag(inst, ARGS["tag"], w["key"], "hanger")
+    return inst
+
+
+def probe(w):
+    """Place the first hanger in a transaction that is always rolled back, to guard the family before any change."""
+    warnings = []
+    errors = []
+    txn = Transaction(doc, "AEC hanger family probe (rolled back)")
+    txn.Start()
+    problem = None
+    try:
+        opts = txn.GetFailureHandlingOptions()
+        opts.SetFailuresPreprocessor(Collector(warnings, errors))
+        txn.SetFailureHandlingOptions(opts)
+        problem = instance_problem(create_instance(w))
+    except Exception as ex:
+        problem = ("placement_failed", "the first hanger (run %s) could not be placed: %s" % (w["run_key"], ex))
+    txn.RollBack()
+    return problem
+
+
+def check(w, inst):
+    got = get_by_id(eid(inst))
+    label = "%s %s" % (w["run_key"], w["key"])
+    if got is None:
+        post("hanger %s" % label, False, "the new hanger id %d is not in the document" % eid(inst))
+        return
+    bad = []
+    t = read_tag(got)
+    if t is None or t[0] != ARGS["tag"] or t[1] != w["key"]:
+        bad.append("tag readback %s" % (t,))
+    cp = got.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)
+    have = cp.AsString() if cp is not None else None
+    if have != marker_text(w["key"]):
+        bad.append("marker '%s'" % have)
+    try:
+        if ename(got.Symbol.Family) != ARGS["family_name"] or ename(got.Symbol) != ARGS["type_name"]:
+            bad.append("family or type differs")
+    except Exception:
+        bad.append("family or type unreadable")
+    loc = None
+    try:
+        loc = hg_v(got.Location.Point)
+    except Exception:
+        loc = None
+    if loc is None:
+        bad.append("no location point")
+    else:
+        off = hg_len(hg_sub(loc, w["pt"])) * HG_MM
+        if off > 2.0:
+            bad.append("%.1f mm from the requested position" % off)
+    name = ARGS["rod_length_parameter"]
+    if name and w["rod_mm"] is not None:
+        q = got.LookupParameter(name)
+        v = None
+        try:
+            v = q.AsDouble() * HG_MM
+        except Exception:
+            v = None
+        if v is None or abs(v - w["rod_mm"]) > 0.5:
+            bad.append("%s is %s mm, wanted %.1f mm" % (name, "none" if v is None else "%.1f" % v, w["rod_mm"]))
+    post("hanger %s" % label, not bad, "; ".join(bad) if bad else "id %d, tag, marker, family, position%s ok" % (eid(got), ", rod length" if name and w["rod_mm"] is not None else ""))
+
+
+def item_row(w, inst_id):
+    host = w["host"]
+    item([("kind", "hanger"), ("id", "" if inst_id is None else inst_id), ("run_id", w["run_id"]), ("key", w["key"]),
+          ("status", "created" if w["status"] == "new" else w["status"]),
+          ("x_m", to_m(w["pt"][0])), ("y_m", to_m(w["pt"][1])), ("z_m", to_m(w["pt"][2])),
+          ("rod_mm", "" if w["rod_mm"] is None else round(w["rod_mm"], 1)),
+          ("host_id", "" if host is None else host["id"])])
+
+
+def dry_meta():
+    if ARGS.get("dry_run"):
+        meta("dry_run", 1)
+        meta("committed", 0)
+
+
+def main():
+    doc_meta()
+    sym, why = find_symbol()
+    if sym is None:
+        refuse("family_not_found", why)
+        return
+    SYM[0] = sym
+    bad = family_category_problem(sym)
+    if bad is not None:
+        refuse(bad[0], bad[1])
+        return
+    skipped_runs = []
+    problems = []
+    state = {"stopped": "", "no_3d": ""}
+    if ARGS["hangers"]:
+        wanted = want_from_list(ARGS["hangers"], problems)
+        if problems:
+            refuse(problems[0][0], problems[0][1], problems[0][2])
+            for p in problems[1:20]:
+                fail(p[0].upper(), p[1])
+            return
+    else:
+        res = hg_plan()
+        if res is None:
+            return
+        state = res["state"]
+        wanted = want_from_plan(res, skipped_runs)
+    owned = owned_by_key()
+    classify(wanted, owned, existing_instances(sym))
+    for s in skipped_runs:
+        info("RUN_SKIPPED", "run %s: %s" % (s["run"]["key"], s["status"]))
+    for w in wanted:
+        if w["status"] != "new":
+            item_row(w, w.get("existing_id"))
+    new = [w for w in wanted if w["status"] == "new"]
+    seen_runs = set([w["run_id"] for w in wanted])
+    wanted_keys = set([w["key"] for w in wanted])
+    stale = []
+    for k in owned:
+        parts = k.split(":")
+        if len(parts) == 3 and parts[1].isdigit() and int(parts[1]) in seen_runs and k not in wanted_keys:
+            for e in owned[k]:
+                stale.append(str(eid(e)))
+    if stale:
+        info("STALE_HANGER", "%d hanger(s) of tag '%s' no longer match a planned position and were left in place: ids %s" % (len(stale), ARGS["tag"], ",".join(stale[:30])))
+    if state["no_3d"]:
+        info("NO_3D_VIEW", state["no_3d"])
+    if state["stopped"]:
+        info("TRUNCATED", "planning stopped early at %s: the hanger list is incomplete" % state["stopped"])
+        meta("partial", 1)
+        meta("verified", 0)
+    if len(new) > ARGS["max_hangers"]:
+        refuse("too_many_hangers", "%d hangers would be placed, more than max_hangers=%d" % (len(new), ARGS["max_hangers"]))
+        return
+    if not new:
+        meta("outcome", "ok")
+        meta("changed_ids", "")
+        dry_meta()
+        summary("nothing to place: %d position(s) considered, all skipped (already there, no support host, or no spacing rule)" % len(wanted))
+        return
+    problem = probe(new[0])
+    if problem is not None:
+        refuse(problem[0], problem[1], [new[0]["run_id"]])
+        return
+    run = Runner("AEC hangers %s" % ARGS["tag"], ARGS["on_error"])
+    made = []
+    order = []
+    by_run = {}
+    for w in new:
+        if w["run_id"] not in by_run:
+            by_run[w["run_id"]] = []
+            order.append(w["run_id"])
+        by_run[w["run_id"]].append(w)
+    for rid in order:
+        def work(rid=rid):
+            return [(w, make_hanger(w)) for w in by_run[rid]]
+
+        placed = run.step("Hangers on run R%d" % rid, work, ids=[rid])
+        if placed is None:
+            continue
+        for pair in placed:
+            made.append(pair)
+            run.changed.append(eid(pair[1]))
+    for pair in made:
+        check(pair[0], pair[1])
+        item_row(pair[0], eid(pair[1]))
+    summary("%d of %d hanger(s) placed on %d run(s), %d skipped (already there, no support host, or no spacing rule)" % (
+        len(made), len(new), len(order), len(wanted) - len(new)))
+
+
+__output__ = run_write(main)

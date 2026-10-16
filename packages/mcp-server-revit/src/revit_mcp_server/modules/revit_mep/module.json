@@ -1,10 +1,10 @@
 {
   "id": "revit_mep",
-  "name": "Revit MEP (route, connect, circuits)",
-  "version": "0.1.0",
+  "name": "Revit MEP (route, connect, circuits, hangers)",
+  "version": "0.2.0",
   "schema_version": 1,
   "min_hub_version": "1.2.0",
-  "description": "Data-driven MEP for a live Revit session: route pipes and ducts with fittings, connect connectors, make electrical circuits, and check first that a family really is MEP for the system. check_elements is read-only. route, connect and circuit are write tools: they need an approved plan, refuse a family whose category or connectors do not match the system before changing anything, replace only what they made under the same tag, use one transaction per route, connection or circuit, and roll back on failure unless on_error is skip. Not yet run against a live Revit. Every write tool takes dry_run: it runs the call, reports what would change and rolls it all back (still approval-gated).",
+  "description": "Data-driven MEP for a live Revit session: route pipes and ducts with fittings, connect connectors, make electrical circuits, plan and place hangers, and check first that a family really is MEP for the system. check_elements and hanger_plan are read-only. route, connect, circuit and hanger_place are write tools: they need an approved plan, refuse a family whose category or connectors do not match before changing anything, use one transaction per step and roll back on failure unless on_error is skip. Hanger spacing comes only from a table you fill in with named sources; layout aid, not an engineering calculation. Not yet run against a live Revit. Every write tool takes dry_run: it runs the call, reports what would change and rolls it all back (still approval-gated).",
   "author": "AEC Model Bridge",
   "license": "GPL-3.0-or-later",
   "requires_providers": [
@@ -629,6 +629,386 @@
       "is_mutating": true,
       "requires_plan": true,
       "destructive": false
+    },
+    {
+      "id": "hanger_plan",
+      "title": "Plan hanger positions along straight pipes, ducts and cable trays: spread at the maximum spacing of a rule you supplied (a rule needs a named source, otherwise 'no spacing rule'), no closer to fittings than a minimum distance, with the floor, beam or ceiling above each position and the rod length, or 'no support host'. A layout aid, not an engineering calculation. Read-only; then place them with revit_mep_hanger_place.",
+      "mcp_tool": "revit_mep_hanger_plan",
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "pipes",
+                "ducts",
+                "cabletrays"
+              ]
+            },
+            "description": "Which runs to plan: pipes, ducts, cabletrays. Default all three."
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "description": "ElementId (integer) of a pipe, duct or cable tray."
+            },
+            "description": "Element ids of the runs to plan (at most 2000). Scope: give ids, system, level or view_id; the whole model is never scanned unasked."
+          },
+          "system": {
+            "type": "string",
+            "description": "Only runs whose system name contains this text (for example the name of the piping system), case ignored. Scope."
+          },
+          "level": {
+            "type": "string",
+            "description": "Only runs whose reference level has this exact name. Scope. List levels with revit_list_levels."
+          },
+          "view_id": {
+            "type": "integer",
+            "description": "Only runs visible in this view (ElementId of a plan, section or 3D view). Scope."
+          },
+          "material": {
+            "type": "string",
+            "description": "Material of the runs in this call, compared without case with the material of each spacing rule. A rule with an empty material matches any material. Default empty."
+          },
+          "spacing_rules": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One spacing rule. A rule is used only when it names a source and a max_spacing_mm and example is not true.",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Your name for the rule, unique in the list (letters, digits, _ - .)."
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "pipe",
+                    "duct",
+                    "cabletray"
+                  ],
+                  "description": "What the rule covers."
+                },
+                "material": {
+                  "type": "string",
+                  "description": "Material the rule covers; empty means any."
+                },
+                "size_min_mm": {
+                  "type": "number",
+                  "description": "Smallest nominal diameter (pipe, round duct) or width (rectangular duct, cable tray), millimetres."
+                },
+                "size_max_mm": {
+                  "type": "number",
+                  "description": "Largest size covered, millimetres."
+                },
+                "max_spacing_mm": {
+                  "type": "number",
+                  "description": "Largest distance between two hangers on a straight run, millimetres."
+                },
+                "min_fitting_distance_mm": {
+                  "type": "number",
+                  "description": "Nearest a hanger may be to a fitting, millimetres. The call's min_fitting_distance_mm overrides it."
+                },
+                "source": {
+                  "type": "string",
+                  "description": "Required. The standard, supplier table or project document the numbers come from, with clause or page."
+                },
+                "example": {
+                  "type": "boolean",
+                  "description": "true marks a row that only shows the layout; it is never used."
+                }
+              }
+            },
+            "description": "Spacing rules for this call, used instead of the shipped table (at most 500). Spacing comes only from the rules in conventions/hanger_spacing.json (shipped empty except an example row) or from spacing_rules. A rule without a source text is never used."
+          },
+          "min_fitting_distance_mm": {
+            "type": "number",
+            "description": "Nearest a hanger may be to a fitting, millimetres. Overrides the rule's value. Default: the rule's value, else 100 (a layout clearance, not an engineering value)."
+          },
+          "host_categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "floors",
+                "structuralframing",
+                "ceilings"
+              ]
+            },
+            "description": "What counts as a support host above a hanger: floors, structuralframing (beams), ceilings. Default floors and structuralframing."
+          },
+          "include_links": {
+            "type": "boolean",
+            "description": "Also search loaded linked models for a support host. Default true.",
+            "default": true
+          },
+          "max_reach_mm": {
+            "type": "number",
+            "description": "How far above the top of a run a host is looked for, millimetres (100 to 20000). Default 3000. Beyond it the position is 'no support host'.",
+            "default": 3000
+          },
+          "max_elements": {
+            "type": "integer",
+            "description": "Most runs examined (1 to 2000). Default 500. More runs in scope: the result is truncated.",
+            "default": 500
+          },
+          "time_budget_s": {
+            "type": "number",
+            "description": "Seconds after which the work stops and the result is marked truncated (1 to 25). Default 15.",
+            "default": 15
+          },
+          "max_hangers": {
+            "type": "integer",
+            "description": "Most hangers computed (1 to 3000). Default 1000. Beyond it the result is truncated.",
+            "default": 1000
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Runs per page (1 to 500). Default 50."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Runs to skip, to read the next page. Default 0."
+          }
+        }
+      }
+    },
+    {
+      "id": "hanger_place",
+      "title": "Place a loaded hanger family at hanger positions: planned from a scope with the same rules as revit_mep_hanger_plan, or taken from its positions. Skips positions that already have a hanger of the family, so a rerun adds nothing; refuses a family in the wrong category or with MEP connectors; reads every hanger back. Write tool: needs an approved plan; rolls back on failure unless on_error is skip. Layout aid, not an engineering calculation.",
+      "mcp_tool": "revit_mep_hanger_place",
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "pipes",
+                "ducts",
+                "cabletrays"
+              ]
+            },
+            "description": "Which runs to plan: pipes, ducts, cabletrays. Default all three."
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "description": "ElementId (integer) of a pipe, duct or cable tray."
+            },
+            "description": "Plan from these runs (at most 2000) and place the result. Scope: give ids, system, level or view_id, or give hangers instead."
+          },
+          "system": {
+            "type": "string",
+            "description": "Only runs whose system name contains this text (for example the name of the piping system), case ignored. Scope."
+          },
+          "level": {
+            "type": "string",
+            "description": "Only runs whose reference level has this exact name. Scope. List levels with revit_list_levels."
+          },
+          "view_id": {
+            "type": "integer",
+            "description": "Only runs visible in this view (ElementId of a plan, section or 3D view). Scope."
+          },
+          "material": {
+            "type": "string",
+            "description": "Material of the runs in this call, compared without case with the material of each spacing rule. A rule with an empty material matches any material. Default empty."
+          },
+          "spacing_rules": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One spacing rule. A rule is used only when it names a source and a max_spacing_mm and example is not true.",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Your name for the rule, unique in the list (letters, digits, _ - .)."
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "pipe",
+                    "duct",
+                    "cabletray"
+                  ],
+                  "description": "What the rule covers."
+                },
+                "material": {
+                  "type": "string",
+                  "description": "Material the rule covers; empty means any."
+                },
+                "size_min_mm": {
+                  "type": "number",
+                  "description": "Smallest nominal diameter (pipe, round duct) or width (rectangular duct, cable tray), millimetres."
+                },
+                "size_max_mm": {
+                  "type": "number",
+                  "description": "Largest size covered, millimetres."
+                },
+                "max_spacing_mm": {
+                  "type": "number",
+                  "description": "Largest distance between two hangers on a straight run, millimetres."
+                },
+                "min_fitting_distance_mm": {
+                  "type": "number",
+                  "description": "Nearest a hanger may be to a fitting, millimetres. The call's min_fitting_distance_mm overrides it."
+                },
+                "source": {
+                  "type": "string",
+                  "description": "Required. The standard, supplier table or project document the numbers come from, with clause or page."
+                },
+                "example": {
+                  "type": "boolean",
+                  "description": "true marks a row that only shows the layout; it is never used."
+                }
+              }
+            },
+            "description": "Spacing rules for this call, used instead of the shipped table (at most 500). Spacing comes only from the rules in conventions/hanger_spacing.json (shipped empty except an example row) or from spacing_rules. A rule without a source text is never used."
+          },
+          "min_fitting_distance_mm": {
+            "type": "number",
+            "description": "Nearest a hanger may be to a fitting, millimetres. Overrides the rule's value. Default: the rule's value, else 100 (a layout clearance, not an engineering value)."
+          },
+          "host_categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "floors",
+                "structuralframing",
+                "ceilings"
+              ]
+            },
+            "description": "What counts as a support host above a hanger: floors, structuralframing (beams), ceilings. Default floors and structuralframing."
+          },
+          "include_links": {
+            "type": "boolean",
+            "description": "Also search loaded linked models for a support host. Default true.",
+            "default": true
+          },
+          "max_reach_mm": {
+            "type": "number",
+            "description": "How far above the top of a run a host is looked for, millimetres (100 to 20000). Default 3000. Beyond it the position is 'no support host'.",
+            "default": 3000
+          },
+          "max_elements": {
+            "type": "integer",
+            "description": "Most runs examined (1 to 2000). Default 500. More runs in scope: the result is truncated.",
+            "default": 500
+          },
+          "time_budget_s": {
+            "type": "number",
+            "description": "Seconds after which the work stops and the result is marked truncated (1 to 25). Default 15.",
+            "default": 15
+          },
+          "tag": {
+            "type": "string",
+            "description": "Your own label for this batch (for example HANG1). Each hanger carries it, so a rerun with the same tag skips what it already placed; hangers this tool did not make are never touched."
+          },
+          "family_name": {
+            "type": "string",
+            "description": "Name of the loaded hanger family. It must be level based, in Generic Models, Pipe Accessories, Duct Accessories, Cable Tray Fittings or Specialty Equipment, and have no MEP connectors."
+          },
+          "type_name": {
+            "type": "string",
+            "description": "Name of the family type to place."
+          },
+          "hangers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One position, as returned in positions by revit_mep_hanger_plan, plus the run id.",
+              "properties": {
+                "run_id": {
+                  "type": "integer",
+                  "description": "ElementId of the pipe, duct or cable tray the position lies on."
+                },
+                "x_m": {
+                  "type": "number",
+                  "description": "X in metres, model internal coordinates."
+                },
+                "y_m": {
+                  "type": "number",
+                  "description": "Y in metres."
+                },
+                "z_m": {
+                  "type": "number",
+                  "description": "Z in metres."
+                },
+                "rod_mm": {
+                  "type": "number",
+                  "description": "Rod length in millimetres, written to rod_length_parameter. Optional."
+                },
+                "support": {
+                  "type": "string",
+                  "description": "The support value from the plan. A position whose support is 'no support host' or 'host_unknown' is skipped unless place_without_host is true."
+                }
+              }
+            },
+            "description": "Positions to place (1 to 500), taken from revit_mep_hanger_plan, instead of a scope. Each must lie on its run within 25 mm."
+          },
+          "rod_length_parameter": {
+            "type": "string",
+            "description": "Name of an instance length parameter of the family that receives the rod length in millimetres. Optional; the family is refused when it lacks it."
+          },
+          "place_without_host": {
+            "type": "boolean",
+            "description": "Also place hangers where no support host was found. Default false: those positions are skipped and listed.",
+            "default": false
+          },
+          "existing_tolerance_mm": {
+            "type": "number",
+            "description": "A position with a hanger of this family type within this distance, millimetres, counts as already placed and is skipped (1 to 1000). Default 50.",
+            "default": 50
+          },
+          "align_to_run": {
+            "type": "boolean",
+            "description": "Rotate each hanger about the vertical so the family's X axis follows the run. Default true.",
+            "default": true
+          },
+          "max_hangers": {
+            "type": "integer",
+            "description": "Most hangers placed in one call (1 to 500). Default 200. A larger call is refused before anything changes.",
+            "default": 200
+          },
+          "on_error": {
+            "type": "string",
+            "description": "abort (default): the first failure rolls the whole call back and nothing is kept. skip: keep what worked and list the failures.",
+            "enum": [
+              "abort",
+              "skip"
+            ],
+            "default": "abort"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default false. true: do the whole call inside Revit exactly as normal (same checks, same read-back), then roll everything back. The result says dry_run true, committed false and what would change (would_change); changed_ids stays empty. Still needs an approved plan like any write. Use it to test a call before the real one."
+          }
+        },
+        "required": [
+          "tag",
+          "family_name",
+          "type_name"
+        ]
+      }
     }
   ]
 }

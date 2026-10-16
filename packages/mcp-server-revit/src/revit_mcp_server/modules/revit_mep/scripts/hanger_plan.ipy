@@ -1,0 +1,103 @@
+# revit_mep_hanger_plan (read only). Hanger positions along straight pipes, ducts and cable trays, with the support host
+# above each position. Nothing is changed. The planning lives in _hanger_plan.ipy; see its header for ARGS.
+#
+# Rows: one 'run' row per run (status, rule used, number of hangers) and one 'hanger' row per hanger (position, support
+# host, rod length). A hanger with no host within reach has support 'no support host'. When the project has no usable 3D
+# view the search cannot run: the hangers are then listed with support 'host_unknown' and the result is not verified.
+# UNVERIFIED against a live Revit: see the module docstring.
+
+STATUS_TEXT = {
+    "planned": "planned", "no_spacing_rule": "no spacing rule", "rule_without_source": "rule without source",
+    "example_rule": "example rule", "rule_incomplete": "rule incomplete", "rule_ambiguous": "rule ambiguous",
+    "not_horizontal": "not horizontal", "not_straight": "not straight", "size_unreadable": "size unreadable",
+    "too_short": "too short for the fitting distance",
+}
+
+
+def support_of(h, unknown):
+    if h["host"] is not None:
+        return "host"
+    if unknown:
+        return "host_unknown"
+    return "no support host"
+
+
+def main():
+    doc_meta()
+    res = hg_plan()
+    if res is None:
+        return
+    st = res["state"]
+    runs = res["runs"]
+    unknown = bool(st["no_3d"])
+    counts = {"planned": 0, "no_rule": 0, "hangers": 0, "with_host": 0, "no_host": 0, "unknown": 0}
+    for rec in runs:
+        host_n = 0
+        rods = []
+        for h in rec["hangers"]:
+            sup = support_of(h, unknown)
+            if sup == "host":
+                host_n += 1
+                rods.append(h["rod_mm"])
+        n = len(rec["hangers"])
+        if rec["status"] == "planned":
+            counts["planned"] += 1
+        elif rec["status"] in ("no_spacing_rule", "rule_without_source", "example_rule", "rule_incomplete", "rule_ambiguous"):
+            counts["no_rule"] += 1
+        counts["hangers"] += n
+        counts["with_host"] += host_n
+        if unknown:
+            counts["unknown"] += n
+        else:
+            counts["no_host"] += n - host_n
+        note = ""
+        if rec["status"] != "planned":
+            note = STATUS_TEXT.get(rec["status"], rec["status"])
+            if rec["rule"] is not None and rec["status"] in ("rule_without_source", "example_rule", "rule_incomplete", "rule_ambiguous"):
+                note = "%s (rule '%s')" % (note, hg_run_rule_text(rec))
+        rule = rec["rule"]
+        row([("kind", "run"), ("run", rec["key"]), ("id", rec["id"]), ("category", rec["cat"]), ("system", rec["system"]),
+             ("size", rec["size"]), ("material", ARGS.get("material") or ""), ("length_m", to_m(rec["length_mm"] * HG_FT)),
+             ("status", rec["status"]), ("note", note), ("rule", hg_run_rule_text(rec)),
+             ("rule_source", ((rule.get("source") or "")[:120]) if rule is not None and rec["status"] == "planned" else ""),
+             ("spacing_mm", "" if rec["spacing"] is None else round(rec["spacing"], 1)),
+             ("fitting_distance_mm", "" if rec["fit_mm"] is None else round(rec["fit_mm"], 1)),
+             ("hangers", n), ("with_host", host_n), ("no_host", 0 if unknown else n - host_n),
+             ("rod_min_mm", round(min(rods), 1) if rods else ""), ("rod_max_mm", round(max(rods), 1) if rods else "")])
+        for h in rec["hangers"]:
+            host = h["host"]
+            row([("kind", "hanger"), ("run", rec["key"]), ("run_id", rec["id"]), ("idx", h["idx"]), ("station_mm", round(h["s_mm"], 1)),
+                 ("x_m", to_m(h["pt"][0])), ("y_m", to_m(h["pt"][1])), ("z_m", to_m(h["pt"][2])),
+                 ("support", support_of(h, unknown)),
+                 ("host_id", "" if host is None else host["id"]), ("host_category", "" if host is None else host["cat"]),
+                 ("host_link", "" if host is None else host["link"]),
+                 ("rod_mm", "" if host is None else round(h["rod_mm"], 1))])
+    if unknown:
+        info("NO_3D_VIEW", st["no_3d"])
+    if st["stopped"]:
+        info("TRUNCATED", "stopped early at %s after %d of %d selected run(s): the list is incomplete. Narrow the scope or raise the budget." % (
+            st["stopped"], len(runs), st["elements"]))
+    if st["unmeasured"]:
+        info("RUNS_UNMEASURED", "%d run(s) could not be measured (not straight, or size unreadable); see their status" % st["unmeasured"])
+    if counts["no_rule"]:
+        info("NO_SPACING_RULE", "%d run(s) have no usable spacing rule (none matches, or the matching row has no source, is an example or is incomplete); no positions were computed for them" % counts["no_rule"])
+    meta("runs", len(runs))
+    meta("runs_planned", counts["planned"])
+    meta("runs_no_rule", counts["no_rule"])
+    meta("hangers", counts["hangers"])
+    meta("hangers_with_host", counts["with_host"])
+    meta("hangers_no_host", counts["no_host"])
+    meta("hangers_host_unknown", counts["unknown"])
+    meta("selected", st["elements"])
+    meta("truncated", 1 if st["stopped"] else 0)
+    meta("truncated_reason", st["stopped"])
+    if st["stopped"] or unknown or st["unmeasured"]:
+        meta("partial", 1)
+        meta("verified", 0)
+    summary("%d run(s) checked, %d planned, %d without a usable spacing rule; %d hanger(s): %d with a support host, %d with no support host%s%s" % (
+        len(runs), counts["planned"], counts["no_rule"], counts["hangers"], counts["with_host"], counts["no_host"],
+        (", %d host unknown (no 3D view)" % counts["unknown"]) if unknown else "",
+        " - TRUNCATED" if st["stopped"] else ""))
+
+
+__output__ = run_main(main)

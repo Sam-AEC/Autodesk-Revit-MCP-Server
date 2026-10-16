@@ -37,7 +37,7 @@ from test_revit_mep_scripts import Env, build_scene, r_bend, r_straight, route_a
 WRITE_TOOLS = {
     "revit_docs": ("revit_make_view", "revit_make_sheet", "revit_make_schedule", "revit_export"),
     "revit_family": ("revit_make_family",),
-    "revit_mep": ("revit_mep_route", "revit_mep_connect", "revit_mep_circuit"),
+    "revit_mep": ("revit_mep_route", "revit_mep_connect", "revit_mep_circuit", "revit_mep_hanger_place"),
 }
 MODULE_DIRS = {"revit_docs": docs.MODULE_DIR, "revit_family": fam.MODULE_DIR, "revit_mep": mep.MODULE_DIR}
 

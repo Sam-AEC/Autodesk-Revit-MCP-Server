@@ -33,6 +33,9 @@ from revit_mcp_server.tool_metadata import enrich_tool  # noqa: E402
 
 MUTATING = ("revit_mep_route", "revit_mep_connect", "revit_mep_circuit")
 READ_ONLY = ("revit_mep_check_elements",)
+# the hanger tools have their own tests (test_revit_mep_hangers.py); the metadata test below covers all of them
+HANGER_MUTATING = ("revit_mep_hanger_place",)
+HANGER_READ_ONLY = ("revit_mep_hanger_plan",)
 
 WRITE_OK = (
     "SUMMARY\t1 of 1 routes built\nMETA\toutcome\tok\nMETA\ton_error\tabort\nMETA\tchanged_ids\t12,13\nMETA\treport_ids\t12,13\nMETA\tfree_end_ids\t\n"
@@ -198,14 +201,15 @@ def test_tool_metadata_marks_write_tools_gated_and_the_check_read_only(tmp_path,
             continue
         assert isinstance(tool, ProviderTool)
         enriched = enrich_tool("module", tool)
-        if tool.name in MUTATING:
+        if tool.name in MUTATING + HANGER_MUTATING:
             assert enriched.annotations.readOnlyHint is False
             assert "plan_id" in enriched.description
             assert "plan_id" in enriched.inputSchema["properties"]
         else:
             assert enriched.annotations.readOnlyHint is True
             assert "plan_id" not in enriched.inputSchema["properties"]
-        assert enriched.annotations.destructiveHint is False or tool.name in MUTATING
+        assert enriched.annotations.destructiveHint is False or tool.name in MUTATING + HANGER_MUTATING
+    assert {t.name for t in provider.get_capabilities() if t.name.startswith("revit_mep_")} >= set(HANGER_MUTATING + HANGER_READ_ONLY)
 
 
 def test_module_files_have_no_conflict_markers():
