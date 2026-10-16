@@ -120,6 +120,38 @@ These directories usually need either an official registry entry, repository URL
 | Cline MCP Marketplace | Open an issue in the Cline marketplace repository (UNVERIFIED process: repository link, a 400x400 logo, a reason). Cline installs from [llms-install.md](../llms-install.md). There is no 400x400 logo in this repository yet. |
 | MCP.so / MCP Market / MCP Store / Conare / Aibase | Submit the GitHub repository URL and use the client config above. These sites generally crawl README, GitHub metadata, and registry data. |
 
+## What the owner still has to do by hand
+
+Checked on 2026-10-15 from the repository. Nothing below has been done, and nothing has been published.
+
+### PyPI
+
+State: `python -m build` makes the sdist and wheel, `twine check --strict` passes, and the wheel installs in a fresh virtualenv, `import revit_mcp_server` reports 1.5.0, all four console scripts answer `--help` and the installed server lists the same 277 tools as a source checkout. The name `aec-model-bridge` was free on PyPI when checked.
+
+1. Create or sign in to a PyPI account with two-factor login (and the same on test.pypi.org if you want a dry run).
+2. At pypi.org/manage/account/publishing add a pending publisher: project `aec-model-bridge`, owner `Sam-AEC`, repository `aec-model-bridge`, workflow `publish-pypi.yml`, environment left empty (the workflow does not use one).
+3. Run the "Publish Python Package" workflow by hand (Actions, Run workflow) from the commit you want to ship. No token is needed.
+4. Check pypi.org/project/aec-model-bridge, then `uvx aec-model-bridge --help` on a clean machine.
+5. Add the PyPI package to `server.json` only if you want the registry to list it next to the `.mcpb` file; the `mcp-name` marker is already in the package README.
+
+### VS Code Marketplace and Open VSX
+
+State: `npm ci`, compile, tests and `vsce package` pass; the `.vsix` has the manifest, icon (512x512 PNG), licence, README and changelog and nothing else.
+
+1. Create the publisher `Sam-AEC` at marketplace.visualstudio.com/manage (needs a Microsoft account; the publisher ID must match `publisher` in `extensions/vscode/package.json`).
+2. In Azure DevOps create a personal access token with the scope Marketplace, Manage, for all accessible organizations. Add it as the repository secret `VSCE_PAT`.
+3. For Open VSX: sign in at open-vsx.org with GitHub, sign the publisher agreement, create the namespace `Sam-AEC`, create a token and add it as `OVSX_PAT`.
+4. Before the first release, edit the README section "Build and install locally", which still says the extension is not published.
+5. Publishing then happens when you publish a GitHub release whose tag equals the extension version (`v1.5.0`).
+
+### Glama
+
+State: `glama.json` matches Glama's published schema (`maintainers` is the only required property; `$schema` is allowed).
+
+1. The file must be on the default branch (`main`) at the repository root.
+2. Sign in to glama.ai with the GitHub account `Sam-AEC` (the repository is on a personal account, so that login claims it) and use "Claim ownership" on the server page. If you change `glama.json` later, claim again.
+3. After claiming, Glama lets you configure how it builds the server (the root `Dockerfile` runs mock mode only). Check that the listing says it needs Revit for live use.
+
 ## Release Checklist
 
 1. Build and attach the `.mcpb` artifact to the GitHub release. `scripts/version.py` keeps the plugin and marketplace versions in step with it.
