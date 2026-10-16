@@ -36,7 +36,7 @@ def main():
             titleblock_of[eid(tb.OwnerViewId)] = "%s : %s" % (sym.FamilyName, ename(sym))
         except Exception:
             pass
-    revisions = [(eid(r), r.RevisionNumber) for r in all_revisions()]
+    revisions = [(eid(r), rev_no(r)) for r in all_revisions()]
 
     sheets = []
     for s in FilteredElementCollector(doc).OfClass(ViewSheet):

@@ -11,7 +11,7 @@ def main():
     date = ARGS.get("date")
     for r in all_revisions():
         if r.Description == desc and (date is None or r.RevisionDate == date):
-            refuse("revision_exists", "revision %s (id %d) already has the description '%s'%s; it was left untouched" % (r.RevisionNumber, eid(r), desc, (" and date '%s'" % date) if date is not None else ""), [eid(r)])
+            refuse("revision_exists", "revision %s (id %d) already has the description '%s'%s; it was left untouched" % (rev_no(r), eid(r), desc, (" and date '%s'" % date) if date is not None else ""), [eid(r)])
             return
     before = len(all_revisions())
     run = Runner("AEC add revision", "abort")
@@ -48,9 +48,9 @@ def main():
             post("visibility", str(got.Visibility) == VISIBILITY[ARGS["visibility"]], "%s" % got.Visibility)
         post("not_issued", not got.Issued, "Issued = %s" % got.Issued)
         post("revision_count", len(all_revisions()) == before + 1, "%d revisions (was %d)" % (len(all_revisions()), before))
-        item([("kind", "revision"), ("id", rid), ("sequence", got.SequenceNumber), ("number", got.RevisionNumber), ("name", got.Description),
+        item([("kind", "revision"), ("id", rid), ("sequence", got.SequenceNumber), ("number", rev_no(got)), ("name", got.Description),
               ("date", got.RevisionDate), ("visibility", str(got.Visibility)), ("status", "created")])
-    summary("revision %s '%s' added (id %d)" % (got.RevisionNumber if got is not None else "?", desc, rid))
+    summary("revision %s '%s' added (id %d)" % (rev_no(got) if got is not None else "?", desc, rid))
 
 
 __output__ = run_write(main)

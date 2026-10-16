@@ -52,7 +52,7 @@ def main():
         refuse("revision_not_found", why)
         return
     if rev.Issued:
-        refuse("revision_issued", "revision %s '%s' (id %d) is issued, and Revit does not allow new clouds on an issued revision; add a new revision first (revit_add_revision)" % (rev.RevisionNumber, rev.Description, eid(rev)), [eid(rev)])
+        refuse("revision_issued", "revision %s '%s' (id %d) is issued, and Revit does not allow new clouds on an issued revision; add a new revision first (revit_add_revision)" % (rev_no(rev), rev.Description, eid(rev)), [eid(rev)])
         return
     view, why = resolve_view(ARGS["view"], "view")
     if view is None:
@@ -133,8 +133,8 @@ def main():
         for vp in viewports_by_view().get(eid(view), []):
             sh = doc.GetElement(vp.SheetId)
             if sh is not None:
-                post("revision_on_sheet", eid(rev) in revision_ids_on(sh), "revision %s %s on sheet %s" % (rev.RevisionNumber, "is listed" if eid(rev) in revision_ids_on(sh) else "is NOT listed", sh.SheetNumber))
-    summary("added %d of %d revision clouds for revision %s in view '%s' (cloud ids %s)" % (len(made), len(rects), rev.RevisionNumber, view.Name, ",".join([str(m[2]) for m in made]) or "none"))
+                post("revision_on_sheet", eid(rev) in revision_ids_on(sh), "revision %s %s on sheet %s" % (rev_no(rev), "is listed" if eid(rev) in revision_ids_on(sh) else "is NOT listed", sh.SheetNumber))
+    summary("added %d of %d revision clouds for revision %s in view '%s' (cloud ids %s)" % (len(made), len(rects), rev_no(rev), view.Name, ",".join([str(m[2]) for m in made]) or "none"))
 
 
 __output__ = run_write(main)

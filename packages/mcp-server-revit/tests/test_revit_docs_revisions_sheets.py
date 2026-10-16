@@ -341,3 +341,32 @@ def test_update_sheets_dry_run_and_revit_refusal(env):
     env.w.fail_on["sheet_number"] = lambda n: True
     failed(env.write("update_sheets", sheets=[{"number": "A101", "new_number": "B101"}]), "rolled_back")
     assert env.s.snapshot() == before
+
+
+def test_revision_number_falls_back_to_the_sequence_when_numbering_is_per_sheet():
+    # Live (Revit 2024): Revision.RevisionNumber raises when the project numbers revisions per sheet, which made
+    # every revision tool fail with a script exception.
+    import ast
+
+    from revit_mcp_server.modules.revit_docs.module import SCRIPT_DIR
+
+    tree = ast.parse((SCRIPT_DIR / "_docs_common.ipy").read_text(encoding="utf-8"))
+    node = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "rev_no"]
+    env: dict = {}
+    exec(compile(ast.Module(body=node, type_ignores=[]), "_docs_common.ipy", "exec"), env)
+
+    class PerSheet:
+        SequenceNumber = 3
+
+        @property
+        def RevisionNumber(self):
+            raise Exception("This operation is not valid for when the revision numbering is per sheet.")
+
+    class Whole:
+        SequenceNumber = 1
+        RevisionNumber = "A"
+
+    assert env["rev_no"](PerSheet()) == "seq3"
+    assert env["rev_no"](Whole()) == "A"
+    for name in ("add_revision", "add_revision_clouds", "issue_revision", "list_revisions", "sheet_index"):
+        assert ".RevisionNumber" not in (SCRIPT_DIR / (name + ".ipy")).read_text(encoding="utf-8")

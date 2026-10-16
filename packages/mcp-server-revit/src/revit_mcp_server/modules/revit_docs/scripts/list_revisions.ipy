@@ -25,7 +25,7 @@ def main():
             continue
         shown += 1
         row([
-            ("kind", "revision"), ("id", eid(r)), ("sequence", r.SequenceNumber), ("number", r.RevisionNumber), ("date", r.RevisionDate),
+            ("kind", "revision"), ("id", eid(r)), ("sequence", r.SequenceNumber), ("number", rev_no(r)), ("date", r.RevisionDate),
             ("name", r.Description), ("issued", 1 if r.Issued else 0), ("issued_by", r.IssuedBy), ("issued_to", r.IssuedTo),
             ("visibility", str(r.Visibility)), ("clouds", clouds.get(eid(r), 0)), ("sheets", on_sheets.get(eid(r), 0)),
         ])

@@ -23,7 +23,7 @@ def main():
             sheets.append(hits[0])
     issue = bool(ARGS.get("issue"))
     if issue and rev.Issued:
-        info("ALREADY_ISSUED", "revision %s (id %d) is already issued; nothing to issue" % (rev.RevisionNumber, rid))
+        info("ALREADY_ISSUED", "revision %s (id %d) is already issued; nothing to issue" % (rev_no(rev), rid))
 
     run = Runner("AEC issue revision", ARGS.get("on_error"))
     status = {}
@@ -41,7 +41,7 @@ def main():
             s.SetAdditionalRevisionIds(ids)
             return s
 
-        if run.step("Add revision %s to sheet %s" % (rev.RevisionNumber, s.SheetNumber), assign, ids=[sid, rid]) is not None:
+        if run.step("Add revision %s to sheet %s" % (rev_no(rev), s.SheetNumber), assign, ids=[sid, rid]) is not None:
             status[sid] = "assigned"
 
     issued_now = False
@@ -54,7 +54,7 @@ def main():
             rev.Issued = True
             return rev
 
-        if run.step("Issue revision %s" % rev.RevisionNumber, do_issue, ids=[rid]) is not None:
+        if run.step("Issue revision %s" % rev_no(rev), do_issue, ids=[rid]) is not None:
             issued_now = True
 
     for s in sheets:
@@ -63,22 +63,22 @@ def main():
             continue
         got = get_by_id(eid(s))
         shown = got is not None and rid in revision_ids_on(got)
-        post("revision_on_sheet", shown, "sheet %s %s revision %s" % (s.SheetNumber, "shows" if shown else "does NOT show", rev.RevisionNumber))
+        post("revision_on_sheet", shown, "sheet %s %s revision %s" % (s.SheetNumber, "shows" if shown else "does NOT show", rev_no(rev)))
         if st == "assigned":
             run.changed.append(eid(s))
         item([("kind", "sheet"), ("id", eid(s)), ("name", s.Name), ("sheet", s.SheetNumber), ("revision_id", rid), ("status", st)])
     got = get_by_id(rid)
     if issue:
-        post("revision_issued", got is not None and bool(got.Issued), "revision %s Issued = %s" % (rev.RevisionNumber, got.Issued if got is not None else "?"))
+        post("revision_issued", got is not None and bool(got.Issued), "revision %s Issued = %s" % (rev_no(rev), got.Issued if got is not None else "?"))
         if ARGS.get("issued_by") is not None and issued_now:
             post("issued_by", got.IssuedBy == ARGS["issued_by"], "'%s'" % got.IssuedBy)
         if ARGS.get("issued_to") is not None and issued_now:
             post("issued_to", got.IssuedTo == ARGS["issued_to"], "'%s'" % got.IssuedTo)
         if issued_now:
             run.changed.append(rid)
-        item([("kind", "revision"), ("id", rid), ("name", rev.Description), ("number", rev.RevisionNumber), ("status", "issued" if issued_now else "unchanged")])
+        item([("kind", "revision"), ("id", rid), ("name", rev.Description), ("number", rev_no(rev)), ("status", "issued" if issued_now else "unchanged")])
     assigned = len([1 for s in sheets if status.get(eid(s)) == "assigned"])
-    summary("revision %s: %d of %d sheets assigned%s" % (rev.RevisionNumber, assigned, len(sheets), (", issued" if issued_now else (", already issued" if issue else ""))))
+    summary("revision %s: %d of %d sheets assigned%s" % (rev_no(rev), assigned, len(sheets), (", issued" if issued_now else (", already issued" if issue else ""))))
 
 
 __output__ = run_write(main)

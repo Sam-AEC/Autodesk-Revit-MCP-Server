@@ -96,6 +96,15 @@ def rects_overlap(a, b, tol):
     return a[0] < b[2] - tol and b[0] < a[2] - tol and a[1] < b[3] - tol and b[1] < a[3] - tol
 
 
+def rev_no(r):
+    """Revision number as text. Revit refuses RevisionNumber when numbering is per sheet (seen live), then the
+    sequence number is the only stable label."""
+    try:
+        return r.RevisionNumber
+    except Exception:
+        return "seq%d" % r.SequenceNumber
+
+
 def all_revisions():
     """Revisions in sequence order."""
     revs = []
@@ -114,10 +123,10 @@ def resolve_revision(rid, number):
         return r, None
     hits = []
     for r in all_revisions():
-        if r.RevisionNumber == number:
+        if rev_no(r) == number:
             hits.append(r)
     if len(hits) != 1:
-        known = "; ".join(["%s = '%s' (id %d)" % (r.RevisionNumber, r.Description, eid(r)) for r in all_revisions()][:12])
+        known = "; ".join(["%s = '%s' (id %d)" % (rev_no(r), r.Description, eid(r)) for r in all_revisions()][:12])
         return None, "%d revisions have the number '%s'; revisions in the document: %s" % (len(hits), number, known or "(none)")
     return hits[0], None
 
