@@ -349,10 +349,9 @@ def test_symlinked_user_pack_escaping_workspace_is_refused(module, workspace, tm
 def test_heijmans_derived_pack_is_valid():
     import yaml
 
-    from revit_mcp_server.modules.qaqc_checker import module as qaqc
 
     pack = REPO_ROOT / "rule_packs" / "heijmans-derived.yaml"
-    result = qaqc._validate_pack_data(yaml.safe_load(pack.read_text(encoding="utf-8")))
+    result = _qaqc._validate_pack_data(yaml.safe_load(pack.read_text(encoding="utf-8")))
     assert result["errors"] == [] and result["rules_count"] == 5
 
 
