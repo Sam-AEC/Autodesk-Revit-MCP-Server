@@ -121,7 +121,6 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `revit_add_revision_clouds` | Draw rectangular revision clouds in one plan, section or elevation view around elements (their extent in that view) and/or a model-space box, for a revision given by id or number. | Yes | sync |
 | `revit_align_crop` | Align the crop regions of a set of plan views to a reference plan view: each view gets the same crop rectangle in model coordinates, its crop switched on and its height range kept. | Yes | sync |
 | `revit_api_lookup` | Check that a Revit API type, member or overload really exists before you use it in a revit_execute_python script, and get its exact signature. | No | sync |
-| `revit_apply_view_template` | Apply a view template to a view. | Yes | sync |
 | `revit_audit_openings` | Inspect scoped doors and windows for host, fit, dimensions and wall cuts, using ray or volume evidence when available. | No | sync |
 | `revit_audit_roofs` | Inspect scoped roofs for heights, slopes, coverage, exposed edges and stair openings. | No | sync |
 | `revit_check_intersections` | Measure solid/solid overlaps in the live model between two sets of elements (ids, Comments tag, categories): boolean-intersection volume in m3, pairs sorted largest first, with categories, ids and location; bounding boxes are only a pre-filter. | No | sync |
@@ -158,6 +157,7 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `revit_render_check` | Export a view to a workspace PNG and inspect its pixel content for a blank image. | No | sync |
 | `revit_review` | Run selected read-only Revit checks for an explicit scope and return FAIL, PASS or INCOMPLETE with evidence. | No | sync |
 | `revit_set_parameters` | Batch-set instance or type parameters of up to 500 elements from data: items pick elements by id, ids or a selector (category, name, level, tag) and give params {name: value} with explicit units (mm, m, deg, number, int, bool, text, elementid by name). | Yes | sync |
+| `revit_set_view_templates` | Assign one view template, by name or id, to a list of views. | Yes | sync |
 | `revit_sheet_index` | Index of all sheets: number, name, title block, number of views and their names, schedules, current revision and all revisions shown. | No | sync |
 | `revit_sparing_export_spec` | Export the placement spec for the linked discipline models from this model's placed sparingen: per link instance the family and type, host id and category, location and direction in the link's own coordinates (inverse link transform), size and status, as JSON. | No | sync |
 | `revit_sparing_find` | Find where MEP runs (pipes, ducts, conduits, cable trays) pass through walls and floors, also in links, and suggest a sparing per crossing: MEP size plus clearance, rounded up, with host thickness, angle and any existing opening. | No | sync |
