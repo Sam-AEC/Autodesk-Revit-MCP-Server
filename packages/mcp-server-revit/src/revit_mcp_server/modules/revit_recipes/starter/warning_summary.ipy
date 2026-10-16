@@ -1,0 +1,33 @@
+# Starter recipe: the document's warnings grouped by description, most frequent first (read only).
+# Parameter: top, the number of groups to list.
+
+
+def main():
+    doc_meta()
+    p = load_params()
+    top = int(p.get("top", 20))
+    groups = {}
+    total = 0
+    for fm in doc.GetWarnings():
+        total += 1
+        key = fm.GetDescriptionText()
+        g = groups.setdefault(key, {"count": 0, "severity": "?", "ids": []})
+        g["count"] += 1
+        try:
+            g["severity"] = str(fm.GetSeverity())
+        except Exception:
+            pass
+        if len(g["ids"]) < 5:
+            for i in fm.GetFailingElements():
+                g["ids"].append(eid(i))
+                break
+    ordered = sorted(groups.items(), key=lambda kv: (-kv[1]["count"], kv[0]))
+    for key, g in ordered[:top]:
+        row([("description", key), ("severity", g["severity"]), ("count", g["count"]),
+             ("example_ids", ",".join([str(x) for x in g["ids"]]))])
+    if len(ordered) > top:
+        info("LIST_CUT", "%d more kinds not listed (raise top)" % (len(ordered) - top))
+    summary("%d warnings in %d kinds" % (total, len(groups)))
+
+
+__output__ = run_main(main)

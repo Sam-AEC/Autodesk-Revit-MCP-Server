@@ -1,0 +1,12 @@
+# Starter recipe: the levels of the open document, lowest first (read only). No parameters.
+
+
+def main():
+    doc_meta()
+    levels = sorted(FilteredElementCollector(doc).OfClass(Level), key=lambda lv: lv.Elevation)
+    for lv in levels:
+        row([("id", eid(lv)), ("name", ename(lv)), ("elevation_m", to_m(lv.Elevation))])
+    summary("%d levels" % len(levels))
+
+
+__output__ = run_main(main)

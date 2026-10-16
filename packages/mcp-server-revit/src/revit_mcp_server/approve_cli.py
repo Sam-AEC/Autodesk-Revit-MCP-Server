@@ -27,6 +27,7 @@ from .errors import BridgeError
 from .security import proof as proof_mod
 from .security.approval import STALE_RUNNING_SECONDS, ApprovalGate, local_user, plan_hash, running_actions
 from .security.proof import normalize_review
+from .security.recipe_store import RecipeError, RecipeStore, validate_recipe_id
 
 ELEMENT_ID_KEYS = ("element_id", "element_ids", "id", "ids", "elementIds")
 
@@ -212,7 +213,7 @@ def describe_plan(plan: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _confirm(plan_id: str, verb: str, assume_yes: bool) -> bool:
+def _confirm(plan_id: str, verb: str, assume_yes: bool, what: str = "plan id") -> bool:
     if assume_yes:
         return True
     if not sys.stdin.isatty():
@@ -222,8 +223,39 @@ def _confirm(plan_id: str, verb: str, assume_yes: bool) -> bool:
             file=sys.stderr,
         )
         return False
-    typed = input(f"Type the plan id ({plan_id}) to {verb} it, or anything else to cancel: ").strip()
+    typed = input(f"Type the {what} ({plan_id}) to {verb} it, or anything else to cancel: ").strip()
     return typed == plan_id
+
+
+def _recipe_command(gate: ApprovalGate, args: Any) -> int:
+    """Standing approval of one recipe. Humans only: no MCP tool, panel route or plan can reach this."""
+    store = RecipeStore(gate.workspace_dir)
+    try:
+        rid = validate_recipe_id(args.recipe_id)
+        if args.command == "recipe-revoke":
+            print(f"Recipe {rid}: standing approval removed." if store.revoke_standing(rid) else f"Recipe {rid} had no standing approval.")
+            return 0
+        recipe = store.load(rid)
+        print(f"Recipe {safe_text(rid)}  version {recipe.version}  mode {recipe.mode}")
+        print(f"Title: {safe_text(recipe.manifest.get('title', ''))}")
+        print(f"sha256: {recipe.sha256}")
+        print("\nCode:")
+        for line in recipe.code.split("\n"):
+            print("  " + safe_text(line))
+        if args.sha256 != recipe.sha256:
+            print(f"\n--sha256 does not match the code above ({recipe.sha256}). Nothing was granted.", file=sys.stderr)
+            return 1
+        print("\nA standing approval lets this exact code run without a plan each time, with any parameter values. "
+              "It ends when the recipe is saved, edited or deleted. Look only mode still blocks it.")
+        if not _confirm(rid, "grant a standing approval to", args.yes, what="recipe id"):
+            print("Cancelled; nothing granted.", file=sys.stderr)
+            return 2
+        store.grant_standing(rid, args.sha256, local_user())
+    except RecipeError as e:
+        print(safe_text(e), file=sys.stderr)
+        return 1
+    print(f"Recipe {rid}: standing approval granted for sha256 {recipe.sha256[:12]}...")
+    return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -244,9 +276,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     rec.add_argument("--reason", required=True, help="why the action is being abandoned (recorded)")
     rec.add_argument("--force", action="store_true", help="also abandon actions younger than the stale threshold")
     rec.add_argument("--yes", action="store_true", help="recover without the typed confirmation")
+    std = sub.add_parser("recipe-standing", help="give one write recipe a standing approval, bound to its id and code hash")
+    std.add_argument("recipe_id")
+    std.add_argument("--sha256", required=True, help="sha256 of the recipe code you reviewed (revit_recipe_get shows it)")
+    std.add_argument("--yes", action="store_true", help="grant without the typed confirmation")
+    rev = sub.add_parser("recipe-revoke", help="remove the standing approval of a recipe")
+    rev.add_argument("recipe_id")
     args = parser.parse_args(argv)
 
     gate = _gate(args.workspace)
+
+    if args.command in ("recipe-standing", "recipe-revoke"):
+        return _recipe_command(gate, args)
 
     if args.command == "list":
         plans = gate.list_pending_plans()

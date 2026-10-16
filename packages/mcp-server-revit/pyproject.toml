@@ -68,6 +68,9 @@ revit_mcp_server = [
     "modules/*/conventions/*.json",
     # IronPython 2.7 scripts that a module runs inside Revit (for example modules/revit/scripts).
     "modules/*/scripts/*.ipy",
+    # Starter recipes of modules/revit_recipes (code + manifest).
+    "modules/*/starter/*.ipy",
+    "modules/*/starter/*.json",
 ]
 
 [tool.pytest.ini_options]

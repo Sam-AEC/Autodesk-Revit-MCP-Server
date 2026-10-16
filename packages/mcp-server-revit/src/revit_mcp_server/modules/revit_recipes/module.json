@@ -1,0 +1,266 @@
+{
+  "id": "revit_recipes",
+  "name": "Revit Recipes (saved IronPython scripts with parameters and a code hash)",
+  "version": "0.1.0",
+  "schema_version": 1,
+  "min_hub_version": "1.2.0",
+  "description": "A library of saved IronPython 2.7 recipes that run through the revit_execute_python path. Saving is free and only writes files in the workspace recipes folder. Running a read recipe needs no approval when its code, rechecked at run time, passes read mode. Running a write recipe needs an approved plan that covers the recipe id, version, the sha256 of the code and the parameter values, so editing a recipe after approval invalidates the approval. A person can give one write recipe a standing approval (bound to its code hash) with the aec-model-bridge-approve command.",
+  "author": "AEC Model Bridge",
+  "license": "GPL-3.0-or-later",
+  "requires_providers": [
+    "revit"
+  ],
+  "permissions": [
+    "model.read",
+    "model.write",
+    "workspace.write"
+  ],
+  "commands": [
+    {
+      "id": "recipe_save",
+      "title": "Save a recipe: IronPython 2.7 code plus a manifest (title, description, typed params schema, mode read or write) under the workspace recipes folder. Free: it only writes files and never runs anything. Saving over an existing id raises its version and removes any standing approval. mode 'read' is refused unless the code passes read mode. The script gets PARAMS_JSON and load_params(); print the SUMMARY/ROW line protocol (see revit_recipe_list for starters). Use revit_recipe_get for the sha256 you need to plan a run.",
+      "mcp_tool": "revit_recipe_save",
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Recipe id: 1 to 64 characters from a-z, 0-9, '_' and '-'."
+          },
+          "title": {
+            "type": "string",
+            "description": "Short name, at most 120 characters."
+          },
+          "description": {
+            "type": "string",
+            "description": "What the recipe does and what it prints, at most 1000 characters."
+          },
+          "code": {
+            "type": "string",
+            "description": "IronPython 2.7 source, at most 64 KiB, no 'from __future__' import. Read the values with load_params(); end with __output__ = run_main(main)."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write"
+            ],
+            "default": "read",
+            "description": "read: runs without approval, refused if the code breaks read mode (no Transaction, file, process or network access). write: every run needs an approved plan."
+          },
+          "params": {
+            "type": "array",
+            "description": "Declared parameters (at most 30). The server checks type, range and required before anything runs.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Letters, digits and '_', at most 40."
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "integer",
+                    "number",
+                    "string",
+                    "boolean"
+                  ],
+                  "description": "Value type."
+                },
+                "unit": {
+                  "type": "string",
+                  "description": "Label for a number, for example mm, m or deg. Informational: values are passed as given."
+                },
+                "min": {
+                  "type": "number",
+                  "description": "Smallest allowed number."
+                },
+                "max": {
+                  "type": "number",
+                  "description": "Largest allowed number."
+                },
+                "required": {
+                  "type": "boolean",
+                  "description": "True: the run must give a value unless there is a default."
+                },
+                "default": {
+                  "description": "Value used when the run gives none; must fit the definition."
+                },
+                "enum": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Allowed texts for a string parameter."
+                },
+                "max_length": {
+                  "type": "integer",
+                  "description": "Longest allowed text (default 200, at most 2000)."
+                },
+                "description": {
+                  "type": "string",
+                  "description": "What the parameter means, at most 200 characters."
+                }
+              },
+              "required": [
+                "name",
+                "type"
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "code"
+        ]
+      }
+    },
+    {
+      "id": "recipe_list",
+      "title": "List the saved recipes and the built-in starters: id, version, title, mode, approval (per_run or standing), source, sha256 and parameter names. Read-only. A recipe whose files disagree shows a problem instead of its details. revit_recipe_get returns one recipe with its code.",
+      "mcp_tool": "revit_recipe_list",
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Rows per page (default 100, at most 500)."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Rows to skip."
+          },
+          "count_only": {
+            "type": "boolean",
+            "description": "Return only the totals."
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Row fields to keep."
+          }
+        }
+      }
+    },
+    {
+      "id": "recipe_get",
+      "title": "Read one recipe: manifest, params schema, code, sha256, the approval it needs now and the plan_arguments to put in a plan action for revit_recipe_run. Read-only. The code hash is recomputed from the file; a recipe whose manifest and code disagree is refused.",
+      "mcp_tool": "revit_recipe_get",
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Recipe id: 1 to 64 characters from a-z, 0-9, '_' and '-'."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    },
+    {
+      "id": "recipe_run",
+      "title": "Run a saved recipe in Revit with checked parameters. dry_run true validates the params and shows the code hash and approval state without running anything or needing approval. A read recipe whose code passes read mode (rechecked now) runs without approval. A write recipe needs an approved plan_id whose action carries exactly the plan_arguments from revit_recipe_get (id, version, sha256, params); if the recipe was edited since, the run is refused. Values reach the script only as the JSON string PARAMS_JSON, never as code. Returns the same result contract as the check tools.",
+      "mcp_tool": "revit_recipe_run",
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Recipe id: 1 to 64 characters from a-z, 0-9, '_' and '-'."
+          },
+          "params": {
+            "type": "object",
+            "description": "Parameter values by name, checked against the recipe's schema. Defaults fill what is left out."
+          },
+          "version": {
+            "type": "integer",
+            "description": "Recipe version from revit_recipe_get. Required for a recipe that can change the model; the run is refused if the version differs."
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Code hash from revit_recipe_get (64 lowercase hex). Required for a recipe that can change the model; the run is refused if the code on disk hashes differently."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "True: validate and report only. Nothing is sent to Revit."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Rows per page (default 100, at most 500)."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Rows to skip."
+          },
+          "count_only": {
+            "type": "boolean",
+            "description": "Return only the totals."
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Row fields to keep."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    },
+    {
+      "id": "recipe_delete",
+      "title": "Delete a saved recipe and any standing approval for it. Gated: needs an approved plan. A built-in starter recipe cannot be deleted; save your own with the same id to replace it.",
+      "mcp_tool": "revit_recipe_delete",
+      "surface": [
+        "mcp"
+      ],
+      "execution_mode": "sync",
+      "is_mutating": true,
+      "requires_plan": true,
+      "destructive": true,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Recipe id: 1 to 64 characters from a-z, 0-9, '_' and '-'."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    }
+  ]
+}

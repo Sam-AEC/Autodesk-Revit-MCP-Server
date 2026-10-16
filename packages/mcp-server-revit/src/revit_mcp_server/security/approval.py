@@ -16,6 +16,7 @@ from ..errors import BridgeError
 from . import proof as proof_mod
 from .approval_override import active_override
 from .dev_mode import active_dev, audit_dev_event
+from .recipe_store import RecipeStore, standing_authorizes
 
 logger = logging.getLogger(__name__)
 
@@ -546,6 +547,12 @@ class ApprovalGate:
             # off after the snapshot. Failure to audit refuses the call.
             audit_dev_event(self.workspace_dir, "call", tool=tool_name, mutating=True, arguments=arguments)
         plan_id = arguments.get("plan_id") if isinstance(arguments, dict) else None
+        # A person's standing approval of one recipe: bound to its id and the sha256 of its code as it is on
+        # disk now (security/recipe_store.py). Look only and the audit above have already been applied.
+        standing = None if plan_id else standing_authorizes(self.workspace_dir, tool_name, arguments)
+        if standing is not None:
+            RecipeStore(self.workspace_dir).record_standing_use(standing)
+            return None
         if mode == "auto":
             if not plan_id:
                 return None

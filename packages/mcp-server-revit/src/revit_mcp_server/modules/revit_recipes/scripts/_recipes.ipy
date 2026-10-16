@@ -1,0 +1,29 @@
+# Header the revit_recipes module puts between the shared prelude and a recipe. IronPython 2.7: no f-strings, no annotations.
+# The server defines PARAMS_JSON (one unicode string of JSON text, built from the validated parameter values) right after
+# this file and before the recipe code. A recipe calls load_params() to get the values as plain dicts, lists, numbers,
+# strings and booleans. The deployed IronPython build may have no json module, so there is a .NET fallback.
+
+
+def _plain(value):
+    if value is None or isinstance(value, (bool, int, long, float, basestring)):
+        return value
+    if isinstance(value, System.Decimal):
+        return float(value)
+    if hasattr(value, "Keys"):
+        out = {}
+        for key in value.Keys:
+            out[str(key)] = _plain(value[key])
+        return out
+    return [_plain(v) for v in value]
+
+
+def load_params():
+    """The recipe parameters as a dict (empty when the recipe declares none)."""
+    try:
+        import json
+        return json.loads(PARAMS_JSON)
+    except ImportError:
+        pass
+    clr.AddReference("System.Web.Extensions")
+    from System.Web.Script.Serialization import JavaScriptSerializer
+    return _plain(JavaScriptSerializer().DeserializeObject(PARAMS_JSON))
