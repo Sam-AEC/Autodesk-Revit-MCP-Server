@@ -107,14 +107,14 @@ Używasz VS Code? [Kod źródłowy rozszerzenia i kroki lokalnej instalacji](../
 | --- | --- | --- |
 | Revit | 110 | Odczyt modelu, tworzenie i edycja elementów, parametrów, widoków, arkuszy, zestawień, eksporty, współpraca (worksharing) |
 | Zatwierdzanie | 5 | Planowanie, przegląd, zatwierdzanie, wykonywanie i wycofywanie zmian modelu |
-| Moduły | 83 | Inspekcja migawek, siatki parametrów, kontrole QA/QC, receptury, raporty, zaznaczenia |
+| Moduły | 108 | Inspekcja migawek, siatki parametrów, kontrole QA/QC, receptury, raporty, zaznaczenia |
 | Rhino i Grasshopper | 19 | Geometria, warstwy, materiały, operacje boolowskie |
 | Speckle | 17 | Projekty, modele, wersje, wysyłanie i odbieranie |
 | Navisworks | 15 | Drzewo modelu, punkty widzenia, testy kolizji (w trakcie prac) |
 | IFC | 7 | Odczyt plików IFC bez Revit: struktura, właściwości, walidacja |
 | Graf, migawki, eksporty, zadania | 21 | Audyty grafu semantycznego, różnice migawek, eksport do SQLite, zadania w tle |
 
-W konfiguracji domyślnej widocznych jest 277 narzędzi (policzone na aktualnym serwerze w trybie mock). Narzędzia Autodesk Data pojawiają się po skonfigurowaniu poświadczeń APS. [Opis narzędzi](../tools-generated.md) zawiera listę wszystkich. Każde narzędzie ma adnotacje MCP (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), dzięki czemu klienci odróżniają odczyty od zapisów.
+W konfiguracji domyślnej widocznych jest 302 narzędzi (policzone na aktualnym serwerze w trybie mock). Narzędzia Autodesk Data pojawiają się po skonfigurowaniu poświadczeń APS. [Opis narzędzi](../tools-generated.md) zawiera listę wszystkich. Każde narzędzie ma adnotacje MCP (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), dzięki czemu klienci odróżniają odczyty od zapisów.
 
 ### Zaawansowana automatyzacja Revit
 

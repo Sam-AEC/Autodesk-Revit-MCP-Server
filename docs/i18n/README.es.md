@@ -136,14 +136,14 @@ publicado en el Marketplace.
 | --- | --- | --- |
 | Revit | 110 | Leer el modelo, crear y editar elementos, parámetros, vistas, hojas, tablas de planificación, exportaciones, trabajo compartido |
 | Aprobación | 5 | Planificar, revisar, aprobar, ejecutar y revertir cambios en el modelo |
-| Módulos | 83 | Inspección de instantáneas, cuadrículas de parámetros, comprobaciones de QA/QC, recetas, informes, selecciones |
+| Módulos | 108 | Inspección de instantáneas, cuadrículas de parámetros, comprobaciones de QA/QC, recetas, informes, selecciones |
 | Rhino y Grasshopper | 19 | Geometría, capas, materiales, operaciones booleanas |
 | Speckle | 17 | Proyectos, modelos, versiones, envío y recepción |
 | Navisworks | 15 | Árbol del modelo, puntos de vista, pruebas de interferencias (en desarrollo) |
 | IFC | 7 | Leer archivos IFC sin Revit: estructura, propiedades, validación |
 | Grafo, instantáneas, exportaciones, tareas | 21 | Auditorías del grafo semántico, diferencias entre instantáneas, exportación a SQLite, tareas en segundo plano |
 
-En la configuración predeterminada aparecen 277 herramientas (contadas desde el servidor actual en modo
+En la configuración predeterminada aparecen 302 herramientas (contadas desde el servidor actual en modo
 mock). Las herramientas de Autodesk Data aparecen cuando se configuran credenciales de APS. La
 [referencia de herramientas](../tools-generated.md) las enumera todas. Cada herramienta incluye
 anotaciones MCP (`readOnlyHint`, `destructiveHint`, `idempotentHint`,

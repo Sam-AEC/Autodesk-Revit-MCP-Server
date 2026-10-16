@@ -174,14 +174,14 @@ published to the Marketplace.
 | --- | --- | --- |
 | Revit | 110 | Read the model, create and edit elements, parameters, views, sheets, schedules, exports, worksharing |
 | Approval | 5 | Plan, review, approve, execute and roll back model changes |
-| Modules | 83 | Snapshot inspection, parameter grids, QA/QC checks, recipes, reports, selections |
+| Modules | 108 | Snapshot inspection, parameter grids, QA/QC checks, recipes, reports, selections |
 | Rhino and Grasshopper | 19 | Geometry, layers, materials, boolean operations |
 | Speckle | 17 | Projects, models, versions, send and receive |
 | Navisworks | 15 | Model tree, viewpoints, clash tests (in progress) |
 | IFC | 7 | Read IFC files without Revit: structure, properties, validation |
 | Graph, snapshots, exports, jobs | 21 | Semantic graph audits, snapshot diffs, SQLite export, background jobs |
 
-277 tools are listed in the default setup (counted from the current server in mock
+302 tools are listed in the default setup (counted from the current server in mock
 mode). The Autodesk Data tools appear when APS credentials are configured. The
 [tool reference](docs/tools-generated.md) lists every tool. Each tool carries
 MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`,

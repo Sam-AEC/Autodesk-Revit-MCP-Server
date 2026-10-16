@@ -117,7 +117,11 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `report_generator_build_review_pack` | Build one Excel 'Model review' workbook from a snapshot: cover, findings from the QA/QC rules, counts by category and what to do next. | No | sync |
 | `report_generator_export_excel` | Export a snapshot (optionally filtered, with chosen parameters and QA/QC findings) to an Excel workbook in the workspace. | No | sync |
 | `report_generator_export_sqlite_summary` | Export a summary of a snapshot to a SQLite database file in the workspace. | No | sync |
+| `revit_add_revision` | Add a new revision at the end of the revision sequence, with description, date, issued by and to, and visibility. | Yes | sync |
+| `revit_add_revision_clouds` | Draw rectangular revision clouds in one plan, section or elevation view around elements (their extent in that view) and/or a model-space box, for a revision given by id or number. | Yes | sync |
+| `revit_align_crop` | Align the crop regions of a set of plan views to a reference plan view: each view gets the same crop rectangle in model coordinates, its crop switched on and its height range kept. | Yes | sync |
 | `revit_api_lookup` | Check that a Revit API type, member or overload really exists before you use it in a revit_execute_python script, and get its exact signature. | No | sync |
+| `revit_apply_view_template` | Apply a view template to a view. | Yes | sync |
 | `revit_audit_openings` | Inspect scoped doors and windows for host, fit, dimensions and wall cuts, using ray or volume evidence when available. | No | sync |
 | `revit_audit_roofs` | Inspect scoped roofs for heights, slopes, coverage, exposed edges and stair openings. | No | sync |
 | `revit_check_intersections` | Measure solid/solid overlaps in the live model between two sets of elements (ids, Comments tag, categories): boolean-intersection volume in m3, pairs sorted largest first, with categories, ids and location; bounding boxes are only a pre-filter. | No | sync |
@@ -125,25 +129,46 @@ This catalog lists all tools exposed by the AEC Model Bridge providers.
 | `revit_check_levels_grids` | Check scoped levels and grids for missing plan views, duplicate elevations and coincident grids, using the supplied tolerance. | No | sync |
 | `revit_check_naming_and_params` | Check scoped elements for required parameter values, duplicate Marks and names matching a supplied pattern. | No | sync |
 | `revit_check_orientation` | Check that walls face the right way: probes 0. | No | sync |
+| `revit_cleanup_audit` | Audit the open model for cleanup: eleven read-only checks, each with a count, up to max_ids element ids and a severity (FAIL, WARN, INFO). | No | sync |
 | `revit_export` | Export selected sheets or views as PDF or DWG, or the model as IFC or NWC, inside the workspace under an approved action. | Yes | sync |
 | `revit_get_parameters` | Read parameter values of elements picked by id, ids or a selector (category, name, level, tag): one row per element and parameter with the value in the unit revit_set_parameters expects, Revit's display text, read-only, and whether revit_set_parameters would write it and why not. | No | sync |
 | `revit_ifc_check` | Compare an exported IFC with the live Revit model and list what the export dropped: elements per category, classification (NL/SfB, Assembly Code), materials, storey assignment, expected parameters, duplicates at one placement, and the origin offset against the survey point. | No | sync |
+| `revit_issue_revision` | Assign a revision to sheets (adds it to each sheet's revisions on sheet) and/or mark it issued, with issued by and to. | Yes | sync |
+| `revit_list_revisions` | List the revisions of the document in sequence order: id, sequence, revision number, date, description, issued state, issued by and to, visibility, how many revision clouds each has and on how many sheets it shows. | No | sync |
+| `revit_list_view_templates` | List the view templates of the document: id, name, view type, how many views use each (used_by) and how many view parameters it controls. | No | sync |
 | `revit_list_views_sheets_schedules` | List views, sheets, schedules and view templates in the active document, with filters, placement status and pagination. | No | sync |
 | `revit_make_family` | Make loadable Revit families from data (name, category, box size, pipe, duct or electrical ports) under an approved action: builds from a family template, saves the. | Yes | sync |
 | `revit_make_schedule` | Create a tagged schedule with requested fields, sorting and filters under an approved action. | Yes | sync |
 | `revit_make_sheet` | Create a tagged sheet and place supplied views under an approved action. | Yes | sync |
 | `revit_make_view` | Create a framed 3D, plan, section or elevation view under an approved action. | Yes | sync |
+| `revit_make_view_template` | Create a view template from the settings of an existing view and name it. | Yes | sync |
 | `revit_mep_check_elements` | Dry run of the category guard: say whether elements would be accepted for a pipe, duct or electrical system, and why not (wrong category, no connectors, wrong domain, wrong system, no free connector). | No | sync |
 | `revit_mep_circuit` | Make native electrical circuits (ElectricalSystem) from a list of placed elements and a panel. | Yes | sync |
 | `revit_mep_connect` | Join pairs of connectors that already touch (equipment to a pipe or duct end, or two pipe or duct ends) directly or with a union, transition or elbow, then list the open ends left. | Yes | sync |
+| `revit_mep_hanger_place` | Place a loaded hanger family at hanger positions: planned from a scope with the same rules as revit_mep_hanger_plan, or taken from its positions. | Yes | sync |
+| `revit_mep_hanger_plan` | Plan hanger positions along straight pipes, ducts and cable trays: spread at the maximum spacing of a rule you supplied (a rule needs a named source, otherwise 'no spacing rule'), no closer to fittings than a minimum distance, with the floor, beam or ceiling above each position and the rod length, or 'no support host'. | No | sync |
 | `revit_mep_route` | Run pipe or duct between connectors or points, or branch it off a trunk, with elbows, unions, transitions, takeoffs and tees. | Yes | sync |
+| `revit_place_views` | Place views on an existing sheet as viewports, on a grid, in one row or in one column, centred or aligned to the top left of each cell, inside the title block outline (or area_mm). | Yes | sync |
 | `revit_probe_family` | Inspect a family for category, nested instances, parameters, connectors and geometry. | No | sync |
+| `revit_recipe_delete` | Delete a saved recipe and any standing approval for it. | Yes | sync |
+| `revit_recipe_get` | Read one recipe: manifest, params schema, code, sha256, the approval it needs now and the plan_arguments to put in a plan action for revit_recipe_run. | No | sync |
+| `revit_recipe_list` | List the saved recipes and the built-in starters: id, version, title, mode, approval (per_run or standing), source, sha256 and parameter names. | No | sync |
+| `revit_recipe_run` | Run a saved recipe in Revit with checked parameters. | Yes | sync |
+| `revit_recipe_save` | Save a recipe: IronPython 2. | No | sync |
 | `revit_render_check` | Export a view to a workspace PNG and inspect its pixel content for a blank image. | No | sync |
 | `revit_review` | Run selected read-only Revit checks for an explicit scope and return FAIL, PASS or INCOMPLETE with evidence. | No | sync |
 | `revit_set_parameters` | Batch-set instance or type parameters of up to 500 elements from data: items pick elements by id, ids or a selector (category, name, level, tag) and give params {name: value} with explicit units (mm, m, deg, number, int, bool, text, elementid by name). | Yes | sync |
+| `revit_sheet_index` | Index of all sheets: number, name, title block, number of views and their names, schedules, current revision and all revisions shown. | No | sync |
+| `revit_sparing_export_spec` | Export the placement spec for the linked discipline models from this model's placed sparingen: per link instance the family and type, host id and category, location and direction in the link's own coordinates (inverse link transform), size and status, as JSON. | No | sync |
 | `revit_sparing_find` | Find where MEP runs (pipes, ducts, conduits, cable trays) pass through walls and floors, also in links, and suggest a sparing per crossing: MEP size plus clearance, rounded up, with host thickness, angle and any existing opening. | No | sync |
 | `revit_sparing_place` | Place sparingen at the crossings revit_sparing_find reports: a loaded sparing family or a native opening, sized, with an approval status. | Yes | sync |
+| `revit_sparing_place_spec` | Place sparingen in the ACTIVE document from a spec made by revit_sparing_export_spec. | Yes | sync |
+| `revit_sparing_status_get` | Read the approval status of each sparing (proposed, requested, approved, rejected, built): one row per sparing with family, level, host, discipline and the stored text. | No | sync |
+| `revit_sparing_status_set` | Set the approval status of sparingen, with a transition table: proposed > requested > approved or rejected, approved > built or rejected, rejected > proposed. | Yes | sync |
+| `revit_sparing_status_setup` | Create the shared parameter that holds the approval status and bind it to the sparing categories, or add categories to it. | Yes | sync |
+| `revit_sparing_status_summary` | Count sparingen by approval status and optionally by discipline, level, host category, family, tag or kind. | No | sync |
 | `revit_system_report` | Inspect scoped MEP elements for connector domains, system membership, connections, open ends and size differences. | No | sync |
+| `revit_update_sheets` | Bulk renumber and rename sheets from a table (number = the current number; new_number and/or new_name). | Yes | sync |
 | `revit_warnings_delta` | Track Revit warnings across a build phase. | No | sync |
 | `schedule_consistency_check_doors_and_rooms` | Check door and room schedules in a saved snapshot for duplicate or missing Marks, missing or identical From/To rooms, unnumbered or duplicate room numbers and zero-area rooms, and optionally Marks that do not fit a pattern you supply. | No | sync |
 | `selection_tools_group_convert_to_detail` | Convert a model group into a detail group. | Yes | sync |
