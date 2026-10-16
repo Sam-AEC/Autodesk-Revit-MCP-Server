@@ -1,4 +1,4 @@
-"""revit_list_view_templates, revit_apply_view_template, revit_make_view_template and revit_align_crop.
+"""revit_list_view_templates, revit_set_view_templates, revit_make_view_template and revit_align_crop.
 
 The embedded scripts run under CPython against tests/revit_docs_stub.py. This proves the control flow (refusals, one
 transaction per view, read-back, rollback, dry run, line protocol). It does NOT prove that Revit accepts the same calls:

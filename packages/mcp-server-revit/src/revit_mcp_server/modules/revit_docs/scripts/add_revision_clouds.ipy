@@ -112,7 +112,7 @@ def main():
     made = []
     for label, rect in rects:
         def work(rect=rect):
-            return RevisionCloud.Create(doc, view, rev, cloud_curves(rect, view))
+            return RevisionCloud.Create(doc, view, rev.Id, cloud_curves(rect, view))
 
         cloud = run.step("Add revision cloud around %s in view '%s'" % (label, view.Name), work, ids=[eid(view), eid(rev)])
         if cloud is not None:

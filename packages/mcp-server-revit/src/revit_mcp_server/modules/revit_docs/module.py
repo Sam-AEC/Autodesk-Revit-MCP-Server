@@ -1097,7 +1097,7 @@ class RevitDocsModule:
         approved_executor: Optional[ToolExecutor] = None,
         **_: Any,
     ) -> Dict[str, Any]:
-        tool = "revit_apply_view_template"
+        tool = "revit_set_view_templates"
         try:
             _check_args(self.apply_view_template, arguments)
             if (template in (None, "")) == (template_id is None):

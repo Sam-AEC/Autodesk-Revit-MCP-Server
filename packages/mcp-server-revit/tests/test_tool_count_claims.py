@@ -83,3 +83,22 @@ def test_translations_state_the_same_counts(counts: dict, path: Path) -> None:
     text = read(path)
     assert [int(n) for n in ROW_RE.findall(text)] == expected_table(counts)
     assert re.search(rf"(?<!\d){counts['tools']}(?!\d)", text)
+
+
+def test_no_two_providers_register_the_same_tool_name(tmp_path, monkeypatch) -> None:
+    # A module tool that reuses a native tool's name is shadowed: the call goes to the native tool (seen live with
+    # revit_apply_view_template).
+    import collections
+
+    monkeypatch.setenv("MCP_REVIT_MODE", "mock")
+    monkeypatch.setenv("MCP_REVIT_WORKSPACE_DIR", str(tmp_path))
+    monkeypatch.setenv("MCP_REVIT_ALLOWED_DIRECTORIES", str(tmp_path))
+    from revit_mcp_server.registry_factory import build_registry
+    from revit_mcp_server.security.workspace import WorkspaceMonitor
+
+    registry = build_registry(WorkspaceMonitor([tmp_path]))[0]
+    owners = collections.defaultdict(list)
+    for provider in registry.get_all_providers():
+        for tool in provider.get_capabilities():
+            owners[tool.name].append(provider.get_identity())
+    assert {k: v for k, v in owners.items() if len(v) > 1} == {}

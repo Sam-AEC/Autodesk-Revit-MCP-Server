@@ -335,9 +335,13 @@ class RevisionCloud(stub.Element):
         self.OwnerViewId, self.RevisionId, self.curves = view.Id, revision.Id, curves
 
     @staticmethod
-    def Create(document: Any, view: DView, revision: Revision, curves: Any) -> "RevisionCloud":
+    def Create(document: Any, view: DView, revision_id: Any, curves: Any) -> "RevisionCloud":
         w = world()
         w.maybe_fail("cloud")
+        # The real signature takes an ElementId; passing the Revision itself fails in Revit 2024.
+        revision = w.GetElement(revision_id)
+        if not isinstance(revision, Revision):
+            raise TypeError("expected ElementId, got %s" % type(revision_id).__name__)
         if revision.Issued:
             raise RuntimeError("Revision clouds cannot be added to an issued revision.")
         curves = list(curves)

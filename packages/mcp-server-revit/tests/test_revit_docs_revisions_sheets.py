@@ -49,7 +49,7 @@ def test_list_revisions_with_clouds_sheets_and_issue_state(env):
 
 def test_add_revision_reads_every_property_back(env):
     result = env.write("add_revision", description="Fire strategy update", date="2026-10-15", issued_by="SM", issued_to="Client", visibility="tag")
-    assert result["ok"] is True and result["verified"] is True, result
+    assert result["ok"] is True and result["verified"] is True, result.get("fails")
     rev = revisions(env)[-1]
     assert (rev.Description, rev.RevisionDate, rev.IssuedBy, rev.IssuedTo, rev.Visibility, rev.Issued) == ("Fire strategy update", "2026-10-15", "SM", "Client", "TagVisible", False)
     assert result["changed_ids"] == [rev.Id.Value] and result["rows"][0]["number"] == "3" and result["rows"][0]["sequence"] == 3
@@ -82,7 +82,7 @@ def test_one_cloud_around_elements_in_a_plan_view_lies_in_the_view_plane(env):
     view = plan(env, "L0 Plan")
     env.s.place(view, "A101")
     result = env.write("add_revision_clouds", revision_number="2", view=ref(view), element_ids=[a.Id.Value, b.Id.Value], margin_mm=100)
-    assert result["ok"] is True and result["verified"] is True, result
+    assert result["ok"] is True and result["verified"] is True, result.get("fails")
     (cloud,) = env.s.clouds()
     assert result["changed_ids"] == [cloud.Id.Value] and cloud.RevisionId.Value == env.s.rev2.Id.Value and cloud.OwnerViewId.Value == view.Id.Value
     xs = [p.X for c in cloud.curves for p in (c.p0, c.p1)]
@@ -174,7 +174,7 @@ def test_issue_revision_assigns_sheets_then_issues_and_reads_back(env):
     env.s.place(plan(env, "L0 Plan"), "A101")
     env.w.elements.append(ds.RevisionCloud(env.w.next_id(), plan(env, "L0 Plan"), env.s.rev2, []))
     result = env.write("issue_revision", revision_number="2", sheets=["A101", "A102", "A103"], issue=True, issued_by="SM", issued_to="Planning")
-    assert result["ok"] is True and result["verified"] is True, result
+    assert result["ok"] is True and result["verified"] is True, result.get("fails")
     rev = env.s.rev2
     assert rev.Issued is True and (rev.IssuedBy, rev.IssuedTo) == ("SM", "Planning")
     by = {r["sheet"]: r["status"] for r in result["rows"] if r["kind"] == "sheet"}
@@ -269,7 +269,7 @@ def test_update_sheets_renames_and_renumbers_and_reads_back(env):
         {"number": "A103", "new_number": "B103"},
         {"number": "A104", "new_name": "No title block"},
     ])
-    assert result["ok"] is True and result["verified"] is True, result
+    assert result["ok"] is True and result["verified"] is True, result.get("fails")
     s = env.s.sheets
     assert (s["A101"].SheetNumber, s["A101"].Name) == ("B101", "Floor plans")
     assert (s["A102"].SheetNumber, s["A102"].Name) == ("A102", "Sections and elevations")

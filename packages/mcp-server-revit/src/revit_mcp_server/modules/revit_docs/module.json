@@ -820,7 +820,7 @@
     {
       "id": "apply_view_template",
       "title": "Assign one view template, by name or id, to a list of views. A view that already has it is reported as unchanged and not touched; a view the template does not fit (wrong view type) fails with its id and Revit's reason. Never edits the template and never removes a template from a view. Returns previous and new template per view. Write tool: needs an approved plan; one transaction per view; every assignment is read back; rolls back on failure unless on_error is skip. List templates first with revit_list_view_templates.",
-      "mcp_tool": "revit_apply_view_template",
+      "mcp_tool": "revit_set_view_templates",
       "input_schema": {
         "type": "object",
         "properties": {

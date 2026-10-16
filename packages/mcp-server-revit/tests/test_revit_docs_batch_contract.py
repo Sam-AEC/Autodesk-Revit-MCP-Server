@@ -18,7 +18,7 @@ from test_revit_docs import approved, wire
 
 WRITE = {
     "revit_place_views": "place_views",
-    "revit_apply_view_template": "apply_view_template",
+    "revit_set_view_templates": "apply_view_template",
     "revit_make_view_template": "make_view_template",
     "revit_align_crop": "align_crop",
     "revit_add_revision": "add_revision",
@@ -33,7 +33,7 @@ READ = {
 }
 SAMPLE: Dict[str, Dict[str, Any]] = {
     "revit_place_views": {"sheet": "A101", "views": [{"view_id": 1}]},
-    "revit_apply_view_template": {"template": "T", "views": [{"view_id": 1}]},
+    "revit_set_view_templates": {"template": "T", "views": [{"view_id": 1}]},
     "revit_make_view_template": {"view": {"view_id": 1}, "name": "T"},
     "revit_align_crop": {"reference": {"view_id": 1}, "views": [{"view_id": 2}]},
     "revit_add_revision": {"description": "R"},
@@ -123,9 +123,9 @@ def test_a_misspelt_argument_is_refused_not_ignored(tool):
     ("revit_place_views", {"sheet": "A1", "views": [{"view_id": 1}], "layout": "row", "columns": 2}, "only goes with layout grid"),
     ("revit_place_views", {"sheet": "A1", "views": [{"view_id": 1}], "margin_mm": 900}, "between 0 and 300"),
     ("revit_place_views", {"sheet": "A1", "views": [{"view_id": 1}], "dry_run": "false"}, "true or false"),
-    ("revit_apply_view_template", {"views": [{"view_id": 1}]}, "exactly one of template"),
-    ("revit_apply_view_template", {"template": "T", "template_id": 4, "views": [{"view_id": 1}]}, "exactly one of template"),
-    ("revit_apply_view_template", {"template": "T", "views": [{"view_id": 0}]}, "positive"),
+    ("revit_set_view_templates", {"views": [{"view_id": 1}]}, "exactly one of template"),
+    ("revit_set_view_templates", {"template": "T", "template_id": 4, "views": [{"view_id": 1}]}, "exactly one of template"),
+    ("revit_set_view_templates", {"template": "T", "views": [{"view_id": 0}]}, "positive"),
     ("revit_make_view_template", {"view": {}, "name": "T"}, "exactly one"),
     ("revit_make_view_template", {"view": {"view_id": 1}, "name": "T:x"}, "does not allow"),
     ("revit_align_crop", {"reference": {"view_id": 1}, "views": [{"view_id": 2}], "align_crop_box": False}, "nothing to do"),
