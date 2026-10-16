@@ -35,7 +35,9 @@ from revit_mcp_server.security.workspace import WorkspaceMonitor  # noqa: E402
 from test_revit_mep_scripts import Env, build_scene, r_bend, r_straight, route_args  # noqa: E402
 
 WRITE_TOOLS = {
-    "revit_docs": ("revit_make_view", "revit_make_sheet", "revit_make_schedule", "revit_export"),
+    "revit_docs": ("revit_make_view", "revit_make_sheet", "revit_make_schedule", "revit_export", "revit_place_views",
+                   "revit_apply_view_template", "revit_make_view_template", "revit_align_crop", "revit_add_revision",
+                   "revit_add_revision_clouds", "revit_issue_revision", "revit_update_sheets"),
     "revit_family": ("revit_make_family",),
     "revit_mep": ("revit_mep_route", "revit_mep_connect", "revit_mep_circuit", "revit_mep_hanger_place"),
 }

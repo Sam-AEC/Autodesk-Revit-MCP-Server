@@ -1,0 +1,194 @@
+# revit_align_crop (write mode).
+# ARGS = {reference: {view_id | view_name}, views: [{view_id | view_name}], align_crop_box, annotation_crop, on_error, dry_run}
+# Makes the crop region of each plan view cover the same rectangle in model coordinates as the reference view's crop region,
+# switches the crop on, and optionally sets the annotation crop (keep | on | off | match_reference, which also copies the four
+# annotation offsets). Only rectangular crops are touched: a view whose crop has a custom shape, or whose plan is rotated
+# against the reference, fails with its id. The height range of each view's crop box (Min.Z / Max.Z) is kept.
+# Every view is its own transaction and every result is read back from the model.
+TOL = 0.5 / 304.8
+OFFSETS = ("LeftAnnotationCropOffset", "RightAnnotationCropOffset", "TopAnnotationCropOffset", "BottomAnnotationCropOffset")
+
+
+def is_plan(v):
+    return isinstance(v, ViewPlan) and not v.IsTemplate
+
+
+def model_rect(view):
+    """The crop box of a plan view as a rectangle in model coordinates: (x0, y0, x1, y1) of the 4 corners' bounding box."""
+    cb = view.CropBox
+    t = cb.Transform
+    pts = [t.OfPoint(XYZ(cb.Min.X, cb.Min.Y, cb.Min.Z)), t.OfPoint(XYZ(cb.Max.X, cb.Min.Y, cb.Min.Z)),
+           t.OfPoint(XYZ(cb.Max.X, cb.Max.Y, cb.Min.Z)), t.OfPoint(XYZ(cb.Min.X, cb.Max.Y, cb.Min.Z))]
+    xs = [p.X for p in pts]
+    ys = [p.Y for p in pts]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def dot(a, b):
+    return a.X * b.X + a.Y * b.Y + a.Z * b.Z
+
+
+def same_orientation(a, b):
+    ta = a.CropBox.Transform
+    tb = b.CropBox.Transform
+    return dot(ta.BasisX, tb.BasisX) > 1.0 - 1e-6 and dot(ta.BasisY, tb.BasisY) > 1.0 - 1e-6
+
+
+def shaped(view):
+    try:
+        return bool(view.GetCropRegionShapeManager().ShapeSet)
+    except Exception:
+        return False
+
+
+def annotation_active(view):
+    try:
+        return view.get_Parameter(BuiltInParameter.VIEWER_ANNOTATION_CROP_ACTIVE).AsInteger() == 1
+    except Exception:
+        return None
+
+
+def annotation_offsets(view):
+    m = view.GetCropRegionShapeManager()
+    return [float(getattr(m, n)) for n in OFFSETS]
+
+
+def offsets_close(a, b):
+    if a is None or b is None:
+        return a is b
+    for x, y in zip(a, b):
+        if abs(x - y) > TOL:
+            return False
+    return True
+
+
+def rect_close(a, b):
+    return abs(a[0] - b[0]) < TOL and abs(a[1] - b[1]) < TOL and abs(a[2] - b[2]) < TOL and abs(a[3] - b[3]) < TOL
+
+
+def main():
+    doc_meta()
+    align = bool(ARGS.get("align_crop_box"))
+    ann = ARGS.get("annotation_crop") or "keep"
+    ref, why = resolve_view(ARGS["reference"], "reference")
+    if ref is None:
+        refuse("view_not_found", why)
+        return
+    if not is_plan(ref):
+        refuse("view_not_plan", "reference %s is a %s; only plan views are aligned" % (vlabel(ref), view_type_text(ref)), [eid(ref)])
+        return
+    if shaped(ref):
+        refuse("crop_not_rectangular", "reference %s has a custom crop shape; only rectangular crops can be copied" % vlabel(ref), [eid(ref)])
+        return
+    if align and not ref.CropBoxActive:
+        refuse("reference_crop_off", "reference %s has its crop region switched off, so there is no crop box to copy" % vlabel(ref), [eid(ref)])
+        return
+    ref_rect = model_rect(ref)
+    ref_active = annotation_active(ref)
+    ref_offsets = None
+    if ann == "match_reference":
+        if ref_active is None:
+            refuse("annotation_crop_unreadable", "cannot read the annotation crop state of reference %s" % vlabel(ref), [eid(ref)])
+            return
+        if ref_active:
+            try:
+                ref_offsets = annotation_offsets(ref)
+            except Exception as ex:
+                refuse("annotation_crop_unreadable", "cannot read the annotation crop offsets of reference %s: %s" % (vlabel(ref), ex), [eid(ref)])
+                return
+
+    views = []
+    seen = {}
+    for i, spec in enumerate(ARGS.get("views") or []):
+        v, why = resolve_view(spec, "views[%d]" % i)
+        if v is None:
+            refuse("view_not_found", why)
+            return
+        if not is_plan(v):
+            refuse("view_not_plan", "%s is a %s; only plan views are aligned" % (vlabel(v), view_type_text(v)), [eid(v)])
+            return
+        if eid(v) == eid(ref) or eid(v) in seen:
+            continue
+        seen[eid(v)] = 1
+        views.append(v)
+    if not views:
+        refuse("invalid_input", "views holds nothing but the reference view itself")
+        return
+
+    want_active = None
+    if ann == "on":
+        want_active = True
+    elif ann == "off":
+        want_active = False
+    elif ann == "match_reference":
+        want_active = bool(ref_active)
+
+    run = Runner("AEC align crop", ARGS.get("on_error"))
+    status = {}
+    moved = {}
+    for v in views:
+        cur = model_rect(v)
+        changes_box = align and (not v.CropBoxActive or not rect_close(cur, ref_rect))
+        changes_ann = want_active is not None and (annotation_active(v) != want_active or (ref_offsets is not None and not offsets_close(annotation_offsets(v), ref_offsets)))
+        if not changes_box and not changes_ann:
+            status[eid(v)] = "unchanged"
+            continue
+        moved[eid(v)] = (((ref_rect[0] + ref_rect[2]) - (cur[0] + cur[2])) / 2.0 * MM_PER_FT, ((ref_rect[1] + ref_rect[3]) - (cur[1] + cur[3])) / 2.0 * MM_PER_FT)
+
+        def work(v=v, changes_box=changes_box):
+            if changes_box:
+                if shaped(v):
+                    raise StepError("%s has a custom crop shape; remove the shape first (only rectangular crops are aligned)" % vlabel(v), [eid(v)])
+                if not same_orientation(ref, v):
+                    raise StepError("%s is rotated against the reference view, so the same rectangle cannot be a crop box of it" % vlabel(v), [eid(v)])
+                v.CropBoxActive = True
+                cb = v.CropBox
+                inv = cb.Transform.Inverse
+                a = inv.OfPoint(XYZ(ref_rect[0], ref_rect[1], cb.Transform.Origin.Z))
+                b = inv.OfPoint(XYZ(ref_rect[2], ref_rect[3], cb.Transform.Origin.Z))
+                nb = BoundingBoxXYZ()
+                nb.Transform = cb.Transform
+                nb.Min = XYZ(min(a.X, b.X), min(a.Y, b.Y), cb.Min.Z)
+                nb.Max = XYZ(max(a.X, b.X), max(a.Y, b.Y), cb.Max.Z)
+                v.CropBox = nb
+            if want_active is not None:
+                p = v.get_Parameter(BuiltInParameter.VIEWER_ANNOTATION_CROP_ACTIVE)
+                if p is None or p.IsReadOnly:
+                    raise StepError("%s: the annotation crop parameter is missing or read-only (a view template may control it)" % vlabel(v), [eid(v)])
+                if not p.Set(1 if want_active else 0):
+                    raise StepError("%s: Revit refused to set the annotation crop" % vlabel(v), [eid(v)])
+                if want_active and ref_offsets is not None:
+                    m = v.GetCropRegionShapeManager()
+                    for n, val in zip(OFFSETS, ref_offsets):
+                        setattr(m, n, val)
+            return v
+
+        done = run.step("Align crop of view '%s' to '%s'" % (v.Name, ref.Name), work, ids=[eid(v)])
+        if done is not None:
+            status[eid(v)] = "aligned"
+
+    aligned = 0
+    for v in views:
+        st = status.get(eid(v))
+        if st is None:
+            continue
+        got = get_by_id(eid(v))
+        if align:
+            now = model_rect(got)
+            post("crop_matches_reference", got.CropBoxActive and rect_close(now, ref_rect),
+                 "view %s crop is [%.1f, %.1f, %.1f, %.1f] mm from the reference corners, crop active = %s" % (
+                     vlabel(v), (now[0] - ref_rect[0]) * MM_PER_FT, (now[1] - ref_rect[1]) * MM_PER_FT, (now[2] - ref_rect[2]) * MM_PER_FT, (now[3] - ref_rect[3]) * MM_PER_FT, got.CropBoxActive))
+        if want_active is not None:
+            post("annotation_crop", annotation_active(got) == want_active, "view %s annotation crop active = %s (expected %s)" % (vlabel(v), annotation_active(got), want_active))
+            if want_active and ref_offsets is not None:
+                post("annotation_offsets", offsets_close(annotation_offsets(got), ref_offsets), "view %s offsets %s (expected %s)" % (vlabel(v), annotation_offsets(got), ref_offsets))
+        if st == "aligned":
+            aligned += 1
+            run.changed.append(eid(v))
+        mv = moved.get(eid(v), (0.0, 0.0))
+        item([("kind", "view"), ("id", eid(v)), ("name", v.Name), ("status", st), ("shift_x_mm", round(mv[0], 1)), ("shift_y_mm", round(mv[1], 1)),
+              ("annotation_crop", "" if annotation_active(got) is None else (1 if annotation_active(got) else 0))])
+    summary("aligned the crop of %d of %d plan views to '%s' (%d already matched)" % (aligned, len(views), ref.Name, len([1 for v in views if status.get(eid(v)) == "unchanged"])))
+
+
+__output__ = run_write(main)

@@ -1,0 +1,50 @@
+# revit_make_view_template (write mode, one template per call).
+# ARGS = {view: {view_id | view_name}, name, assign_to_view, dry_run}
+# Creates a view template from the settings of an existing view (View.CreateViewTemplate) and names it. A template that
+# already has the name is never replaced or touched: the call is refused. With assign_to_view the source view gets the new
+# template assigned afterwards.
+
+
+def main():
+    doc_meta()
+    name = ARGS["name"]
+    src, why = resolve_view(ARGS["view"], "view")
+    if src is None:
+        refuse("view_not_found", why)
+        return
+    if src.IsTemplate or isinstance(src, ViewSheet):
+        refuse("view_not_found", "%s is a %s; pick a normal view" % (vlabel(src), "view template" if src.IsTemplate else "sheet"), [eid(src)])
+        return
+    for t in FilteredElementCollector(doc).OfClass(View):
+        if t.IsTemplate and t.Name == name:
+            refuse("name_conflict", "a view template named '%s' already exists (id %d); it was left untouched. Choose another name." % (name, eid(t)), [eid(t)])
+            return
+
+    run = Runner("AEC make view template", "abort")
+
+    def work():
+        tpl = src.CreateViewTemplate()
+        tpl.Name = name
+        if ARGS.get("assign_to_view"):
+            src.ViewTemplateId = tpl.Id
+        return tpl
+
+    tpl = run.step("Make view template '%s' from view '%s'" % (name, src.Name), work, ids=[eid(src)])
+    if tpl is None:
+        return
+    tid = eid(tpl)
+    run.changed.append(tid)
+    got = get_by_id(tid)
+    post("template_exists", got is not None, "view template id %d" % tid)
+    if got is not None:
+        post("is_template", bool(got.IsTemplate), "IsTemplate = %s" % got.IsTemplate)
+        post("template_name", got.Name == name, "'%s' (expected '%s')" % (got.Name, name))
+        post("template_view_type", view_type_text(got) == view_type_text(src), "template type %s, source view type %s" % (view_type_text(got), view_type_text(src)))
+        if ARGS.get("assign_to_view"):
+            back = get_by_id(eid(src))
+            post("source_assigned", back is not None and eid(back.ViewTemplateId) == tid, "source view template id %s" % (eid(back.ViewTemplateId) if back is not None else "?"))
+        item([("kind", "template"), ("id", tid), ("name", got.Name), ("view_type", view_type_text(got)), ("source_view_id", eid(src)), ("assigned_to_source", 1 if ARGS.get("assign_to_view") else 0), ("status", "created")])
+    summary("view template '%s' created from view '%s' (id %d)%s" % (name, src.Name, tid, ", assigned to that view" if ARGS.get("assign_to_view") else ""))
+
+
+__output__ = run_write(main)

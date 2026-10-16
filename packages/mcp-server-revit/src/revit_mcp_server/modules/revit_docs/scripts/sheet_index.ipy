@@ -1,0 +1,99 @@
+# revit_sheet_index (read only).
+# ARGS = {name_contains, only_findings}
+# One ROW per sheet: id, number, name, titleblock, views (viewports), view_names, schedules, revision (current revision number
+# text and description as Revit shows them in the title block), revisions (numbers of all revisions shown on the sheet), empty
+# (1 when the sheet holds no view and no schedule), findings. FAIL lines: DUPLICATE_SHEET_NUMBER (exact), EMPTY_SHEET.
+# INFO lines: NEAR_DUPLICATE_SHEET_NUMBER (same number apart from case or spaces), NO_TITLE_BLOCK, PLACEHOLDER_SHEET.
+
+
+def placeholder(s):
+    try:
+        return bool(s.IsPlaceholder)
+    except Exception:
+        return False
+
+
+def main():
+    doc_meta()
+    needle = (ARGS.get("name_contains") or "").lower()
+    only_findings = bool(ARGS.get("only_findings"))
+    names_on = {}
+    for vp in FilteredElementCollector(doc).OfClass(Viewport):
+        v = doc.GetElement(vp.ViewId)
+        names_on.setdefault(eid(vp.SheetId), []).append(v.Name if v is not None else "(missing view %d)" % eid(vp.ViewId))
+    schedules_on = {}
+    for si in FilteredElementCollector(doc).OfClass(ScheduleSheetInstance):
+        try:
+            if si.IsTitleblockRevisionSchedule:
+                continue
+        except Exception:
+            pass
+        schedules_on[eid(si.OwnerViewId)] = schedules_on.get(eid(si.OwnerViewId), 0) + 1
+    titleblock_of = {}
+    for tb in FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_TitleBlocks).WhereElementIsNotElementType():
+        try:
+            sym = tb.Symbol
+            titleblock_of[eid(tb.OwnerViewId)] = "%s : %s" % (sym.FamilyName, ename(sym))
+        except Exception:
+            pass
+    revisions = [(eid(r), r.RevisionNumber) for r in all_revisions()]
+
+    sheets = []
+    for s in FilteredElementCollector(doc).OfClass(ViewSheet):
+        sheets.append(s)
+    sheets.sort(key=lambda s: (s.SheetNumber.lower(), eid(s)))
+    by_number = {}
+    by_loose = {}
+    for s in sheets:
+        by_number.setdefault(s.SheetNumber, []).append(s)
+        by_loose.setdefault(s.SheetNumber.strip().lower(), []).append(s)
+
+    n_empty = 0
+    n_dup = 0
+    shown = 0
+    for number in sorted(by_number):
+        if len(by_number[number]) > 1:
+            n_dup += 1
+            fail("DUPLICATE_SHEET_NUMBER", "sheet number '%s' is used by %d sheets (ids %s)" % (number, len(by_number[number]), ",".join([str(eid(s)) for s in by_number[number]])))
+    for key in sorted(by_loose):
+        numbers = set([s.SheetNumber for s in by_loose[key]])
+        if len(numbers) > 1:
+            info("NEAR_DUPLICATE_SHEET_NUMBER", "sheet numbers %s differ only by case or spaces (ids %s)" % (", ".join(["'%s'" % n for n in sorted(numbers)]), ",".join([str(eid(s)) for s in by_loose[key]])))
+    for s in sheets:
+        sid = eid(s)
+        views = names_on.get(sid, [])
+        n_sched = schedules_on.get(sid, 0)
+        is_empty = not views and not n_sched and not placeholder(s)
+        findings = []
+        if len(by_number[s.SheetNumber]) > 1:
+            findings.append("duplicate_number")
+        if is_empty:
+            n_empty += 1
+            findings.append("empty")
+            fail("EMPTY_SHEET", "sheet %s '%s' (id %d) holds no view and no schedule" % (s.SheetNumber, s.Name, sid))
+        if placeholder(s):
+            info("PLACEHOLDER_SHEET", "sheet %s '%s' (id %d) is a placeholder sheet" % (s.SheetNumber, s.Name, sid))
+        elif sid not in titleblock_of:
+            findings.append("no_title_block")
+            info("NO_TITLE_BLOCK", "sheet %s '%s' (id %d) has no title block" % (s.SheetNumber, s.Name, sid))
+        if needle and needle not in s.Name.lower() and needle not in s.SheetNumber.lower():
+            continue
+        if only_findings and not findings:
+            continue
+        shown += 1
+        on_sheet = revision_ids_on(s)
+        nums = [number for rid, number in revisions if rid in on_sheet]
+        row([
+            ("kind", "sheet"), ("id", sid), ("number", s.SheetNumber), ("name", s.Name), ("titleblock", titleblock_of.get(sid, "")),
+            ("views", len(views)), ("view_names", " | ".join(views)), ("schedules", n_sched),
+            ("revision", param_text(s, BuiltInParameter.SHEET_CURRENT_REVISION)),
+            ("revision_description", param_text(s, BuiltInParameter.SHEET_CURRENT_REVISION_DESCRIPTION)),
+            ("revisions", ",".join(nums)), ("empty", 1 if is_empty else 0), ("findings", ",".join(findings)),
+        ])
+    meta("n_sheets", len(sheets))
+    meta("n_empty", n_empty)
+    meta("n_duplicate_numbers", n_dup)
+    summary("%d sheets: %d empty, %d duplicate numbers; %d rows match" % (len(sheets), n_empty, n_dup, shown))
+
+
+__output__ = run_main(main)

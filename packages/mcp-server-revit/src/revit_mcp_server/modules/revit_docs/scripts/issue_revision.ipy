@@ -1,0 +1,84 @@
+# revit_issue_revision (write mode).
+# ARGS = {revision_id, revision_number, sheets: [sheet numbers], issue, issued_by, issued_to, on_error, dry_run}
+# 1. Adds the revision to each listed sheet's "revisions on sheet" (a sheet that already shows it, through a cloud or an
+#    earlier assignment, is reported as unchanged and not touched). 2. With issue true, sets issued_by / issued_to when given
+#    and marks the revision as issued: Revit then locks the revision and its clouds. Sheets are assigned before the revision
+#    is issued. Nothing is removed from any sheet. Each sheet and the issue step are their own transactions.
+
+
+def main():
+    doc_meta()
+    rev, why = resolve_revision(ARGS.get("revision_id"), ARGS.get("revision_number"))
+    if rev is None:
+        refuse("revision_not_found", why)
+        return
+    rid = eid(rev)
+    sheets = []
+    for number in ARGS.get("sheets") or []:
+        hits = sheets_by_number(number)
+        if len(hits) != 1:
+            refuse("sheet_not_found", "%d sheets have the number '%s' (revit_sheet_index lists the sheets)" % (len(hits), number))
+            return
+        if hits[0] not in sheets:
+            sheets.append(hits[0])
+    issue = bool(ARGS.get("issue"))
+    if issue and rev.Issued:
+        info("ALREADY_ISSUED", "revision %s (id %d) is already issued; nothing to issue" % (rev.RevisionNumber, rid))
+
+    run = Runner("AEC issue revision", ARGS.get("on_error"))
+    status = {}
+    for s in sheets:
+        sid = eid(s)
+        if rid in additional_revision_ids(s) or rid in revision_ids_on(s):
+            status[sid] = "unchanged"
+            continue
+
+        def assign(s=s):
+            ids = List[ElementId]()
+            for i in s.GetAdditionalRevisionIds():
+                ids.Add(i)
+            ids.Add(rev.Id)
+            s.SetAdditionalRevisionIds(ids)
+            return s
+
+        if run.step("Add revision %s to sheet %s" % (rev.RevisionNumber, s.SheetNumber), assign, ids=[sid, rid]) is not None:
+            status[sid] = "assigned"
+
+    issued_now = False
+    if issue and not rev.Issued:
+        def do_issue():
+            if ARGS.get("issued_by") is not None:
+                rev.IssuedBy = ARGS["issued_by"]
+            if ARGS.get("issued_to") is not None:
+                rev.IssuedTo = ARGS["issued_to"]
+            rev.Issued = True
+            return rev
+
+        if run.step("Issue revision %s" % rev.RevisionNumber, do_issue, ids=[rid]) is not None:
+            issued_now = True
+
+    for s in sheets:
+        st = status.get(eid(s))
+        if st is None:
+            continue
+        got = get_by_id(eid(s))
+        shown = got is not None and rid in revision_ids_on(got)
+        post("revision_on_sheet", shown, "sheet %s %s revision %s" % (s.SheetNumber, "shows" if shown else "does NOT show", rev.RevisionNumber))
+        if st == "assigned":
+            run.changed.append(eid(s))
+        item([("kind", "sheet"), ("id", eid(s)), ("name", s.Name), ("sheet", s.SheetNumber), ("revision_id", rid), ("status", st)])
+    got = get_by_id(rid)
+    if issue:
+        post("revision_issued", got is not None and bool(got.Issued), "revision %s Issued = %s" % (rev.RevisionNumber, got.Issued if got is not None else "?"))
+        if ARGS.get("issued_by") is not None and issued_now:
+            post("issued_by", got.IssuedBy == ARGS["issued_by"], "'%s'" % got.IssuedBy)
+        if ARGS.get("issued_to") is not None and issued_now:
+            post("issued_to", got.IssuedTo == ARGS["issued_to"], "'%s'" % got.IssuedTo)
+        if issued_now:
+            run.changed.append(rid)
+        item([("kind", "revision"), ("id", rid), ("name", rev.Description), ("number", rev.RevisionNumber), ("status", "issued" if issued_now else "unchanged")])
+    assigned = len([1 for s in sheets if status.get(eid(s)) == "assigned"])
+    summary("revision %s: %d of %d sheets assigned%s" % (rev.RevisionNumber, assigned, len(sheets), (", issued" if issued_now else (", already issued" if issue else ""))))
+
+
+__output__ = run_write(main)

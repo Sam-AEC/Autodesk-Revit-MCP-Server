@@ -1,0 +1,56 @@
+# revit_add_revision (write mode, one revision per call).
+# ARGS = {description, date, issued_by, issued_to, visibility: cloud_and_tag|tag|hidden, dry_run}
+# Adds a new revision at the end of the revision sequence. Existing revisions are never changed. A revision with the same
+# description and date is refused, so repeating a call cannot add the same revision twice. Every property is read back.
+VISIBILITY = {"cloud_and_tag": "CloudAndTagVisible", "tag": "TagVisible", "hidden": "Hidden"}
+
+
+def main():
+    doc_meta()
+    desc = ARGS["description"]
+    date = ARGS.get("date")
+    for r in all_revisions():
+        if r.Description == desc and (date is None or r.RevisionDate == date):
+            refuse("revision_exists", "revision %s (id %d) already has the description '%s'%s; it was left untouched" % (r.RevisionNumber, eid(r), desc, (" and date '%s'" % date) if date is not None else ""), [eid(r)])
+            return
+    before = len(all_revisions())
+    run = Runner("AEC add revision", "abort")
+
+    def work():
+        r = Revision.Create(doc)
+        r.Description = desc
+        if date is not None:
+            r.RevisionDate = date
+        if ARGS.get("issued_by") is not None:
+            r.IssuedBy = ARGS["issued_by"]
+        if ARGS.get("issued_to") is not None:
+            r.IssuedTo = ARGS["issued_to"]
+        if ARGS.get("visibility"):
+            r.Visibility = getattr(RevisionVisibility, VISIBILITY[ARGS["visibility"]])
+        return r
+
+    rev = run.step("Add revision '%s'" % desc, work)
+    if rev is None:
+        return
+    rid = eid(rev)
+    run.changed.append(rid)
+    got = get_by_id(rid)
+    post("revision_exists", got is not None and isinstance(got, Revision), "revision id %d" % rid)
+    if got is not None:
+        post("description", got.Description == desc, "'%s' (expected '%s')" % (got.Description, desc))
+        if date is not None:
+            post("date", got.RevisionDate == date, "'%s' (expected '%s')" % (got.RevisionDate, date))
+        if ARGS.get("issued_by") is not None:
+            post("issued_by", got.IssuedBy == ARGS["issued_by"], "'%s'" % got.IssuedBy)
+        if ARGS.get("issued_to") is not None:
+            post("issued_to", got.IssuedTo == ARGS["issued_to"], "'%s'" % got.IssuedTo)
+        if ARGS.get("visibility"):
+            post("visibility", str(got.Visibility) == VISIBILITY[ARGS["visibility"]], "%s" % got.Visibility)
+        post("not_issued", not got.Issued, "Issued = %s" % got.Issued)
+        post("revision_count", len(all_revisions()) == before + 1, "%d revisions (was %d)" % (len(all_revisions()), before))
+        item([("kind", "revision"), ("id", rid), ("sequence", got.SequenceNumber), ("number", got.RevisionNumber), ("name", got.Description),
+              ("date", got.RevisionDate), ("visibility", str(got.Visibility)), ("status", "created")])
+    summary("revision %s '%s' added (id %d)" % (got.RevisionNumber if got is not None else "?", desc, rid))
+
+
+__output__ = run_write(main)
