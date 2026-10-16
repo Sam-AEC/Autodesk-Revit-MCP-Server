@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "about": "Maximum hanger spacing used by revit_mep_hanger_plan and revit_mep_hanger_place. This table is shipped empty on purpose: the bridge does not know any standard and gives no engineering values. Add one rule per kind, material and size range, copy the numbers from the standard or supplier table your project follows, and name that table in 'source'. A rule without a 'source' text is never used. A rule with example true is never used either.",
+  "disclaimer": "Layout aid only, not an engineering calculation. The spacing comes from the table you filled in; the tool does not check any code, load, support or structural capacity.",
+  "fields": {
+    "id": "your name for the rule",
+    "kind": "pipe, duct or cabletray",
+    "material": "free text, compared without case with the material argument of the call; leave empty to match any material",
+    "size_min_mm": "smallest nominal diameter (pipe, round duct) or width (rectangular duct, cable tray) the rule covers, millimetres",
+    "size_max_mm": "largest size the rule covers, millimetres",
+    "max_spacing_mm": "largest distance between two hangers on a straight run, millimetres",
+    "min_fitting_distance_mm": "optional: nearest a hanger may be to a fitting, millimetres (the call can override it)",
+    "source": "required: the standard, supplier table or project document the numbers come from, with clause or page",
+    "example": "true marks a row that only shows the layout; it is never used"
+  },
+  "rules": [
+    {
+      "id": "example-row",
+      "example": true,
+      "kind": "pipe",
+      "material": "example material",
+      "size_min_mm": 15,
+      "size_max_mm": 25,
+      "max_spacing_mm": null,
+      "min_fitting_distance_mm": null,
+      "source": "",
+      "note": "EXAMPLE ONLY. Copy this row, fill in your own numbers and a real source, and set example to false (or delete the flag)."
+    }
+  ]
+}
