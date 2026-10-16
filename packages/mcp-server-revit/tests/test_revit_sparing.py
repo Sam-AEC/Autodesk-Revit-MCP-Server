@@ -46,8 +46,8 @@ PLACE_OK = (
     "ROW\trow_type=item\tkind=sparing\tid=5001\tcrossing_id=301x101\taction=created\tmode=family\thost_id=101\tw_mm=160\th_mm=160\td_mm=200\tstatus=Voorstel\n"
     "COUNT\tfail\t0"
 )
-MUTATING = ("revit_sparing_place", "revit_sparing_status_set", "revit_sparing_status_setup")
-READ_ONLY = ("revit_sparing_find", "revit_sparing_status_get", "revit_sparing_status_summary")
+MUTATING = ("revit_sparing_place", "revit_sparing_status_set", "revit_sparing_status_setup", "revit_sparing_place_spec")
+READ_ONLY = ("revit_sparing_find", "revit_sparing_status_get", "revit_sparing_status_summary", "revit_sparing_export_spec")
 PLACE_ARGS: Dict[str, Any] = {"tag": "SPA-L00", "mode": "family", "family_name": "Sparing", "type_name": "Standaard",
                               "size_parameters": {"width": "b", "height": "h", "depth": "d"}}
 FIND_ARGS: Dict[str, Any] = {"categories": ["pipes"], "level": "00"}
@@ -194,7 +194,7 @@ def test_scripts_are_python27_safe_and_find_stays_read_only():
     scripts = sorted(sp.SCRIPT_DIR.glob("*.ipy"))
     assert {p.name for p in scripts} == {
         "_sparing_detect.ipy", "_sparing_place_lib.ipy", "_sparing_status.ipy", "find.ipy", "place.ipy", "status_get.ipy", "status_set.ipy",
-        "status_setup.ipy",
+        "status_setup.ipy", "export_spec.ipy", "place_spec.ipy",
     }
     assert set(sp.SCRIPTS) == {p.name for p in scripts if not p.name.startswith("_")}
     for path in scripts:

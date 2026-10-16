@@ -2,16 +2,44 @@
 revit_sparing module - sparingen (openings where MEP passes through walls and floors) for a live Revit session.
 
 Dutch contractor BIM teams model every penetration as a sparing: an opening family or a native opening with an
-approval status, later copied into the discipline models (BIM Loket "Workflow sparingscoordinatie"). This module is
-the first slice of that workflow.
+approval status, later copied into the discipline models (BIM Loket "Workflow sparingscoordinatie"). This module covers
+that workflow.
 
 Commands (the MCP tool name is the ``mcp_tool`` of the command in module.json):
-  find    read-only  where do ducts, pipes, conduits and cable trays cross walls, floors (and optionally roofs and
-                     structural framing), in the active model and optionally in linked models; per crossing the size
-                     of the MEP element, the host thickness, the passage angle, whether an opening is already there,
-                     and a suggested sparing size (MEP size + clearance per side, rounded up)
-  place     WRITE    place sparings at those crossings: an existing loaded sparing family ('family') or a native
-                     opening ('opening'), sized, tagged and given an approval status
+  find            read-only  where do ducts, pipes, conduits and cable trays cross walls, floors (and optionally roofs and
+                             structural framing), in the active model and optionally in linked models; per crossing the size
+                             of the MEP element, the host thickness, the passage angle, whether an opening is already there,
+                             and a suggested sparing size (MEP size + clearance per side, rounded up)
+  place           WRITE      place sparings at those crossings: an existing loaded sparing family ('family') or a native
+                             opening ('opening'), sized, tagged and given a status
+  status_get      read-only  the approval status of each sparing, with discipline, level and host
+  status_summary  read-only  counts grouped by status, discipline, level, host category, family, tag or kind
+  status_set      WRITE      move sparings along the status table; the whole call is refused on an illegal move
+  status_setup    WRITE      create the status parameter (shared parameter) and bind it; the documented, approval-gated step
+  export_spec     read-only  the placement spec (JSON) for the linked discipline models, in the links' own coordinates
+  place_spec      WRITE      place sparings in the ACTIVE document from such a spec (idempotent, dry_run)
+
+Approval status. Each sparing carries one text instance parameter (default name 'Sparing status'). The five statuses are
+proposed, requested, approved, rejected, built, stored as Voorstel, Aangevraagd, Akkoord, Afgewezen, Gebouwd (replaceable
+per call with status_labels). Allowed moves: proposed > requested; requested > approved or rejected; approved > built or
+rejected; rejected > proposed; built is final; an empty status can only become proposed. status_set checks every target
+first and refuses the whole call, changing nothing, for an illegal move, a stored text that is none of the labels, or a
+sparing without a writable text parameter; then it sets each value in its own transaction and reads it back. If the
+parameter does not exist the read tools report it (status no_parameter, a 'setup' note in the result) and nothing is
+created. Creating it is a separate, documented step that only runs when someone approves a plan for status_setup: it adds
+a definition to the shared parameter file (a rollback cannot undo that file write) and binds it as an instance parameter
+to the chosen categories (default Generic Models); dry_run writes nothing. Not tracked: who changed a status and when.
+
+Copying to the discipline models. The host model's sparingen are placed against hosts that often live in links (the
+architect's walls, the structural floors). export_spec groups the host model's sparingen by the link that holds their host
+(read from the crossing id the sparing carries, for example 340xL700.101 = pipe 340 through wall 101 of link instance 700)
+and turns each location and direction into that link's own internal coordinates with the inverse of
+RevitLinkInstance.GetTotalTransform. place_spec places them from such a spec. The bridge works on the ACTIVE document
+only, so writing into a discipline model needs that model to be the active document when place_spec runs: open it, make it
+active, call the tool. place_spec compares the active document with the one the spec was made for (creation GUID, or title
+with a workshared user suffix) and refuses on a mismatch unless skip_document_check is set. Hosts are found by element id
+in the active document; a missing host refuses the call (on_error=skip places the rest). Sparings are tagged like
+revit_sparing_place, so a re-run with the same tag replaces only what it made.
 
 How it works: the same seam as ``revit_docs`` and ``revit_mep`` (read their module.py headers). Each command builds an
 IronPython 2.7 script from the revit module's ``_prelude.ipy`` (line protocol), for ``place`` also the revit_docs
@@ -42,15 +70,23 @@ Safety of the write command (same rules as revit_docs):
   * results carry ``changed_ids``, ``post_check`` (each sparing re-read: exists, tag, size, status, position) and
     ``verified``, and are never ``ok: true`` when a post-check fails.
 
-Follow-ups (not built yet): the approval flow (status Voorstel -> Akkoord/Afgewezen, by whom, when), copying approved
-sparingen into the discipline models (constructie / architectuur), an IFC or BCF hand-off of the proposals, sparing
-families per shape (round core drill vs rectangular), bundling several runs into one sparing, sloped floors and roofs
-(the frame assumes a horizontal floor), curved MEP runs and curved walls in the native opening mode.
+Follow-ups (not built yet): who and when for each status change (an audit trail), an IFC or BCF hand-off of the
+proposals, sparing families per shape (round core drill vs rectangular), bundling several runs into one sparing, sloped
+floors and roofs (the frame assumes a horizontal floor), curved MEP runs and curved walls in the native opening mode,
+exporting specs for sparingen whose hosts are in this model (copy to a second host model) and syncing status back from the
+discipline model.
 
 UNVERIFIED: nothing here has run against a live Revit. The scripts are syntax-checked and exercised against a stub of
 the Revit API (tests/revit_sparing_stub.py on top of revit_api_stub.py and revit_mep_stub.py), which proves the
 control flow, the arithmetic, the budgets, ownership/replace rules, rollback and the line protocol, not that Revit
-accepts the calls. Specifically unproven in a live model: Solid.IntersectWithCurve on wall and floor solids,
+accepts the calls. Also unproven for the status and spec tools: LookupParameter and Parameter.Set on text parameters of family instances and
+openings, doc.ParameterBindings iteration, Insert and ReInsert with a ForgeTypeId group (GroupTypeId.IdentityData),
+Application.OpenSharedParameterFile, ExternalDefinitionCreationOptions with SpecTypeId.String.Text, writing the shared
+parameter file, CategorySet and InstanceBinding creation, Category.AllowsBoundParameters, reading FamilyInstance.Host and
+Symbol.Family, Document.CreationGUID of a workshared local copy against its central model, RevitLinkInstance link
+transforms (BasisX, Origin, Inverse) on a rotated link, Wall.Orientation of linked walls, and the face-based placement
+against a host face picked from the exported position in the discipline model.
+Specifically unproven in a live model: Solid.IntersectWithCurve on wall and floor solids,
 SolidUtils.CreateTransformed and RevitLinkInstance.GetTotalTransform for links, BoundingBoxIntersectsFilter outlines
 in link coordinates, the size and insulation parameters read per category, connector BasisX as the duct width axis,
 Opening bounding boxes, BasePoint.GetProjectBasePoint for project coordinates, the three NewFamilyInstance overloads
@@ -71,8 +107,11 @@ from revit_mcp_server.check_contract import (
     ScriptOutput,
     assemble_result,
     error_result,
+    is_safe_name,
+    load_json,
     mock_result,
     parse_script_output,
+    save_json,
 )
 
 MODULE_DIR = Path(__file__).resolve().parent
@@ -90,6 +129,7 @@ ToolExecutor = Callable[[str, Dict[str, Any]], Any]
 # script name -> write script?
 SCRIPTS: Dict[str, bool] = {
     "find.ipy": False, "place.ipy": True, "status_get.ipy": False, "status_set.ipy": True, "status_setup.ipy": True,
+    "export_spec.ipy": False, "place_spec.ipy": True,
 }
 # Shared source files loaded between the preludes and ARGS, per script (order matters). Every file holds definitions only.
 STATUS_LIB = "_sparing_status.ipy"
@@ -100,9 +140,11 @@ SCRIPT_PARTS: Dict[str, Tuple[str, ...]] = {
     "status_get.ipy": (STATUS_LIB,),
     "status_set.ipy": (STATUS_LIB,),
     "status_setup.ipy": (STATUS_LIB,),
+    "export_spec.ipy": (DETECT, STATUS_LIB),
+    "place_spec.ipy": (DETECT, STATUS_LIB, PLACE_LIB),
 }
 # Scripts that read Extensible Storage tags even though they do not write.
-READS_TAGS = ("status_get.ipy",)
+READS_TAGS = ("status_get.ipy", "export_spec.ipy")
 
 MEP_CATEGORIES = ("pipes", "ducts", "conduits", "cabletrays")
 HOST_CATEGORIES = ("walls", "floors", "roofs", "structuralframing")
@@ -766,6 +808,169 @@ def _setup_categories(value: Any) -> List[str]:
 
 
 # --------------------------------------------------------------------------- #
+# Spec helpers (revit_sparing_export_spec / revit_sparing_place_spec)
+# --------------------------------------------------------------------------- #
+SPEC_VERSION = 1
+ACTIVE_DOCUMENT_NOTE = (
+    "revit_sparing_place_spec writes into the ACTIVE document only. To place these sparingen in a discipline model, open that "
+    "model, make it the active document, then call it. The bridge cannot write into a different open document."
+)
+
+
+def _float_or_none(value: Any) -> Optional[float]:
+    try:
+        return float(value) if str(value).strip() != "" else None
+    except ValueError:
+        return None
+
+
+def _int_or_none(value: Any) -> Optional[int]:
+    try:
+        return int(str(value)) if str(value).strip() != "" else None
+    except ValueError:
+        return None
+
+
+def build_spec(parsed: ScriptOutput, labels: Dict[str, str], size_parameters: Dict[str, str]) -> Tuple[Dict[str, Any], List[Dict[str, str]]]:
+    """The spec (JSON-ready) and the sparingen that went to no link, from the rows of export_spec.ipy."""
+    links: Dict[int, Dict[str, Any]] = {}
+    unassigned: List[Dict[str, str]] = []
+    for r in parsed.rows:
+        kind = r.get("row_type")
+        if kind == "link":
+            lid = int(r["link_id"])
+            links[lid] = {
+                "link_instance_id": lid,
+                "link_name": r.get("link_name", ""),
+                "document_title": r.get("doc_title", ""),
+                "document_guid": r.get("doc_guid", ""),
+                "transform": {
+                    "origin_mm": [_float_or_none(r.get(k)) for k in ("ox_mm", "oy_mm", "oz_mm")],
+                    "rotation_deg_z": _float_or_none(r.get("rot_deg")),
+                    "mirrored": r.get("mirrored") == "1",
+                    "note": "link to host: point_in_host = rotate(point_in_link) + origin; locations below are already in the link's own coordinates",
+                },
+                "items": [],
+            }
+        elif kind == "unassigned":
+            unassigned.append({k: v for k, v in r.items() if k != "row_type"})
+    for r in parsed.rows:
+        if r.get("row_type") != "item":
+            continue
+        status = r.get("status", "")
+        item: Dict[str, Any] = {
+            "key": r.get("key", ""),
+            "source_id": _int_or_none(r.get("source_id")),
+            "source_tag": r.get("source_tag", ""),
+            "kind": r.get("kind", "family"),
+            "family_name": r.get("family", ""),
+            "type_name": r.get("type", ""),
+            "host_id": _int_or_none(r.get("host_id")),
+            "host_category": r.get("host_cat", ""),
+            "level": r.get("level", ""),
+            "discipline": r.get("discipline", ""),
+            "status": status,
+            "status_label": labels.get(status, ""),
+            "location_mm": [_float_or_none(r.get(k)) for k in ("x_mm", "y_mm", "z_mm")],
+            "normal": [_float_or_none(r.get(k)) for k in ("nx", "ny", "nz")],
+            "normal_from": r.get("normal_from", ""),
+            "host_model_location_mm": [_float_or_none(r.get(k)) for k in ("hx_mm", "hy_mm", "hz_mm")],
+            "size_mm": {"width": _float_or_none(r.get("w_mm")), "height": _float_or_none(r.get("h_mm")),
+                        "depth": _float_or_none(r.get("d_mm")), "shape": r.get("shape", ""), "from": r.get("size_from", "")},
+        }
+        links[int(r["link_id"])]["items"].append(item)
+    spec: Dict[str, Any] = {
+        "spec_version": SPEC_VERSION,
+        "units": "mm",
+        "coordinates": "internal coordinates of the linked document (location_mm, normal); host_model_location_mm is in the exporting model",
+        "source": {"document": parsed.meta.get("doc_title"), "guid": parsed.meta.get("doc_guid"), "revit_version": parsed.meta.get("revit_version")},
+        "status_labels": labels,
+        "size_parameters": size_parameters,
+        "links": [links[k] for k in sorted(links)],
+    }
+    return spec, unassigned
+
+
+def _vec3(value: Any, what: str) -> List[float]:
+    if not isinstance(value, list) or len(value) != 3:
+        raise ValueError(f"{what} must be a list of three numbers")
+    out: List[float] = []
+    for v in value:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(float(v)) or abs(float(v)) > 1e7:
+            raise ValueError(f"{what} must hold finite numbers")
+        out.append(float(v))
+    return out
+
+
+def _spec_item(index: int, raw: Any, labels: Dict[str, str], copy_status: bool) -> Dict[str, Any]:
+    where = f"spec item {index}"
+    if not isinstance(raw, dict):
+        raise ValueError(f"{where} is not an object")
+    key = raw.get("key")
+    if not isinstance(key, str) or not _CROSSING_ID.match(key):
+        raise ValueError(f"{where}: key {key!r} is missing or not a crossing id (letters, digits and . # x -)")
+    where = f"spec item {index} ({key})"
+    loc = _vec3(raw.get("location_mm"), f"{where}: location_mm")
+    normal = _vec3(raw.get("normal"), f"{where}: normal")
+    if math.sqrt(sum(c * c for c in normal)) < 1e-6:
+        raise ValueError(f"{where}: normal is a zero vector")
+    size = raw.get("size_mm")
+    if not isinstance(size, dict):
+        raise ValueError(f"{where}: size_mm is missing")
+    w = _num(size.get("width"), f"{where}: size_mm.width", 1.0, 20000.0, -1.0)
+    h = _num(size.get("height"), f"{where}: size_mm.height", 1.0, 20000.0, -1.0)
+    if w < 0 or h < 0:
+        raise ValueError(f"{where}: size_mm needs width and height")
+    d = None if size.get("depth") is None else _num(size.get("depth"), f"{where}: size_mm.depth", 0.0, 20000.0, 0.0)
+    shape = size.get("shape") or "rect"
+    if shape not in ("round", "rect"):
+        raise ValueError(f"{where}: size_mm.shape must be round or rect")
+    host_id = raw.get("host_id")
+    if host_id is not None:
+        host_id = _int(host_id, f"{where}: host_id", 1, 2**62, 1)
+    host_cat = raw.get("host_category") or ""
+    if host_cat and host_cat not in HOST_CATEGORIES:
+        raise ValueError(f"{where}: host_category {host_cat!r} is none of {', '.join(HOST_CATEGORIES)}")
+    kind = raw.get("kind") or ""
+    if kind not in ("", "family", "opening"):
+        raise ValueError(f"{where}: kind must be family or opening")
+    status = str(raw.get("status") or "")
+    return {
+        "key": key, "source_id": raw.get("source_id") if isinstance(raw.get("source_id"), int) else 0, "kind": kind,
+        "family_name": str(raw.get("family_name") or ""), "type_name": str(raw.get("type_name") or ""),
+        "host_id": host_id, "host_cat": host_cat, "x_mm": loc[0], "y_mm": loc[1], "z_mm": loc[2],
+        "nx": normal[0], "ny": normal[1], "nz": normal[2], "w_mm": w, "h_mm": h, "d_mm": d, "shape": shape,
+        "status": status if (copy_status and status in labels) else "",
+    }
+
+
+def _spec_link(data: Any, link_instance_id: Any) -> Dict[str, Any]:
+    if not isinstance(data, dict) or data.get("spec_version") != SPEC_VERSION:
+        raise ValueError(f"the spec must be an object made by revit_sparing_export_spec (spec_version {SPEC_VERSION})")
+    links = data.get("links")
+    if not isinstance(links, list) or not links or not all(isinstance(x, dict) for x in links):
+        raise ValueError("the spec has no links to place from")
+    if link_instance_id is not None:
+        want = _int(link_instance_id, "link_instance_id", 1, 2**62, 1)
+        found = [x for x in links if x.get("link_instance_id") == want]
+        if not found:
+            raise ValueError(f"link_instance_id {want} is not in the spec; it has: {', '.join(str(x.get('link_instance_id')) for x in links)}")
+        return found[0]
+    if len(links) > 1:
+        names = "; ".join(f"{x.get('link_instance_id')} = {x.get('link_name')}" for x in links[:10])
+        raise ValueError(f"the spec has {len(links)} links; pass link_instance_id to choose one: {names}")
+    return links[0]
+
+
+def _safe_save_name(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    if not is_safe_name(str(value)):
+        raise ValueError("save_as must be a plain name: letters, digits, - and _, at most 64 characters")
+    return str(value)
+
+
+# --------------------------------------------------------------------------- #
 # The module
 # --------------------------------------------------------------------------- #
 class RevitSparingModule:
@@ -1113,3 +1318,175 @@ class RevitSparingModule:
             return early or {}
         totals = {"status_parameter": args["status_parameter"], "group_name": args["group_name"], "categories": cats}
         return _finish_write(tool, parsed, elapsed, workspace, dry_run_asked=args["dry_run"], totals=totals)
+
+    # ---- copy to discipline models ------------------------------------------ #
+    def export_spec(
+        self,
+        tag: Any = None,
+        family_name: Any = None,
+        ids: Any = None,
+        link_ids: Any = None,
+        link_name: Any = None,
+        force_link_id: Any = None,
+        size_parameters: Any = None,
+        status_parameter: Any = None,
+        status_labels: Any = None,
+        discipline_parameter: Any = None,
+        max_items: Any = None,
+        save_as: Any = None,
+        include_spec: Any = None,
+        workspace: Any = None,
+        tool_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_sparing_export_spec"
+        try:
+            labels = _labels(status_labels)
+            args: Dict[str, Any] = _selection(tag, family_name, ids)
+            lids: List[int] = []
+            if link_ids not in (None, []):
+                if not isinstance(link_ids, list) or len(link_ids) > 50:
+                    raise ValueError("link_ids must be a list of at most 50 link instance ids")
+                lids = [_int(i, "link_ids", 1, 2**62, 1) for i in link_ids]
+            sizes: Dict[str, str] = {}
+            if size_parameters not in (None, {}):
+                sizes = self._size_parameters(size_parameters)
+            name = _safe_save_name(save_as)
+            args.update({
+                "link_ids": lids,
+                "link_name": _text(link_name, "link_name").strip() if link_name not in (None, "") else "",
+                "force_link_id": None if force_link_id is None else _int(force_link_id, "force_link_id", 1, 2**62, 1),
+                "size_parameters": sizes,
+                "status_parameter": _status_parameter(status_parameter),
+                "labels": labels,
+                "discipline_parameter": _opt_name(discipline_parameter, "discipline_parameter"),
+                "max_elements": _int(max_items, "max_items", 1, 500, 200),
+            })
+            inline = _bool(include_spec, "include_spec", name == "")
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        parsed, elapsed, early = _run(tool, "export_spec.ipy", args, write=False, tool_executor=tool_executor, approved_executor=None)
+        if early is not None or parsed is None:
+            return early or {}
+        spec, unassigned = build_spec(parsed, labels, sizes)
+        exported = sum(len(x["items"]) for x in spec["links"])
+        reasons: Dict[str, int] = {}
+        for u in unassigned:
+            reasons[u.get("reason", "")] = reasons.get(u.get("reason", ""), 0) + 1
+        bbox_sized = sum(1 for x in spec["links"] for i in x["items"] if i["size_mm"]["from"] == "bounding box")
+        infos = list(parsed.infos)
+        if bbox_sized:
+            infos.append("SIZE_FROM_BOUNDING_BOX: %d item(s) have no size parameters read (pass size_parameters); their sizes are bounding box extents" % bbox_sized)
+        if reasons.get("host_in_this_model"):
+            infos.append("HOST_IN_THIS_MODEL: %d sparingen sit in hosts of this model, not of a link; they are not part of any link's spec" % reasons["host_in_this_model"])
+        synthetic = ScriptOutput(
+            summary=parsed.summary, fails=list(parsed.fails), infos=infos, rows=unassigned, meta=dict(parsed.meta),
+            counts={"fail": parsed.counts.get("fail", len(parsed.fails)), "info": len(infos), "row": len(unassigned)},
+        )
+        result = assemble_result(tool, synthetic, PageSpec(limit=MAX_LIMIT), row_types={"source_id": "int", "link_id": "int"}, elapsed_ms=elapsed, workspace=workspace)
+        totals: Dict[str, Any] = {
+            "selected": int(parsed.meta.get("selected", "0") or 0), "exported": exported, "unassigned": len(unassigned),
+            "unassigned_by_reason": reasons, "links": len(spec["links"]), "truncated": parsed.meta.get("truncated") == "1",
+            "coordinates": "internal",
+        }
+        result["rows_are"] = "sparingen that go to no link, with the reason"
+        result["active_document"] = ACTIVE_DOCUMENT_NOTE
+        if name:
+            path, err = save_json(workspace, name, spec)
+            result["spec_file"] = {"name": name, "path": path}
+            if err:
+                result["spec_file"]["error"] = err
+                inline = True
+        if inline:
+            result["spec"] = spec
+        if totals["truncated"]:
+            result["limits"]["truncated"] = True
+            result["limits"]["partial"] = True
+        return _summary_first(result, totals)
+
+    def place_spec(
+        self,
+        spec: Any = None,
+        spec_file: Any = None,
+        link_instance_id: Any = None,
+        tag: Any = None,
+        mode: Any = None,
+        family_name: Any = None,
+        type_name: Any = None,
+        size_parameters: Any = None,
+        status_parameter: Any = None,
+        status_labels: Any = None,
+        copy_status: Any = None,
+        skip_document_check: Any = None,
+        sparing_family: Any = None,
+        existing_tolerance_mm: Any = None,
+        max_sparings: Any = None,
+        on_error: Any = None,
+        dry_run: Any = None,
+        workspace: Any = None,
+        approved_executor: Optional[ToolExecutor] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        tool = "revit_sparing_place_spec"
+        try:
+            if (spec in (None, {})) == (spec_file in (None, "")):
+                raise ValueError("give exactly one of spec (the object from revit_sparing_export_spec) or spec_file (the name it saved under)")
+            data = spec
+            if spec_file not in (None, ""):
+                if not is_safe_name(str(spec_file)):
+                    raise ValueError("spec_file must be a plain name (letters, digits, - and _), as given to save_as")
+                data, err = load_json(workspace, str(spec_file))
+                if err:
+                    raise ValueError(f"spec_file {spec_file!r}: {err}")
+            link = _spec_link(data, link_instance_id)
+            spec_labels = data.get("status_labels") if isinstance(data.get("status_labels"), dict) else None
+            labels = _labels(status_labels if status_labels not in (None, {}) else spec_labels)
+            copy = _bool(copy_status, "copy_status", True)
+            raw_items = link.get("items")
+            if not isinstance(raw_items, list) or not raw_items:
+                raise ValueError("the chosen link has no items in the spec")
+            if len(raw_items) > 500:
+                raise ValueError("the chosen link has more than 500 items; export fewer (max_items) or split the spec")
+            items = [_spec_item(i, r, labels, copy) for i, r in enumerate(raw_items)]
+            keys = [i["key"] for i in items]
+            if len(set(keys)) != len(keys):
+                raise ValueError("the spec lists the same key twice")
+            kinds = sorted({i["kind"] or "family" for i in items})
+            m = _choice(mode, ("family", "opening"), "mode", kinds[0] if len(kinds) == 1 else None)
+            args: Dict[str, Any] = {"tag": _tag(tag), "mode": m, "items": items}
+            if m == "family":
+                fams = sorted({(i["family_name"], i["type_name"]) for i in items if i["family_name"] and i["type_name"]})
+                fam = _opt_name(family_name, "family_name") or (fams[0][0] if len(fams) == 1 else "")
+                typ = _opt_name(type_name, "type_name") or (fams[0][1] if len(fams) == 1 else "")
+                if not fam or not typ:
+                    raise ValueError("family_name and type_name are required for mode 'family' (the spec holds no single family and type)")
+                sizes_in = size_parameters if size_parameters not in (None, {}) else data.get("size_parameters")
+                args["family_name"], args["type_name"], args["size_parameters"] = fam, typ, self._size_parameters(sizes_in)
+            else:
+                if family_name not in (None, "") or type_name not in (None, "") or size_parameters not in (None, {}):
+                    raise ValueError("family_name, type_name and size_parameters belong to mode 'family'; leave them out for mode 'opening'")
+                args["family_name"], args["type_name"], args["size_parameters"] = "", "", {}
+            args["status_parameter"] = _opt_name(status_parameter, "status_parameter")
+            args["status_value"] = labels["proposed"] if args["status_parameter"] else ""
+            args["labels"] = labels
+            args["expect"] = {"title": str(link.get("document_title") or ""), "guid": str(link.get("document_guid") or "")}
+            args["skip_document_check"] = _bool(skip_document_check, "skip_document_check", False)
+            args["sparing_family"] = _opt_name(sparing_family, "sparing_family") or args["family_name"]
+            args["existing_tolerance_mm"] = _num(existing_tolerance_mm, "existing_tolerance_mm", 0.0, 1000.0, 50.0)
+            args["max_sparings"] = _int(max_sparings, "max_sparings", 1, 500, 100)
+            args["on_error"] = _choice(on_error, ("abort", "skip"), "on_error", "abort")
+            args["dry_run"] = _bool(dry_run, "dry_run", False)
+        except (TypeError, ValueError) as exc:
+            return _bad_input(tool, exc)
+        parsed, elapsed, early = _run(tool, "place_spec.ipy", args, write=True, tool_executor=None, approved_executor=approved_executor)
+        if early is not None or parsed is None:
+            return early or {}
+        extra = {
+            "spec_link": {"link_instance_id": link.get("link_instance_id"), "link_name": link.get("link_name"),
+                          "document_title": args["expect"]["title"]},
+            "active_document": ACTIVE_DOCUMENT_NOTE,
+        }
+        totals = {"spec_items": len(items), "mode": args["mode"],
+                  "placed": len([r for r in parsed.rows if r.get("row_type") == "item" and r.get("kind") == "sparing"]),
+                  "skipped": len([r for r in parsed.rows if r.get("row_type") == "item" and r.get("kind") == "skipped"])}
+        return _finish_write(tool, parsed, elapsed, workspace, extra=extra, dry_run_asked=args["dry_run"], totals=totals)
