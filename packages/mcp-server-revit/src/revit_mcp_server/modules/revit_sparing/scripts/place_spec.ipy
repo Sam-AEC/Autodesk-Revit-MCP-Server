@@ -1,0 +1,185 @@
+# revit_sparing_place_spec (write mode): places sparingen in the ACTIVE document from a spec made by
+# revit_sparing_export_spec. The bridge works on the active document only, so the discipline model must be the active
+# document when this runs; the script compares the document with the one the spec was made for and refuses when they differ.
+# One Transaction per sparing in one TransactionGroup (Runner of the revit_docs write prelude), tagged with the same
+# Extensible Storage tag as revit_sparing_place, so a re-run with the same tag replaces only what it made (idempotent) and
+# any other opening or sparing at the same place is left alone and reported.
+# ARGS = {tag, mode ('family'|'opening'), family_name, type_name, size_parameters, status_parameter, status_value, labels,
+#         expect {title, guid}, skip_document_check, sparing_family, existing_tolerance_mm, max_sparings, on_error, dry_run,
+#         items [{key, source_id, host_id, host_cat, kind, x_mm, y_mm, z_mm, nx, ny, nz, w_mm, h_mm, d_mm, shape, status}]}
+# Positions are in the internal coordinates of the active document (the link's own coordinates in the spec).
+# UNVERIFIED against a live Revit: see the module docstring.
+SRC_LOCAL = {"doc": None, "key": "", "name": "", "t": None, "li": None}
+
+
+def norm_title(t):
+    s = (t or "").strip().lower()
+    if s.endswith(".rvt"):
+        s = s[:-4]
+    return s
+
+
+def same_document():
+    """(ok, text). The GUID of a local copy matches its central model; failing that the titles are compared (a local copy's
+    title is the central title plus _username)."""
+    exp = ARGS.get("expect") or {}
+    guid = str(doc.CreationGUID).lower()
+    if exp.get("guid") and str(exp["guid"]).lower() == guid:
+        return True, ""
+    want = norm_title(exp.get("title"))
+    have = norm_title(doc.Title)
+    if want and (have == want or have.startswith(want + "_")):
+        return True, ""
+    return False, "the spec was made for the document '%s' but the active document is '%s'" % (exp.get("title"), doc.Title)
+
+
+def host_thickness_ft(host, cat):
+    try:
+        if cat == "walls":
+            return host.Width
+        if cat == "floors":
+            return pnum(host, "FLOOR_ATTR_THICKNESS_PARAM")
+        if cat == "roofs":
+            return pnum(host, "ROOF_ATTR_THICKNESS_PARAM")
+    except Exception:
+        pass
+    return None
+
+
+def make_g(it, levels):
+    c = (it["x_mm"] * SP_FT_PER_MM, it["y_mm"] * SP_FT_PER_MM, it["z_mm"] * SP_FT_PER_MM)
+    n, u, v = frame_n(vunit((it["nx"], it["ny"], it["nz"])))
+    host = None
+    if it.get("host_id"):
+        host = doc.GetElement(ElementId(int(it["host_id"])))
+    cat = it.get("host_cat") or ""
+    if host is not None and not cat:
+        cat = bic_key(host, SP_HOST_CATS) or ""
+    hrec = {"e": host, "src": SRC_LOCAL, "id": int(it["host_id"]) if it.get("host_id") else 0, "key": str(it.get("host_id") or ""), "cat": cat}
+    thick = host_thickness_ft(host, cat) if host is not None else None
+    depth = it.get("d_mm")
+    if depth is None:
+        depth = mm(thick) if thick else 0.0
+    lv = level_at(levels, c[2])
+    return {"id": it["key"], "first": {"h": hrec, "m": {"id": 0}}, "c": c, "n": n, "u": u, "v": v, "sw": it["w_mm"], "sh": it["h_mm"],
+            "sd": depth, "shape": it.get("shape") or "rect", "level": lv, "thick": thick or 0.0, "item": it}
+
+
+def host_problem(g, needs_host):
+    h = g["first"]["h"]
+    if not needs_host:
+        return None
+    if h["e"] is None:
+        return "host_not_found"
+    got = bic_key(h["e"], SP_HOST_CATS)
+    if h["cat"] and got != h["cat"]:
+        return "host_category_mismatch"
+    return None
+
+
+def existing_at(existing, g):
+    tol = ARGS["existing_tolerance_mm"] * SP_FT_PER_MM
+    return find_existing(existing, g["c"], tol, g["n"], g["thick"])
+
+
+def main():
+    doc_meta()
+    SRC_LOCAL["doc"] = doc
+    if not ARGS.get("skip_document_check"):
+        ok, why = same_document()
+        if not ok:
+            refuse("wrong_document", why + ". Make the discipline model the active document (open it and activate its window), then run this again; or pass skip_document_check if you are sure.")
+            return
+    if ARGS["mode"] == "family":
+        sym, why = find_symbol()
+        if sym is None:
+            refuse("family_not_found", why)
+            return
+        SYM[0] = sym
+    ptype = str(SYM[0].Family.FamilyPlacementType) if SYM[0] is not None else ""
+    needs_host = ARGS["mode"] == "opening" or ptype != "OneLevelBased"
+    owned = owned_map()
+    state = {"unmeasured": 0}
+    existing = collect_existing([SRC_LOCAL], state)
+    levels = levels_by_height()
+    plan = []
+    skipped = []
+    problems = []
+    for it in ARGS["items"]:
+        g = make_g(it, levels)
+        wrong_kind = (it.get("kind") or ARGS["mode"]) != ARGS["mode"]
+        if wrong_kind:
+            skipped.append((g, "kind_not_selected"))
+            continue
+        why = host_problem(g, needs_host)
+        if why is not None:
+            problems.append((g, why))
+            continue
+        mine = owned.get(g["id"], [])
+        ex = existing_at(existing, g)
+        if ex is not None:
+            ours = eid(ex["e"]) in [eid(o) for o in mine]
+            if not ours:
+                t = read_tag(ex["e"])
+                own_other = t is not None and t[0] == ARGS["tag"] and t[1].startswith(KEY_PREFIX)
+                skipped.append((g, "existing_own_other" if own_other else "existing_foreign"))
+                continue
+        if ARGS["mode"] == "opening" and g["first"]["h"]["cat"] not in ("walls", "floors", "roofs"):
+            skipped.append((g, "opening_needs_wall_floor_or_roof"))
+            continue
+        key = it.get("status") or ""
+        plan.append({"g": g, "old": mine, "sizes": [], "status": status_text(key) if key else ""})
+    if problems:
+        text = "%d of %d spec items cannot be placed here: %s" % (
+            len(problems), len(ARGS["items"]), "; ".join(["%s (%s, host id %s)" % (g["id"], why, g["first"]["h"]["id"]) for g, why in problems[:15]]))
+        if ARGS["on_error"] == "abort":
+            refuse("host_not_found", text + ". Nothing was changed. These hosts must exist in the active document with the ids the spec names; use on_error=skip to place the rest.", [g["first"]["h"]["id"] for g, why in problems])
+            return
+        info("HOST_NOT_FOUND", text + ". They were skipped.")
+        for g, why in problems:
+            skipped.append((g, why))
+    for g, reason in skipped:
+        item([("kind", "skipped"), ("crossing_id", g["id"]), ("host_id", g["first"]["h"]["id"]), ("reason", reason)])
+    if len(plan) > ARGS["max_sparings"]:
+        refuse("too_many_sparings", "%d sparingen would be placed, more than max_sparings=%d" % (len(plan), ARGS["max_sparings"]))
+        return
+    if not plan:
+        meta("outcome", "ok")
+        meta("changed_ids", "")
+        summary("nothing to place: %d spec items, %d skipped" % (len(ARGS["items"]), len(skipped)))
+        return
+    if ARGS["mode"] == "family" or ARGS["status_parameter"]:
+        problem = probe(plan[0])
+        if problem is not None:
+            refuse(problem[0], problem[1], [plan[0]["g"]["first"]["h"]["id"]])
+            return
+    run = Runner("AEC sparingen from spec %s" % ARGS["tag"], ARGS["on_error"])
+    made = []
+    for p in plan:
+        def work(p=p):
+            if p["old"]:
+                delete_owned(p["old"])
+            e = create_sparing(p)
+            apply_values(e, p)
+            return e
+
+        hid = p["g"]["first"]["h"]["id"]
+        e = run.step("Sparing %s" % p["g"]["id"], work, ids=[hid] if hid else [])
+        if e is None:
+            continue
+        made.append((p, e))
+        run.changed.append(eid(e))
+    replaced = 0
+    for p, e in made:
+        check(p, e)
+        g = p["g"]
+        if p["old"]:
+            replaced += 1
+        item([("kind", "sparing"), ("id", eid(e)), ("crossing_id", g["id"]), ("action", "replaced" if p["old"] else "created"),
+              ("mode", ARGS["mode"]), ("host_id", g["first"]["h"]["id"]), ("w_mm", int(round(g["sw"]))), ("h_mm", int(round(g["sh"]))), ("d_mm", int(round(g["sd"]))),
+              ("status", want_status(p) if ARGS["status_parameter"] else "")])
+    summary("%d of %d sparingen placed from the spec (%d new, %d replaced), %d skipped, %d spec items%s" % (
+        len(made), len(plan), len(made) - replaced, replaced, len(skipped), len(ARGS["items"]), " - DRY RUN" if ARGS["dry_run"] else ""))
+
+
+__output__ = run_write(main)

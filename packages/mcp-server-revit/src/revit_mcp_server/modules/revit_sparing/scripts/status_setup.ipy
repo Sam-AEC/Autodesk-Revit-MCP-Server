@@ -1,0 +1,160 @@
+# revit_sparing_status_setup (write mode): creates the shared parameter that holds the approval status and binds it to the
+# categories the sparing families use, or adds categories to a parameter that already exists. This is the documented
+# "create shared parameter" step: it runs only when someone calls this tool through an approved plan.
+# ARGS = {status_parameter, group_name, categories [BuiltInCategory names], shared_parameter_file, on_error, dry_run}
+# Two things are changed: the shared parameter file (a definition is added when it is missing; a rollback does NOT undo
+# that) and the project's parameter bindings (one transaction, rolled back on failure and on dry_run). A dry run writes
+# nothing at all: when the definition is not in the file yet it only reports what it would do.
+# UNVERIFIED against a live Revit: see the module docstring.
+
+
+def resolve_categories():
+    cats = []
+    missing = []
+    no_bind = []
+    for n in ARGS["categories"]:
+        b = getattr(BuiltInCategory, n, None)
+        c = None
+        if b is not None:
+            try:
+                c = doc.Settings.Categories.get_Item(b)
+            except Exception:
+                c = None
+        if c is None:
+            missing.append(n)
+            continue
+        allows = True
+        try:
+            allows = bool(c.AllowsBoundParameters)
+        except Exception:
+            allows = True
+        if not allows:
+            no_bind.append(c.Name)
+            continue
+        cats.append(c)
+    return cats, missing, no_bind
+
+
+def group_type():
+    try:
+        return GroupTypeId.IdentityData
+    except Exception:
+        return BuiltInParameterGroup.PG_IDENTITY_DATA
+
+
+def find_in_file(deffile):
+    """(group, definition) in the shared parameter file; either may be None."""
+    grp = None
+    for g in deffile.Groups:
+        if g.Name == ARGS["group_name"]:
+            grp = g
+            break
+    if grp is None:
+        return None, None
+    for d in grp.Definitions:
+        if d.Name == ARGS["status_parameter"]:
+            return grp, d
+    return grp, None
+
+
+def make_binding(categories):
+    cs = app.Create.NewCategorySet()
+    for c in categories:
+        cs.Insert(c)
+    return app.Create.NewInstanceBinding(cs)
+
+
+def main():
+    doc_meta()
+    name = ARGS["status_parameter"]
+    cats, missing, no_bind = resolve_categories()
+    if missing or no_bind:
+        why = []
+        if missing:
+            why.append("unknown to Revit: " + ", ".join(missing))
+        if no_bind:
+            why.append("does not allow bound parameters: " + ", ".join(no_bind))
+        info("CATEGORY_SKIPPED", "not usable for a bound parameter: %s" % "; ".join(why))
+    if not cats:
+        refuse("no_bindable_category", "none of the requested categories can hold a bound parameter (%s)" % ", ".join(ARGS["categories"]))
+        return
+    bind = binding_info(name)
+    if bind["found"] is None:
+        refuse("bindings_unreadable", "the project's parameter bindings could not be read, so nothing was changed")
+        return
+    want = [c.Name for c in cats]
+    saved = None
+    if bind["found"]:
+        lacking = [c for c in cats if c.Name not in bind["categories"]]
+        if not lacking:
+            meta("outcome", "ok")
+            meta("changed_ids", "")
+            item([("kind", "binding"), ("parameter", name), ("action", "already_bound"), ("categories", ",".join(bind["categories"]))])
+            summary("nothing to do: parameter '%s' already exists (%s) and is bound to %s" % (name, "shared" if bind["shared"] else "project parameter", ", ".join(want)))
+            return
+        action = "extend_binding"
+        all_cats = list(bind["category_objs"]) + lacking
+        defn = bind["definition"]
+    else:
+        action = "create_and_bind"
+        all_cats = list(cats)
+        defn = None
+        saved = [app.SharedParametersFilename]
+        if ARGS["shared_parameter_file"]:
+            app.SharedParametersFilename = ARGS["shared_parameter_file"]
+    try:
+        if defn is None:
+            deffile = None
+            try:
+                deffile = app.OpenSharedParameterFile()
+            except Exception:
+                deffile = None
+            if deffile is None:
+                refuse("shared_parameter_file_missing", "Revit has no readable shared parameter file (Manage > Shared Parameters), and shared_parameter_file was not given or cannot be read. Point Revit at the firm's shared parameter file, or pass shared_parameter_file, then run this again. Nothing was changed")
+                return
+            grp, defn = find_in_file(deffile)
+            if defn is None and ARGS["dry_run"]:
+                meta("outcome", "ok")
+                meta("dry_run", 1)
+                meta("committed", 0)
+                meta("changed_ids", "")
+                meta("would_change_ids", "")
+                item([("kind", "binding"), ("parameter", name), ("action", "would_create_definition"), ("group", ARGS["group_name"]),
+                      ("categories", ",".join(want))])
+                summary("DRY RUN: the shared parameter file has no '%s' in group '%s'; a real run would add it there (not undone by a rollback) and bind it to %s" % (name, ARGS["group_name"], ", ".join(want)))
+                return
+            if defn is None:
+                if grp is None:
+                    grp = deffile.Groups.Create(ARGS["group_name"])
+                opts = ExternalDefinitionCreationOptions(name, SpecTypeId.String.Text)
+                opts.UserModifiable = True
+                opts.Visible = True
+                defn = grp.Definitions.Create(opts)
+                info("SHARED_PARAMETER_FILE_WRITTEN", "added '%s' to group '%s' of the shared parameter file; a rollback does not remove it" % (name, ARGS["group_name"]))
+        run = Runner("AEC sparing status parameter", ARGS["on_error"])
+
+        def work():
+            binding = make_binding(all_cats)
+            if action == "extend_binding":
+                ok = doc.ParameterBindings.ReInsert(defn, binding, group_type())
+            else:
+                ok = doc.ParameterBindings.Insert(defn, binding, group_type())
+            if not ok:
+                raise StepError("Revit refused to bind the parameter '%s' (a parameter with that name may already exist as a built-in or family parameter)" % name)
+            return True
+
+        done = run.step("Bind status parameter", work)
+        if done:
+            after = binding_info(name)
+            post("%s: bound" % name, bool(after["found"]) and all([n in after["categories"] for n in want]),
+                 "bound to %s" % (", ".join(after["categories"]) if after["found"] else "nothing found"))
+            item([("kind", "binding"), ("parameter", name), ("action", "bound" if action == "create_and_bind" else "extended"),
+                  ("categories", ",".join(want))])
+        summary("parameter '%s' %s for %s%s" % (name, "created and bound" if action == "create_and_bind" else "bound to more categories", ", ".join(want),
+                                                   " - DRY RUN" if ARGS["dry_run"] else ""))
+    finally:
+        if saved is not None:
+            app.SharedParametersFilename = saved[0]
+
+
+__output__ = run_write(main)

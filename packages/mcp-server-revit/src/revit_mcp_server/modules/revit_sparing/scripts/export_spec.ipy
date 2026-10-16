@@ -1,0 +1,194 @@
+# revit_sparing_export_spec (read only): the placement spec of the sparingen of this (host) model for the linked discipline
+# models. A sparing belongs to the link that holds its host: the crossing id the sparing carries ('301xL700.101') names the
+# link instance and the host element in it. Positions and directions are turned into the link's own internal coordinates with
+# the inverse of the link instance's total transform, so the discipline model can place them without knowing this model.
+# ARGS = {tag, family_name, ids, link_ids, link_name, force_link_id, size_parameters, status_parameter, labels,
+#         discipline_parameter, max_elements}
+# ROWs: row_type=link (one per target link) and row_type=item (one per sparing), row_type=unassigned (one per sparing that
+# goes to no link, with the reason). UNVERIFIED against a live Revit: see the module docstring.
+SRC_HOST = {"t": None, "li": None}
+
+
+def link_targets():
+    """{link instance id: (instance, document, transform, name)} of the loaded links that pass the link_ids / link_name filter."""
+    want = ARGS.get("link_ids") or []
+    needle = (ARGS.get("link_name") or "").lower()
+    out = {}
+    for li in FilteredElementCollector(doc).OfClass(RevitLinkInstance):
+        i = eid(li)
+        name = ename(li)
+        if want and i not in want:
+            continue
+        if needle and needle not in name.lower():
+            continue
+        ld = None
+        try:
+            ld = li.GetLinkDocument()
+        except Exception:
+            ld = None
+        if ld is None:
+            info("LINK_NOT_LOADED", "link '%s' (id %d) is not loaded; its sparingen cannot be exported" % (name, i))
+            continue
+        out[i] = (li, ld, li.GetTotalTransform(), name)
+    return out
+
+
+def sparing_point(e):
+    try:
+        return v3(e.Location.Point)
+    except Exception:
+        pass
+    box = bbox_of(SRC_HOST, e)
+    if box is None:
+        return None
+    return ((box[0][0] + box[1][0]) / 2.0, (box[0][1] + box[1][1]) / 2.0, (box[0][2] + box[1][2]) / 2.0)
+
+
+def host_normal(e, d, t):
+    """(unit normal in this model's coordinates, where it came from). t is the transform of the link holding the host, or None."""
+    hel = element_in(d["host_link"], d["host_id"]) if d["host_id"] is not None else None
+    cat = bic_key(hel, SP_HOST_CATS) if hel is not None else None
+    n = None
+    src = ""
+    if cat == "walls":
+        try:
+            n = v3(hel.Orientation)
+            src = "host wall"
+        except Exception:
+            n = None
+    elif cat in ("floors", "roofs"):
+        n = Z_AXIS
+        src = "host floor"
+    if n is not None:
+        if t is not None:
+            n = v3(t.OfVector(xyz(n)))
+        return vunit(n), src
+    try:
+        return vunit(v3(e.FacingOrientation)), "instance facing"
+    except Exception:
+        return None, ""
+
+
+def sizes_of(e, n):
+    """(w, h, d, shape, source) in mm: from the size parameters when given, else the extents of the bounding box."""
+    sp = ARGS.get("size_parameters") or {}
+    if sp:
+        def read(key):
+            name = sp.get(key)
+            if not name:
+                return None
+            try:
+                return e.LookupParameter(name).AsDouble() * SP_MM_PER_FT
+            except Exception:
+                return None
+        dia = read("diameter")
+        w, h, dd = read("width"), read("height"), read("depth")
+        if dia is not None and (w is None or h is None):
+            return dia, dia, dd, "round", "parameters"
+        if w is not None and h is not None:
+            return w, h, dd, "rect", "parameters"
+    box = bbox_of(SRC_HOST, e)
+    if box is None:
+        return None, None, None, "", ""
+    nn, u, v = frame_n(n)
+    ext = []
+    for axis in (u, v, nn):
+        proj = [vdot(c, axis) for c in box_corners(box[0], box[1])]
+        ext.append(mm(max(proj) - min(proj)))
+    return ext[0], ext[1], ext[2], "rect", "bounding box"
+
+
+def f1(x):
+    return "" if x is None else "%.1f" % x
+
+
+def f4(x):
+    return "%.4f" % x
+
+
+def link_row(lid, ld, t, lname):
+    rot = ""
+    try:
+        bx = t.BasisX
+        rot = "%.4f" % math.degrees(math.atan2(bx.Y, bx.X))
+    except Exception:
+        rot = ""
+    mirrored = 0
+    try:
+        mirrored = 1 if t.Determinant < 0 else 0
+    except Exception:
+        mirrored = 0
+    org = (0.0, 0.0, 0.0)
+    try:
+        org = v3(t.Origin)
+    except Exception:
+        org = (0.0, 0.0, 0.0)
+    row([("row_type", "link"), ("link_id", lid), ("link_name", lname), ("doc_title", ld.Title), ("doc_guid", str(ld.CreationGUID)),
+         ("ox_mm", f1(mm(org[0]))), ("oy_mm", f1(mm(org[1]))), ("oz_mm", f1(mm(org[2]))), ("rot_deg", rot), ("mirrored", mirrored)])
+
+
+def main():
+    doc_meta()
+    found, truncated = select_sparings(ARGS)
+    links = link_targets()
+    forced = ARGS.get("force_link_id")
+    if forced is not None and forced not in links:
+        error("link_not_found", "force_link_id %s is not a loaded link instance that passes the link filter" % forced)
+        return
+    shown_links = {}
+    items = 0
+    unassigned = 0
+    for e in found:
+        d = describe(e)
+        i = d["id"]
+        lid = d["host_link"] if d["host_link"] is not None else forced
+        if lid is None:
+            unassigned += 1
+            row([("row_type", "unassigned"), ("source_id", i), ("reason", "host_in_this_model" if d["parts"] is not None else "host_unknown")])
+            continue
+        if lid not in links:
+            unassigned += 1
+            row([("row_type", "unassigned"), ("source_id", i), ("reason", "link_not_selected_or_not_loaded"), ("link_id", lid)])
+            continue
+        li, ld, t, lname = links[lid]
+        p = sparing_point(e)
+        n, nsrc = host_normal(e, d, t if d["host_link"] is not None else None)
+        if p is None or n is None:
+            unassigned += 1
+            row([("row_type", "unassigned"), ("source_id", i), ("reason", "position_unreadable"), ("link_id", lid)])
+            continue
+        inv = t.Inverse
+        pl = v3(inv.OfPoint(xyz(p)))
+        nl = vunit(v3(inv.OfVector(xyz(n))))
+        w, h, dd, shape, ssrc = sizes_of(e, n)
+        pr = status_param(e)
+        if pr is None:
+            status = "no_parameter"
+        else:
+            k = status_key(raw_status(pr))
+            status = "unknown" if k is None else (k or "unset")
+        if lid not in shown_links:
+            shown_links[lid] = 1
+            link_row(lid, ld, t, lname)
+        items += 1
+        row([("row_type", "item"), ("link_id", lid), ("key", d["crossing_id"] or ("id%d" % i)), ("source_id", i), ("source_tag", d["tag"]),
+             ("kind", "opening" if d["kind"] == "sparing_opening" else "family"), ("family", d["family"]), ("type", d["type"]),
+             ("host_id", d["host_id"] if d["host_id"] is not None else ""), ("host_cat", d["host_cat"]),
+             ("level", d["level"]), ("discipline", d["discipline"]), ("status", status),
+             ("x_mm", f1(mm(pl[0]))), ("y_mm", f1(mm(pl[1]))), ("z_mm", f1(mm(pl[2]))),
+             ("nx", f4(nl[0])), ("ny", f4(nl[1])), ("nz", f4(nl[2])), ("normal_from", nsrc),
+             ("hx_mm", f1(mm(p[0]))), ("hy_mm", f1(mm(p[1]))), ("hz_mm", f1(mm(p[2]))),
+             ("w_mm", f1(w)), ("h_mm", f1(h)), ("d_mm", f1(dd)), ("shape", shape), ("size_from", ssrc)])
+    meta("selected", len(found))
+    meta("exported", items)
+    meta("unassigned", unassigned)
+    meta("links", len(shown_links))
+    meta("truncated", 1 if truncated else 0)
+    meta("partial", 1 if truncated else 0)
+    meta("coordinates", "internal")
+    meta("verified", 0 if truncated else 1)
+    summary("%d of %d sparingen exported for %d link(s), %d not assigned to a link%s" % (
+        items, len(found), len(shown_links), unassigned, " - TRUNCATED" if truncated else ""))
+
+
+__output__ = run_main(main)

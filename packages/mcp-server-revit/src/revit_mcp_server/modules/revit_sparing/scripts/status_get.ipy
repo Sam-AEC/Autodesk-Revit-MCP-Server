@@ -1,0 +1,67 @@
+# revit_sparing_status_get and revit_sparing_status_summary (read only): the approval status of every selected sparing.
+# ARGS = {status_parameter, labels, discipline_parameter, tag, family_name, ids, only_status, max_elements}
+# One ROW per sparing: id, tag, crossing_id, kind, family, type, category, level, host_id, host_link, host_cat, mep_cat,
+# discipline, has_param, raw, status ('proposed' ... 'built', 'unset' or 'unknown'). A sparing without the status
+# parameter is reported with has_param=0, never given a default. UNVERIFIED against a live Revit.
+
+
+def main():
+    doc_meta()
+    found, truncated = select_sparings(ARGS)
+    only = ARGS.get("only_status") or []
+    counts = {"with_param": 0, "without_param": 0, "unknown": 0, "unset": 0, "filtered_out": 0}
+    shown = 0
+    for e in found:
+        d = describe(e)
+        p = status_param(e)
+        ok = status_param_ok(p)
+        raw = raw_status(p) if p is not None else None
+        key = status_key(raw) if raw is not None else None
+        if p is None:
+            counts["without_param"] += 1
+            word = "no_parameter"
+        else:
+            counts["with_param"] += 1
+            if not ok:
+                word = "unwritable"
+            elif key is None:
+                counts["unknown"] += 1
+                word = "unknown"
+            elif key == "":
+                counts["unset"] += 1
+                word = "unset"
+            else:
+                word = key
+        if only and word not in only:
+            counts["filtered_out"] += 1
+            continue
+        shown += 1
+        row([("id", d["id"]), ("tag", d["tag"]), ("crossing_id", d["crossing_id"]), ("kind", d["kind"]), ("family", d["family"]),
+             ("type", d["type"]), ("category", d["category"]), ("level", d["level"]), ("host_id", d["host_id"] if d["host_id"] is not None else ""),
+             ("host_link", d["host_link"] if d["host_link"] is not None else ""), ("host_cat", d["host_cat"]),
+             ("mep_cat", d["mep_cat"]), ("discipline", d["discipline"]), ("has_param", 1 if p is not None else 0),
+             ("writable", 1 if ok else 0), ("raw", raw if raw is not None else ""), ("status", word)])
+    bind = binding_info(ARGS["status_parameter"])
+    meta("selected", len(found))
+    meta("shown", shown)
+    for k in counts:
+        meta(k, counts[k])
+    meta("truncated", 1 if truncated else 0)
+    meta("parameter_bound", "" if bind["found"] is None else (1 if bind["found"] else 0))
+    meta("parameter_shared", 1 if bind["shared"] else 0)
+    meta("parameter_categories", ",".join(bind["categories"]))
+    meta("partial", 1 if truncated else 0)
+    meta("verified", 0 if truncated else 1)
+    if found and counts["without_param"] == len(found):
+        info("STATUS_PARAMETER_MISSING", "none of the %d sparingen has a parameter '%s'. Nothing is read or written until it exists: see revit_sparing_status_setup" % (len(found), ARGS["status_parameter"]))
+    elif counts["without_param"]:
+        info("STATUS_PARAMETER_MISSING", "%d of %d sparingen have no parameter '%s'; they are listed with status no_parameter" % (counts["without_param"], len(found), ARGS["status_parameter"]))
+    if counts["unknown"]:
+        info("STATUS_UNKNOWN", "%d sparingen hold a status text that is none of the labels (%s); they are listed with status unknown and their raw text" % (
+            counts["unknown"], ", ".join([ARGS["labels"][k] for k in ARGS["labels"]])))
+    summary("%d sparingen read (%d shown): %d with the status parameter, %d without, %d unset, %d unknown%s" % (
+        len(found), shown, counts["with_param"], counts["without_param"], counts["unset"], counts["unknown"],
+        " - TRUNCATED" if truncated else ""))
+
+
+__output__ = run_main(main)
