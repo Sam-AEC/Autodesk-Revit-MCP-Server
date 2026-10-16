@@ -121,15 +121,15 @@ def identity(context: dict[str, Any], options: argparse.Namespace) -> dict[str, 
 
 def read_script(options: argparse.Namespace, *, marker: str = "", seconds: float = 0) -> str:
     # Source intentionally uses Python 2 syntax for the Revit 2024 IronPython runtime.
-    expected = json.dumps([options.pid, options.expected_document, options.expected_guid.lower()], ensure_ascii=True)
+    # The process id is pinned by the panel `instance` routing; a read-mode script may not touch System.Diagnostics.
+    expected = json.dumps([options.expected_document, options.expected_guid.lower()], ensure_ascii=True)
     delay = "time.sleep(%r)\n" % seconds if seconds else ""
     return ("import json, time, collections\n"
-            "from System.Diagnostics import Process\n"
             "from Autodesk.Revit.DB import FilteredElementCollector\n"
             f"expected = json.loads({json.dumps(expected)})\n"
             "def session_identity():\n"
-            "    return [Process.GetCurrentProcess().Id, doc.Title, str(doc.CreationGUID).lower()]\n"
-            "assert session_identity() == expected, 'Acceptance document/PID mismatch'\n"
+            "    return [doc.Title, str(doc.CreationGUID).lower()]\n"
+            "assert session_identity() == expected, 'Acceptance document mismatch'\n"
             + delay +
             "assert session_identity() == expected, 'Acceptance identity changed while running'\n"
             "__output__ = json.dumps({'identity': session_identity(), "
@@ -147,7 +147,7 @@ def decode_read(result: dict[str, Any], options: argparse.Namespace) -> dict[str
         raise AcceptanceError("Read runner did not return the expected JSON evidence.") from None
     if not isinstance(output, dict):
         raise AcceptanceError("Read evidence must be an object.")
-    if output.get("identity") != [options.pid, options.expected_document, options.expected_guid.lower()]:
+    if output.get("identity") != [options.expected_document, options.expected_guid.lower()]:
         raise AcceptanceError("Script evidence does not match the expected document/PID.")
     if output.get("modifiable") is not False or output.get("stdlib") != [1, 2]:
         raise AcceptanceError("Runtime/preflight evidence is incomplete or the document is modifiable.")

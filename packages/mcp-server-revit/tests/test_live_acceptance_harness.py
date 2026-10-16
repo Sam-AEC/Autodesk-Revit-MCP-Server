@@ -31,7 +31,7 @@ def context(title="Acceptance scratch", guid=GUID, mode="ask_first"):
 def read_result(opts=None, marker="", elements=4):
     opts = opts or options()
     return {"success": True, "mode": "read", "model_changes_in_read_mode": 0,
-            "output": json.dumps({"identity": [opts.pid, opts.expected_document, opts.expected_guid],
+            "output": json.dumps({"identity": [opts.expected_document, opts.expected_guid],
                                   "elements": elements, "warnings": 0, "modifiable": False,
                                   "stdlib": [1, 2], "marker": marker})}
 
@@ -139,7 +139,7 @@ def test_resume_collects_without_resubmitting_or_queueing_preflight():
     assert report["checks"]["T11"]["status"] == "NOT_RUN"
 
 
-def test_read_script_pins_pid_and_document_before_and_after_delay():
+def test_read_script_pins_document_before_and_after_delay():
     script = harness.read_script(options(), seconds=90, marker="receipt-marker")
     assert script.count("assert session_identity() == expected") == 2
     assert "time.sleep(90)" in script and GUID in script
