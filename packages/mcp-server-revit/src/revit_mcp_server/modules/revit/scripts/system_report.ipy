@@ -71,7 +71,7 @@ def system_names(e, conns):
             continue
         tn = ""
         try:
-            tn = str(doc.GetElement(s.GetTypeId()).Name)
+            tn = str(ename(doc.GetElement(s.GetTypeId())))
         except Exception:
             pass
         names[nm] = tn

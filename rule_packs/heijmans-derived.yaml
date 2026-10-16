@@ -1,0 +1,66 @@
+# Heijmans rule pack, DERIVED from the open Heijmans Woonconfigurator copy (R24_2026_HWC_B01...), not from a
+# written checklist. It records what the model does today. Confirm each rule with the BIM manager before use.
+#
+# Naming cannot be expressed in this engine (no regular expressions). Use revit_check_naming_and_params:
+#   Walls, floors, roofs, ceilings (type name):
+#     name_pattern  ^(\d{2}_HB_|NLRS_\d{2}_|\d{3}_\d{2}_)     [element code, HB, description; suppliers NLRS_; legacy 300_]
+#   Doors, windows (type name starts with the element code too, family name is NN_HB_...):
+#     name_pattern  ^(?i)\d{2}_hb_
+#   Levels (name_target element):  ^-?\d{2} (ok|bk)?\.? ?\w+      e.g. "00 begane grond", "01 ok. ruwe vloer"
+# Measured 16 Oct 2026: walls 115 of 13809 off pattern, floors 19 of 2680, roofs 314 of 634 (mostly "Roofs 2").
+# The AMB_ and AMB2_ names in that model are test leftovers, not Heijmans naming.
+rules:
+  - id: door_mark_missing
+    severity: error
+    category: Doors
+    description: "Door has no Mark."
+    filter:
+      category: OST_Doors
+      parameter:
+        name: Mark
+        empty: true
+    assertion: "element_count == 0"
+    fix_template: "Set the Mark on door '{label}'."
+
+  - id: window_mark_missing
+    severity: warning
+    category: Windows
+    description: "Window has no Mark."
+    filter:
+      category: OST_Windows
+      parameter:
+        name: Mark
+        empty: true
+    assertion: "element_count == 0"
+    fix_template: "Set the Mark on window '{label}'."
+
+  - id: room_number_missing
+    severity: error
+    category: Rooms
+    description: "Room has no Number."
+    filter:
+      category: OST_Rooms
+      parameter:
+        name: Number
+        empty: true
+    assertion: "element_count == 0"
+    fix_template: "Set the Number on room '{label}'."
+
+  - id: room_not_placed
+    severity: warning
+    category: Rooms
+    description: "Room exists but is not placed (122 in the source model)."
+    filter:
+      category: OST_Rooms
+      placed: false
+    assertion: "element_count == 0"
+    fix_template: "Place or delete room '{label}'."
+
+  - id: inplace_family
+    severity: warning
+    category: Families
+    description: "In-place family. Heijmans models use loadable families."
+    filter:
+      family_source: inplace
+    assertion: "element_count == 0"
+    fix_template: "Replace in-place family '{label}' with a loadable family."

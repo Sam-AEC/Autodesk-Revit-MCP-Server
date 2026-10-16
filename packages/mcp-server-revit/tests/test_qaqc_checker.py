@@ -344,3 +344,21 @@ def test_symlinked_user_pack_escaping_workspace_is_refused(module, workspace, tm
     with pytest.raises(Exception, match="outside the allowed workspace"):
         module.run_check(rule_pack="link", workspace=workspace)
     assert "link" not in {p["name"] for p in module.list_rule_packs(workspace=workspace)["packs"]}
+
+
+def test_heijmans_derived_pack_is_valid():
+    import yaml
+
+    from revit_mcp_server.modules.qaqc_checker import module as qaqc
+
+    pack = REPO_ROOT / "rule_packs" / "heijmans-derived.yaml"
+    result = qaqc._validate_pack_data(yaml.safe_load(pack.read_text(encoding="utf-8")))
+    assert result["errors"] == [] and result["rules_count"] == 5
+
+
+def test_naming_check_reads_type_names_with_ename():
+    # Live (Revit 2024): `type.Name` raised in IronPython, the script returned '' and every one of 13809 walls was
+    # reported as off pattern.
+    source = (REPO_ROOT / "packages" / "mcp-server-revit" / "src" / "revit_mcp_server" / "modules" / "revit" / "scripts"
+              / "check_naming_and_params.ipy").read_text(encoding="utf-8")
+    assert "str(ename(el))" in source and "str(el.Name)" not in source

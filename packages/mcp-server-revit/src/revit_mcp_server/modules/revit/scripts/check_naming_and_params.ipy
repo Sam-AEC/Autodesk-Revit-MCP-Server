@@ -14,7 +14,7 @@ def element_name(e, target):
         if t is not None:
             el = t
     try:
-        return str(el.Name)
+        return str(ename(el))
     except Exception:
         return ""
 
