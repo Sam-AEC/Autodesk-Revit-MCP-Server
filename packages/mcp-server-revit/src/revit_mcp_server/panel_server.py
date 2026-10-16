@@ -697,6 +697,12 @@ def configure_file_logging(log_path: Path | None = None) -> Path | None:
 
 def run_panel_server() -> None:
     """Entry point for running the panel HTTP shim as a standalone process."""
+    from .cli_flags import handle_standard_flags
+
+    handle_standard_flags(
+        "aec-model-bridge-panel-server",
+        "Local HTTP shim for the AEC Model Bridge panel. Listens on 127.0.0.1 only.",
+    )
     configure_file_logging()
     try:
         server = build_server()

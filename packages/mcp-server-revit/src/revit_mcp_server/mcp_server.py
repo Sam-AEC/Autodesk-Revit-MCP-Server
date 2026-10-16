@@ -217,6 +217,13 @@ async def main():
 
 def run_mcp_server():
     """Entry point for running the MCP server."""
+    from .cli_flags import handle_standard_flags
+
+    handle_standard_flags(
+        "aec-model-bridge",
+        "AEC Model Bridge MCP server (stdio). MCP clients start it with no arguments; "
+        "settings come from MCP_REVIT_* environment variables (see docs/configuration-reference.md).",
+    )
     asyncio.run(main())
 
 
