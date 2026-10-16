@@ -224,3 +224,11 @@ def test_door_and_window_results_keep_the_new_element_as_element_id():
     wall = {"wall_id": 3}
     client._normalize_element_ids(wall)
     assert wall["element_id"] == 3
+
+
+def test_family_instance_result_gets_an_element_id():
+    from revit_mcp_server.bridge.client import BridgeClient
+
+    placed = {"instance_id": 11, "family": "F", "level": "L1"}
+    BridgeClient("http://127.0.0.1:1")._normalize_element_ids(placed)
+    assert placed["element_id"] == 11

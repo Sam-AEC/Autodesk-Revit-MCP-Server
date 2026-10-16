@@ -293,7 +293,7 @@ class BridgeClient:
         id_keys = [
             'floor_id', 'roof_id', 'door_id', 'window_id',
             'column_id', 'beam_id', 'level_id', 'view_id', 'sheet_id',
-            'room_id', 'grid_id', 'family_instance_id', 'wall_id', 'element_id'
+            'room_id', 'grid_id', 'family_instance_id', 'instance_id', 'wall_id', 'element_id'
         ]
 
         for key in id_keys:
