@@ -1,0 +1,891 @@
+# revit_cleanup_audit: read-only cleanup audit of the open document (IronPython 2.7). Sent after the revit module's
+# _prelude.ipy and _helpers.ipy. It never changes the model, never touches a file, a process or the network.
+# ARGS = {checks, scope {mode, categories, view_id}, max_ids, max_purge_ids, time_budget_s, max_elements,
+#         tolerance_mm, overlap_ratio, detail_line_warn}
+# Output (line protocol of check_contract.py): one ROW per check (kind=check), per finding (kind=finding), per
+# purge-candidate group (kind=purge), per warning type (kind=warning_type) and per view with many detail lines
+# (kind=detail_line_view). The wording of every finding says "unplaced" or "unused", never "safe to purge".
+
+ORDER = ["sheets", "view_templates", "views", "groups", "levels_grids", "rooms_areas", "cad", "warnings",
+         "detail_lines", "families", "duplicates"]
+# Share of the time budget per check (checks that walk the whole model get more).
+WEIGHT = {"sheets": 1, "view_templates": 1, "views": 2, "groups": 1, "levels_grids": 1, "rooms_areas": 1, "cad": 1,
+          "warnings": 1, "detail_lines": 2, "families": 3, "duplicates": 3}
+DUP_CATEGORIES = ["OST_Walls", "OST_Floors", "OST_Roofs", "OST_Ceilings", "OST_Doors", "OST_Windows", "OST_Columns",
+                  "OST_StructuralColumns", "OST_StructuralFraming", "OST_StructuralFoundation", "OST_GenericModel",
+                  "OST_Furniture", "OST_Stairs", "OST_MechanicalEquipment", "OST_PlumbingFixtures",
+                  "OST_LightingFixtures", "OST_ElectricalEquipment", "OST_ElectricalFixtures", "OST_PipeCurves",
+                  "OST_DuctCurves"]
+# Types of these categories are referenced by other types (profiles of a sweep, balusters of a railing, mullions and
+# panels of a curtain wall), so having no instance does not mean nobody uses them.
+FAMILY_SKIP_CATEGORIES = ["OST_ProfileFamilies", "OST_StairsRailingBaluster", "OST_StairsRailingSupport",
+                          "OST_StairsRailingTermination", "OST_CurtainWallMullions", "OST_CurtainWallPanels",
+                          "OST_StairsRailingHandRail", "OST_StairsRailingTopRail", "OST_RebarShape"]
+VIEW_SKIP_TYPES = ["ProjectBrowser", "SystemBrowser", "Internal", "Undefined", "DrawingSheet", "Report",
+                   "CostReport", "LoadsReport", "PresureLossReport", "PanelSchedule", "ColumnSchedule"]
+
+CHECKS = ARGS.get("checks") or ORDER
+SCOPE = ARGS.get("scope") or {}
+MODE = SCOPE.get("mode") or "model"
+MAX_IDS = int(ARGS.get("max_ids") or 20)
+MAX_PURGE = int(ARGS.get("max_purge_ids") or 200)
+MAX_EL = int(ARGS.get("max_elements") or 150000)
+TOL = float(ARGS.get("tolerance_mm") or 5.0) / 1000.0 / FT_TO_M
+OVERLAP = float(ARGS.get("overlap_ratio") or 0.9)
+DETAIL_WARN = int(ARGS.get("detail_line_warn") or 500)
+PAIR_BUDGET = 300000
+SCOPE_VIEW = None
+SCOPE_CATS = None
+SCOPE_CAT_IDS = []
+FINDINGS = []
+
+
+def nm(e):
+    try:
+        return str(ename(e) or "")
+    except Exception:
+        return ""
+
+
+def collector():
+    if SCOPE_VIEW is not None:
+        return FilteredElementCollector(doc, SCOPE_VIEW.Id)
+    return FilteredElementCollector(doc)
+
+
+def of_cats(col, bics):
+    typed = List[BuiltInCategory]()
+    for b in bics:
+        typed.Add(b)
+    return col.WherePasses(ElementMulticategoryFilter(typed))
+
+
+def valid(i):
+    try:
+        return eid(i) > 0
+    except Exception:
+        return False
+
+
+def id_text(ids, limit):
+    return ",".join([str(i) for i in ids[:limit]])
+
+
+def finding(check, code, sev, count, ids, names, note):
+    ids = sorted(set([int(i) for i in ids]))
+    FINDINGS.append(code)
+    row([("kind", "finding"), ("check", check), ("code", code), ("severity", sev), ("count", count),
+         ("id_total", len(ids)), ("ids", id_text(ids, MAX_IDS)), ("names", " | ".join([str(n) for n in names[:5]])),
+         ("note", note)])
+
+
+def purge(group, ids, basis):
+    ids = sorted(set([int(i) for i in ids]))
+    if not ids:
+        return
+    row([("kind", "purge"), ("group", group), ("count", len(ids)), ("ids", id_text(ids, MAX_PURGE)), ("basis", basis)])
+
+
+def top_names(counter, limit):
+    pairs = sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))
+    return ["%s (%d)" % (k, v) for k, v in pairs[:limit]]
+
+
+# ---- scope ---------------------------------------------------------------------------------------------------
+def resolve_scope():
+    global SCOPE_VIEW, SCOPE_CATS, SCOPE_CAT_IDS
+    if MODE == "view":
+        v = None
+        try:
+            v = doc.GetElement(ElementId(int(SCOPE.get("view_id"))))
+        except Exception:
+            v = None
+        if v is None or not isinstance(v, View):
+            error("invalid_input", "scope.view_id %s is not a view of this document" % SCOPE.get("view_id"))
+            return False
+        SCOPE_VIEW = v
+    elif MODE == "categories":
+        bics, bad = parse_categories(SCOPE.get("categories") or [])
+        if bics is None:
+            error("invalid_input", "unknown category '%s' in scope.categories" % bad)
+            return False
+        if not bics:
+            error("invalid_input", "scope.categories is empty")
+            return False
+        SCOPE_CATS = bics
+        SCOPE_CAT_IDS = [int(b) for b in bics]
+    return True
+
+
+def scope_text():
+    if MODE == "view":
+        return "view %d '%s'" % (eid(SCOPE_VIEW), nm(SCOPE_VIEW))
+    if MODE == "categories":
+        return "categories " + ",".join([str(c) for c in SCOPE.get("categories")])
+    return "the whole model"
+
+
+def skip_reason(name):
+    """None when the check runs for this scope, else why it does not."""
+    if MODE == "model":
+        return None
+    if name in ("sheets", "view_templates", "views", "levels_grids", "groups"):
+        return "document-level check, not run for a %s scope" % MODE
+    if MODE == "categories":
+        if name in ("cad", "detail_lines"):
+            return "not run for a categories scope"
+        wanted = [int(BuiltInCategory.OST_Rooms), int(BuiltInCategory.OST_Areas)]
+        if name == "rooms_areas" and not [c for c in wanted if c in SCOPE_CAT_IDS]:
+            return "Rooms and Areas are not in scope.categories"
+    if MODE == "view" and name == "families":
+        return "a type that is absent from one view is not unused, so this is not run for a view scope"
+    return None
+
+
+def scope_element_ids(b):
+    """Ids of the elements in a categories or view scope (to filter warnings): (set, truncated)."""
+    out = set()
+    col = collector().WhereElementIsNotElementType()
+    if SCOPE_CATS is not None:
+        col = of_cats(col, SCOPE_CATS)
+    n = 0
+    for e in col:
+        n += 1
+        if n > MAX_EL or (n % 200 == 0 and b.expired()):
+            return out, True
+        out.add(eid(e))
+    return out, False
+
+
+# ---- placement of views --------------------------------------------------------------------------------------
+def placed_view_ids(b):
+    """(set of view ids that sit on a sheet, truncated)."""
+    placed = set()
+    for vp in FilteredElementCollector(doc).OfClass(Viewport):
+        placed.add(eid(vp.ViewId))
+    for si in FilteredElementCollector(doc).OfClass(ScheduleSheetInstance):
+        placed.add(eid(si.ScheduleId))
+    for s in FilteredElementCollector(doc).OfClass(ViewSheet):
+        if b.expired():
+            return placed, True
+        try:
+            for vid in s.GetAllPlacedViews():
+                placed.add(eid(vid))
+        except Exception:
+            pass
+    return placed, False
+
+
+# ---- checks (each returns (truncated, unreadable count, note)) -----------------------------------------------
+def check_sheets(b):
+    empty = []
+    placeholders = 0
+    total = 0
+    unread = 0
+    trunc = False
+    for s in FilteredElementCollector(doc).OfClass(ViewSheet):
+        if b.expired():
+            trunc = True
+            break
+        total += 1
+        try:
+            if attr(s, "IsPlaceholder", False):
+                placeholders += 1
+                continue
+            n = len(list(s.GetAllPlacedViews()))
+            if n == 0:
+                n = FilteredElementCollector(doc, s.Id).OfClass(ScheduleSheetInstance).GetElementCount()
+            if n == 0:
+                n = FilteredElementCollector(doc, s.Id).OfClass(Viewport).GetElementCount()
+        except Exception:
+            unread += 1
+            continue
+        if n == 0:
+            empty.append(s)
+    if empty:
+        names = ["%s %s" % (attr(s, "SheetNumber", "?"), nm(s)) for s in empty]
+        finding("sheets", "SHEETS_EMPTY", "WARN", len(empty), [eid(s) for s in empty], names,
+                "sheets with no view, schedule or legend on them (placeholder sheets are left out)")
+        purge("empty_sheets", [eid(s) for s in empty],
+              "sheet with no placed view or schedule; sheet-only content such as text or images is not checked")
+    return trunc, unread, "%d sheets read, %d empty, %d placeholder" % (total, len(empty), placeholders)
+
+
+def check_view_templates(b):
+    templates = {}
+    used = set()
+    unread = 0
+    trunc = False
+    for v in FilteredElementCollector(doc).OfClass(View):
+        if b.expired():
+            trunc = True
+            break
+        try:
+            if v.IsTemplate:
+                templates[eid(v)] = v
+            else:
+                t = v.ViewTemplateId
+                if valid(t):
+                    used.add(eid(t))
+        except Exception:
+            unread += 1
+    for vft in FilteredElementCollector(doc).OfClass(ViewFamilyType):
+        t = attr(vft, "DefaultTemplateId")
+        if t is not None and valid(t):
+            used.add(eid(t))
+    if trunc:
+        return True, unread, "stopped early: not every view was read, so no template is called unused"
+    unused = [t for k, t in templates.items() if k not in used]
+    if unused:
+        finding("view_templates", "VIEW_TEMPLATES_UNUSED", "WARN", len(unused), [eid(t) for t in unused],
+                sorted([nm(t) for t in unused]),
+                "view templates that no view and no view type default uses (%d templates in total)" % len(templates))
+        purge("view_templates", [eid(t) for t in unused],
+              "no view has it applied and no view type uses it as its default template")
+    return False, unread, "%d view templates, %d unused" % (len(templates), len(unused))
+
+
+def child_view_ids(v):
+    """(ids of views that depend on v: dependent views and callouts, reliable flag)."""
+    seen = set([eid(v)])
+    todo = [v]
+    reliable = True
+    while todo and len(seen) < 300:
+        cur = todo.pop()
+        found = []
+        try:
+            found += [eid(i) for i in cur.GetDependentViewIds()]
+        except Exception:
+            pass
+        try:
+            found += [eid(i) for i in cur.GetDependentElements(ElementClassFilter(View))]
+        except Exception:
+            reliable = False
+        for i in found:
+            if i not in seen:
+                seen.add(i)
+                kid = doc.GetElement(ElementId(i))
+                if kid is not None and isinstance(kid, View):
+                    todo.append(kid)
+    seen.discard(eid(v))
+    return seen, reliable
+
+
+def check_views(b):
+    placed, trunc = placed_view_ids(b)
+    if trunc:
+        return True, 0, "stopped early: sheet placement was not fully read, so no view is called unplaced"
+    unplaced = []
+    protected = set()
+    unknown = set()
+    assessed = 0
+    unread = 0
+    for v in FilteredElementCollector(doc).OfClass(View):
+        if b.expired():
+            trunc = True
+            break
+        try:
+            if v.IsTemplate or str(v.ViewType) in VIEW_SKIP_TYPES:
+                continue
+            if attr(v, "IsTitleblockRevisionSchedule", False):
+                continue
+            try:
+                if v.Definition.IsKeySchedule:
+                    continue
+            except Exception:
+                pass
+            assessed += 1
+            if eid(v) in placed:
+                continue
+        except Exception:
+            unread += 1
+            continue
+        unplaced.append(v)
+        kids, reliable = child_view_ids(v)
+        if not reliable:
+            unknown.add(eid(v))
+        elif [k for k in kids if k in placed]:
+            protected.add(eid(v))
+    free = [v for v in unplaced if eid(v) not in protected and eid(v) not in unknown]
+    if unplaced:
+        names = ["%s (%s)" % (nm(v), str(v.ViewType)) for v in unplaced]
+        finding("views", "VIEWS_UNPLACED", "WARN", len(unplaced), [eid(v) for v in unplaced], names,
+                "views that are not on a sheet (%d views assessed; %d of the unplaced have no placed or unreadable child view)" % (assessed, len(free)))
+    kept = [v for v in unplaced if eid(v) in protected]
+    if kept:
+        finding("views", "VIEWS_UNPLACED_WITH_PLACED_CHILDREN", "INFO", len(kept), [eid(v) for v in kept],
+                [nm(v) for v in kept],
+                "not on a sheet themselves, but a dependent view or callout of each is on a sheet; leave them alone")
+    odd = [v for v in unplaced if eid(v) in unknown]
+    if odd:
+        finding("views", "VIEWS_UNPLACED_DEPENDENTS_UNREADABLE", "INFO", len(odd), [eid(v) for v in odd],
+                [nm(v) for v in odd], "dependent views could not be read, so these are not offered as candidates")
+    purge("views", [eid(v) for v in free],
+          "not on a sheet, not a template, and no dependent view or callout of it is on a sheet; "
+          "view references and schedules that point at the view are not checked")
+    return trunc, unread + len(odd), "%d views assessed, %d not on a sheet" % (assessed, len(unplaced))
+
+
+def check_groups(b):
+    types = {}
+    counts = {}
+    trunc = False
+    for gt in FilteredElementCollector(doc).OfClass(GroupType):
+        types[eid(gt)] = gt
+        counts[eid(gt)] = 0
+    total = 0
+    for g in FilteredElementCollector(doc).OfClass(Group):
+        if b.expired():
+            trunc = True
+            break
+        total += 1
+        try:
+            k = eid(g.GroupType)
+            counts[k] = counts.get(k, 0) + 1
+        except Exception:
+            pass
+    if trunc:
+        return True, 0, "stopped early: not every group was counted"
+    single = [k for k, n in counts.items() if n == 1 and k in types]
+    none = [k for k, n in counts.items() if n == 0 and k in types]
+    if single:
+        finding("groups", "GROUPS_SINGLE_INSTANCE", "INFO", len(single), single, sorted([nm(types[k]) for k in single]),
+                "group types with exactly one instance (ids are group type ids); a group of one adds weight and little else")
+    if none:
+        finding("groups", "GROUP_TYPES_UNPLACED", "WARN", len(none), none, sorted([nm(types[k]) for k in none]),
+                "group types with no instance in the model (ids are group type ids)")
+        purge("group_types_unplaced", none, "group type with no instance")
+    return False, 0, "%d group types, %d group instances" % (len(types), total)
+
+
+def check_levels_grids(b):
+    unread = 0
+    trunc = False
+    levels = sorted([lv for lv in FilteredElementCollector(doc).OfClass(Level)], key=lambda l: l.Elevation)
+    plan_levels = set()
+    for v in FilteredElementCollector(doc).OfClass(ViewPlan):
+        try:
+            if not v.IsTemplate and v.GenLevel is not None:
+                plan_levels.add(eid(v.GenLevel))
+        except Exception:
+            unread += 1
+    dup_ids = []
+    dup_pairs = 0
+    for i in range(1, len(levels)):
+        if abs(levels[i].Elevation - levels[i - 1].Elevation) <= TOL:
+            dup_pairs += 1
+            dup_ids += [eid(levels[i]), eid(levels[i - 1])]
+    if dup_pairs:
+        finding("levels_grids", "LEVELS_DUPLICATE", "FAIL", dup_pairs, dup_ids,
+                [nm(l) for l in levels if eid(l) in dup_ids],
+                "levels at the same elevation (within %.1f mm); pairs counted, ids are the levels involved" % (TOL * FT_TO_M * 1000.0))
+    unused = []
+    for lv in levels:
+        if b.expired():
+            trunc = True
+            break
+        try:
+            n = FilteredElementCollector(doc).WherePasses(ElementLevelFilter(lv.Id)).WhereElementIsNotElementType().GetElementCount()
+        except Exception:
+            unread += 1
+            continue
+        if n == 0 and eid(lv) not in plan_levels:
+            unused.append(lv)
+    if unused:
+        finding("levels_grids", "LEVELS_UNUSED", "WARN", len(unused), [eid(l) for l in unused], [nm(l) for l in unused],
+                "levels with no element placed on them and no plan view; use as a top constraint or offset is NOT checked")
+    segs = []
+    for g in FilteredElementCollector(doc).OfClass(Grid):
+        c = attr(g, "Curve")
+        if c is None:
+            unread += 1
+            continue
+        segs.append((g, c.GetEndPoint(0), c.GetEndPoint(1)))
+    gdup = []
+    for i in range(len(segs)):
+        if b.expired():
+            trunc = True
+            break
+        for j in range(i + 1, len(segs)):
+            gi, ai, zi = segs[i]
+            gj, aj, zj = segs[j]
+            same = abs(ai.X - aj.X) <= TOL and abs(ai.Y - aj.Y) <= TOL and abs(zi.X - zj.X) <= TOL and abs(zi.Y - zj.Y) <= TOL
+            swap = abs(ai.X - zj.X) <= TOL and abs(ai.Y - zj.Y) <= TOL and abs(zi.X - aj.X) <= TOL and abs(zi.Y - aj.Y) <= TOL
+            if same or swap:
+                gdup += [eid(gi), eid(gj)]
+    if gdup:
+        finding("levels_grids", "GRIDS_DUPLICATE", "FAIL", len(gdup) // 2, gdup,
+                [nm(g) for g, a, z in segs if eid(g) in gdup],
+                "grids lying on top of each other; pairs counted, ids are the grids involved")
+    bare = []
+    for g, a, z in segs:
+        try:
+            if len(list(g.GetDependentElements(ElementClassFilter(Dimension)))) == 0:
+                bare.append(g)
+        except Exception:
+            unread += 1
+            break
+    if bare:
+        finding("levels_grids", "GRIDS_NO_DIMENSION", "INFO", len(bare), [eid(g) for g in bare], [nm(g) for g in bare],
+                "grids that no dimension refers to; they may still be used visually, so this is only a pointer")
+    return trunc, unread, "%d levels, %d grids" % (len(levels), len(segs))
+
+
+def check_rooms_areas(b):
+    trunc = False
+    unread = 0
+    total = 0
+    for key, bic_name, label in (("rooms", "OST_Rooms", "Room"), ("areas", "OST_Areas", "Area")):
+        bic = getattr(BuiltInCategory, bic_name, None)
+        if bic is None or (MODE == "categories" and int(bic) not in SCOPE_CAT_IDS):
+            continue
+        unplaced = []
+        flat = []
+        for r in collector().OfCategory(bic).WhereElementIsNotElementType():
+            total += 1
+            if total > MAX_EL or (total % 200 == 0 and b.expired()):
+                trunc = True
+                break
+            try:
+                loc = attr(r, "Location")
+                area = attr(r, "Area", 0.0)
+            except Exception:
+                unread += 1
+                continue
+            if loc is None:
+                unplaced.append(r)
+            elif area <= 1e-6:
+                flat.append(r)
+        if unplaced:
+            finding("rooms_areas", key.upper() + "_UNPLACED", "WARN", len(unplaced), [eid(r) for r in unplaced],
+                    [nm(r) for r in unplaced], "%s that exist in the project but are not placed in the model" % key)
+            purge(key + "_unplaced", [eid(r) for r in unplaced], "%s with no location (not placed)" % label)
+        if flat:
+            finding("rooms_areas", key.upper() + "_NOT_ENCLOSED", "FAIL", len(flat), [eid(r) for r in flat],
+                    [nm(r) for r in flat],
+                    "%s placed but with zero area: not enclosed, or redundant (more than one in the same enclosure)" % key)
+            purge(key + "_not_enclosed", [eid(r) for r in flat],
+                  "%s with a location and zero area (not enclosed or redundant)" % label)
+        if trunc:
+            break
+    return trunc, unread, "%d rooms and areas read" % total
+
+
+def check_cad(b):
+    imports = []
+    links = []
+    trunc = False
+    unread = 0
+    n = 0
+    for ii in collector().OfClass(ImportInstance):
+        n += 1
+        if b.expired() or n > MAX_EL:
+            trunc = True
+            break
+        try:
+            entry = (eid(ii), nm(doc.GetElement(ii.GetTypeId())) or "?", valid(ii.OwnerViewId))
+            if ii.IsLinked:
+                links.append(entry)
+            else:
+                imports.append(entry)
+        except Exception:
+            unread += 1
+    for group, sev, code, text in (
+            (imports, "WARN", "CAD_IMPORTS", "imported CAD (not linked): it cannot be reloaded and adds weight"),
+            (links, "INFO", "CAD_LINKS", "linked CAD")):
+        if not group:
+            continue
+        counter = {}
+        for e in group:
+            counter[e[1]] = counter.get(e[1], 0) + 1
+        in_view = len([e for e in group if e[2]])
+        finding("cad", code, sev, len(group), [e[0] for e in group], top_names(counter, 5),
+                "%s; %d placed in a single view, %d model-wide; %d file name(s)" % (text, in_view, len(group) - in_view, len(counter)))
+    if imports:
+        purge("cad_imports", [e[0] for e in imports],
+              "imported (not linked) CAD instance; check whether anyone still traces it before acting")
+    return trunc, unread, "%d CAD imports, %d CAD links" % (len(imports), len(links))
+
+
+def check_warnings(b):
+    try:
+        warns = list(doc.GetWarnings())
+    except Exception:
+        return False, 1, "the document's warnings could not be read"
+    scope_ids = None
+    trunc = False
+    if MODE != "model":
+        scope_ids, trunc = scope_element_ids(b)
+    groups = {}
+    total = 0
+    n = 0
+    for w in warns:
+        n += 1
+        if n % 200 == 0 and b.expired():
+            trunc = True
+            break
+        try:
+            fe = [eid(i) for i in w.GetFailingElements()]
+            if scope_ids is not None and not [i for i in fe if i in scope_ids]:
+                continue
+            desc = str(w.GetDescriptionText())
+        except Exception:
+            continue
+        total += 1
+        g = groups.setdefault(desc, [0, []])
+        g[0] += 1
+        if len(g[1]) < MAX_IDS:
+            g[1] += fe[:3]
+    if total:
+        top = sorted(groups.items(), key=lambda kv: (-kv[1][0], kv[0]))[:10]
+        sample = []
+        for desc, g in top:
+            row([("kind", "warning_type"), ("count", g[0]), ("ids", id_text(g[1], MAX_IDS)), ("description", desc[:160])])
+            sample += g[1][:3]
+        finding("warnings", "WARNINGS", "WARN", total, sample, ["%s (%d)" % (d[:60], g[0]) for d, g in top],
+                "%d warnings of %d types; ids are samples from the top types (rows kind=warning_type list the top 10)" % (total, len(groups)))
+    return trunc, 0, "%d warnings in %d types" % (total, len(groups))
+
+
+def check_detail_lines(b):
+    per_view = {}
+    view_kind = {}
+    total = 0
+    n = 0
+    trunc = False
+    unread = 0
+    for ce in collector().OfClass(CurveElement):
+        n += 1
+        if n > MAX_EL or (n % 200 == 0 and b.expired()):
+            trunc = True
+            break
+        try:
+            if str(ce.CurveElementType) != "DetailCurve":
+                continue
+            vid = eid(ce.OwnerViewId)
+            if vid not in view_kind:
+                v = doc.GetElement(ce.OwnerViewId)
+                view_kind[vid] = (str(v.ViewType) if v is not None else "?", nm(v) if v is not None else "?")
+            if view_kind[vid][0] in ("DraftingView", "Legend", "DrawingSheet", "?"):
+                continue
+        except Exception:
+            unread += 1
+            continue
+        total += 1
+        per_view[vid] = per_view.get(vid, 0) + 1
+    if total:
+        top = sorted(per_view.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+        for vid, c in top:
+            row([("kind", "detail_line_view"), ("view_id", vid), ("name", view_kind[vid][1]), ("view_type", view_kind[vid][0]), ("count", c)])
+        sev = "WARN" if total > DETAIL_WARN else "INFO"
+        finding("detail_lines", "DETAIL_LINES_IN_MODEL_VIEWS", sev, total, [vid for vid, c in top],
+                ["%s (%d)" % (view_kind[v][1], c) for v, c in top],
+                "detail lines drawn in model views (plans, sections, elevations) rather than drafting views; "
+                "ids are the views with the most (rows kind=detail_line_view); WARN above %d" % DETAIL_WARN)
+    return trunc, unread, "%d detail lines in %d model views" % (total, len(per_view))
+
+
+def check_families(b):
+    skip_ids = set()
+    for nme in FAMILY_SKIP_CATEGORIES:
+        bic = getattr(BuiltInCategory, nme, None)
+        if bic is not None:
+            skip_ids.add(int(bic))
+    # 1) how many elements use each type, over the whole model (or the categories in scope)
+    counts = {}
+    n = 0
+    col = FilteredElementCollector(doc).WhereElementIsNotElementType()
+    if SCOPE_CATS is not None:
+        col = of_cats(col, SCOPE_CATS)
+    for e in col:
+        n += 1
+        if n > MAX_EL or (n % 500 == 0 and b.expired()):
+            return True, 0, "stopped after %d elements: the usage count is incomplete, so no type is called unplaced" % n
+        try:
+            t = e.GetTypeId()
+            if valid(t):
+                counts[eid(t)] = counts.get(eid(t), 0) + 1
+        except Exception:
+            pass
+    # 2) loadable families and their types
+    unplaced_fams = []
+    unplaced_types = []
+    inplace = []
+    skipped_types = 0
+    assessed = 0
+    unread = 0
+    for fam in FilteredElementCollector(doc).OfClass(Family):
+        if b.expired():
+            return True, unread, "stopped while reading families (after counting %d elements): nothing is reported" % n
+        try:
+            cid = eid(fam.FamilyCategory) if fam.FamilyCategory is not None else None
+            if SCOPE_CATS is not None and cid not in SCOPE_CAT_IDS:
+                continue
+            sym_ids = [eid(i) for i in fam.GetFamilySymbolIds()]
+            in_place = bool(fam.IsInPlace)
+        except Exception:
+            unread += 1
+            continue
+        if in_place:
+            inplace.append((eid(fam), nm(fam), sum([counts.get(i, 0) for i in sym_ids])))
+            continue
+        if cid in skip_ids:
+            skipped_types += len(sym_ids)
+            continue
+        if not sym_ids:
+            continue
+        assessed += len(sym_ids)
+        free = [i for i in sym_ids if counts.get(i, 0) == 0]
+        if len(free) == len(sym_ids):
+            unplaced_fams.append(fam)
+        else:
+            for i in free:
+                unplaced_types.append((i, "%s : %s" % (nm(fam), nm(doc.GetElement(ElementId(i))))))
+    if unplaced_fams:
+        finding("families", "FAMILIES_UNPLACED", "WARN", len(unplaced_fams), [eid(f) for f in unplaced_fams],
+                sorted([nm(f) for f in unplaced_fams]),
+                "loadable families none of whose types has an instance (ids are family ids). Unplaced is not unneeded: "
+                "a family may be wanted later or used from outside the model")
+        purge("families_unplaced", [eid(f) for f in unplaced_fams],
+              "no type of the family has an instance; not in-place; not a category whose types other types reference")
+    if unplaced_types:
+        finding("families", "FAMILY_TYPES_UNPLACED", "WARN", len(unplaced_types), [i for i, t in unplaced_types],
+                sorted([t for i, t in unplaced_types]),
+                "types with no instance in families that have other types in use (ids are type ids)")
+        purge("family_types_unplaced", [i for i, t in unplaced_types], "type with no instance, in a family that still has types in use")
+    if inplace:
+        finding("families", "FAMILIES_IN_PLACE", "INFO", len(inplace), [i for i, t, u in inplace],
+                ["%s (%d instances)" % (t, u) for i, t, u in inplace],
+                "in-place families, listed on their own and never offered as candidates (ids are family ids)")
+    note = "%d elements counted; %d loadable types assessed" % (n, assessed)
+    if skipped_types:
+        note += "; %d types of profile, baluster, mullion or panel categories not assessed (other types reference them)" % skipped_types
+    note += "; system types (walls, floors, ...) are not assessed"
+    return False, unread, note
+
+
+# ---- duplicates and overlaps ---------------------------------------------------------------------------------
+def dup_item(e):
+    bb = e.get_BoundingBox(None)
+    if bb is None:
+        return None
+    kind = "box"
+    pts = None
+    loc = attr(e, "Location")
+    if isinstance(loc, LocationCurve):
+        c = loc.Curve
+        a = c.GetEndPoint(0)
+        z = c.GetEndPoint(1)
+        m = c.Evaluate(0.5, True)
+        kind = "curve"
+        pts = ((a.X, a.Y, a.Z), (z.X, z.Y, z.Z), (m.X, m.Y, m.Z))
+    elif isinstance(loc, LocationPoint):
+        p = loc.Point
+        kind = "point"
+        pts = ((p.X, p.Y, p.Z),)
+    try:
+        tid = eid(e.GetTypeId())
+    except Exception:
+        tid = -1
+    return (eid(e), tid, kind, pts, (bb.Min.X, bb.Min.Y, bb.Min.Z, bb.Max.X, bb.Max.Y, bb.Max.Z))
+
+
+def dist3(p, q):
+    return ((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2) ** 0.5
+
+
+def box_ratio(a, b):
+    """Volume of the intersection of two boxes over the volume of the smaller one (0 when apart)."""
+    inter = 1.0
+    va = 1.0
+    vb = 1.0
+    for k in range(3):
+        lo = max(a[k], b[k])
+        hi = min(a[k + 3], b[k + 3])
+        if hi < lo:
+            return 0.0
+        inter *= max(hi - lo, TOL)
+        va *= max(a[k + 3] - a[k], TOL)
+        vb *= max(b[k + 3] - b[k], TOL)
+    return inter / min(va, vb)
+
+
+def line_overlap(a, b):
+    """Overlap of two straight segments lying on one line, as a share of the shorter one (0 when not collinear)."""
+    p0 = a[0]
+    p1 = a[1]
+    d = (p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2])
+    la = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) ** 0.5
+    lb = dist3(b[0], b[1])
+    if la < 1e-9 or lb < 1e-9:
+        return 0.0
+    u = (d[0] / la, d[1] / la, d[2] / la)
+    ts = []
+    for q in (b[0], b[1]):
+        w = (q[0] - p0[0], q[1] - p0[1], q[2] - p0[2])
+        t = w[0] * u[0] + w[1] * u[1] + w[2] * u[2]
+        perp = (w[0] - t * u[0], w[1] - t * u[1], w[2] - t * u[2])
+        if (perp[0] ** 2 + perp[1] ** 2 + perp[2] ** 2) ** 0.5 > TOL:
+            return 0.0
+        ts.append(t)
+    lo = max(0.0, min(ts))
+    hi = min(la, max(ts))
+    if hi <= lo:
+        return 0.0
+    return (hi - lo) / min(la, lb)
+
+
+def classify(x, y):
+    """'duplicate', 'overlap' or None for two items of one category."""
+    if x[2] != y[2]:
+        return None
+    same_type = x[1] == y[1]
+    if x[2] == "point":
+        if dist3(x[3][0], y[3][0]) <= TOL:
+            return "duplicate" if same_type else "overlap"
+        return None
+    if x[2] == "curve":
+        mid_ok = dist3(x[3][2], y[3][2]) <= TOL
+        same = dist3(x[3][0], y[3][0]) <= TOL and dist3(x[3][1], y[3][1]) <= TOL and mid_ok
+        swap = dist3(x[3][0], y[3][1]) <= TOL and dist3(x[3][1], y[3][0]) <= TOL and mid_ok
+        if same or swap:
+            return "duplicate" if same_type else "overlap"
+        centre = ((x[3][0][0] + x[3][1][0]) / 2.0, (x[3][0][1] + x[3][1][1]) / 2.0, (x[3][0][2] + x[3][1][2]) / 2.0)
+        if dist3(x[3][2], centre) <= TOL and line_overlap(x[3], y[3]) >= OVERLAP:
+            return "overlap"
+        return None
+    close = True
+    for k in range(6):
+        if abs(x[4][k] - y[4][k]) > TOL:
+            close = False
+    if same_type and close:
+        return "duplicate"
+    if box_ratio(x[4], y[4]) >= OVERLAP:
+        return "overlap"
+    return None
+
+
+def check_duplicates(b):
+    if MODE == "categories":
+        bics = SCOPE_CATS
+    else:
+        bics = [getattr(BuiltInCategory, n, None) for n in DUP_CATEGORIES]
+        bics = [x for x in bics if x is not None]
+    trunc = False
+    unread = 0
+    n = 0
+    pairs = 0
+    dup = []
+    over = []
+    cat_names = {}
+    no_box = 0
+    for bic in bics:
+        items = []
+        for e in collector().OfCategory(bic).WhereElementIsNotElementType():
+            n += 1
+            if n > MAX_EL or (n % 200 == 0 and b.expired()):
+                trunc = True
+                break
+            try:
+                it = dup_item(e)
+            except Exception:
+                unread += 1
+                continue
+            if it is None:
+                no_box += 1
+            else:
+                items.append(it)
+                cat_names[int(bic)] = cat_name(e)
+        items.sort(key=lambda it: it[4][0])
+        active = []
+        for k, it in enumerate(items):
+            x0 = it[4][0]
+            active = [a for a in active if a[4][3] + TOL >= x0]
+            for a in active:
+                pairs += 1
+                if pairs > PAIR_BUDGET:
+                    trunc = True
+                    break
+                if a[4][1] > it[4][4] + TOL or it[4][1] > a[4][4] + TOL or a[4][2] > it[4][5] + TOL or it[4][2] > a[4][5] + TOL:
+                    continue
+                kind = classify(a, it)
+                if kind == "duplicate":
+                    dup.append((a[0], it[0], int(bic)))
+                elif kind == "overlap":
+                    over.append((a[0], it[0], int(bic)))
+            if trunc or (k % 256 == 255 and b.expired()):
+                trunc = True
+                break
+            active.append(it)
+        if trunc:
+            break
+    tol_mm = TOL * FT_TO_M * 1000.0
+    for found, code, sev, text in (
+            (dup, "DUPLICATE_ELEMENTS", "FAIL", "same category and type at the same place (within %.1f mm)" % tol_mm),
+            (over, "OVERLAPPING_ELEMENTS", "WARN", "same category overlapping (shared location, or %d%% of the smaller bounding box)" % int(OVERLAP * 100))):
+        if not found:
+            continue
+        ids = []
+        counter = {}
+        for x, y, bic in found:
+            ids += [x, y]
+            nme = cat_names.get(bic, str(bic))
+            counter[nme] = counter.get(nme, 0) + 1
+        finding("duplicates", code, sev, len(found), ids, top_names(counter, 5),
+                "%d pairs among %d elements: %s; names are categories with their pair count" % (len(found), len(set(ids)), text))
+    if dup:
+        purge("duplicate_copies", [max(x, y) for x, y, bic in dup],
+              "the higher id of each exact duplicate pair (the lowest id of a cluster is kept); same category, type and place")
+    note = "%d elements and %d pairs compared in %d categories (tolerance %.1f mm, pair budget %d)" % (n, pairs, len(bics), tol_mm, PAIR_BUDGET)
+    if no_box:
+        note += "; %d elements without a bounding box were not compared" % no_box
+    return trunc, unread, note
+
+
+FUNCS = {"sheets": check_sheets, "view_templates": check_view_templates, "views": check_views, "groups": check_groups,
+         "levels_grids": check_levels_grids, "rooms_areas": check_rooms_areas, "cad": check_cad,
+         "warnings": check_warnings, "detail_lines": check_detail_lines, "families": check_families,
+         "duplicates": check_duplicates}
+
+
+def check_row(name, status, ms, note):
+    row([("kind", "check"), ("check", name), ("status", status), ("elapsed_ms", ms), ("note", note)])
+
+
+def main():
+    doc_meta()
+    if not resolve_scope():
+        return
+    total = Budget(ARGS.get("time_budget_s") or 20)
+    todo = [c for c in ORDER if c in CHECKS]
+    runnable = [c for c in todo if skip_reason(c) is None]
+    bad = 0
+    for name in todo:
+        why = skip_reason(name)
+        if why is not None:
+            check_row(name, "skipped", 0, why)
+            continue
+        remaining = (total.limit_ms - total.ms()) / 1000.0
+        if remaining <= 0.05:
+            bad += 1
+            check_row(name, "not_run", 0, "the time budget was used up before this check started")
+            continue
+        weight_left = sum([WEIGHT[c] for c in runnable[runnable.index(name):]])
+        slice_budget = Budget(remaining * WEIGHT[name] / float(weight_left))
+        try:
+            trunc, unread, note = FUNCS[name](slice_budget)
+            status = "truncated" if trunc else ("partial" if unread else "ran")
+            if unread:
+                note += "; %d item(s) could not be read" % unread
+        except Exception as ex:
+            status, note = "unreadable", "%s: %s" % (ex.__class__.__name__, ex)
+        if status != "ran":
+            bad += 1
+        check_row(name, status, slice_budget.ms(), note)
+    if bad:
+        meta("partial", "1")
+        meta("verified", "0")
+    summary("%d finding(s) in %d check(s) for %s; %d check(s) incomplete" % (len(FINDINGS), len(runnable), scope_text(), bad))
+
+
+__output__ = run_main(main)

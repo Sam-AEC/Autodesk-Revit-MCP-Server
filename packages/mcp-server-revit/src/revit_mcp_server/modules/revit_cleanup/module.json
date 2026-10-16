@@ -1,0 +1,88 @@
+{
+  "id": "revit_cleanup",
+  "name": "Revit Cleanup Audit (read-only)",
+  "version": "0.1.0",
+  "schema_version": 1,
+  "min_hub_version": "1.2.0",
+  "description": "One read-only audit of the open Revit model for cleanup work: unused view templates, views not on a sheet, loadable families and types with no instance (in-place families listed apart), CAD imports and links, unplaced and not-enclosed rooms and areas, duplicate or overlapping elements, duplicate or unused levels and grids, empty sheets, warnings by type, groups with one instance and detail lines in model views. It never changes or deletes anything. Each finding has a count, some element ids and a severity; purge_candidates is a separate list of ids that a later, separately approved tool could act on.",
+  "author": "AEC Model Bridge",
+  "license": "GPL-3.0-or-later",
+  "requires_providers": [
+    "revit"
+  ],
+  "permissions": [
+    "model.read"
+  ],
+  "commands": [
+    {
+      "id": "cleanup_audit",
+      "title": "Audit the open model for cleanup: eleven read-only checks, each with a count, up to max_ids element ids and a severity (FAIL, WARN, INFO). Returns a summary with a verdict (FAIL, INCOMPLETE, WARN or PASS), fails and warns lines, per-check status, and a separate purge_candidates field with element ids a later, approved tool could act on (candidates by one stated rule, never a claim that removal is safe). The whole model is bounded by time_budget_s and max_elements; a check that cannot finish says truncated, and the verdict is then INCOMPLETE, never PASS. Narrow it with scope (categories or one view). Nothing is changed or deleted. Use revit_review for checks on elements you just built.",
+      "mcp_tool": "revit_cleanup_audit",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "object",
+            "description": "What to audit. Default: the whole model. Mode 'categories' limits the element checks (families, duplicates, rooms and areas, warnings) to the named categories and skips the document-level checks. Mode 'view' limits the element checks (CAD, rooms and areas, detail lines, duplicates, warnings) to what is visible in one view and skips families and the document-level checks. Skipped checks are listed as skipped.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["model", "categories", "view"],
+                "description": "model (default), categories or view."
+              },
+              "categories": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "For mode categories: 1 to 30 category names, for example Walls, Doors, Rooms or OST_GenericModel."
+              },
+              "view_id": {
+                "type": "integer",
+                "description": "For mode view: ElementId (integer) of the view, from revit_list_views."
+              }
+            }
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["sheets", "view_templates", "views", "groups", "levels_grids", "rooms_areas", "cad", "warnings", "detail_lines", "families", "duplicates"]
+            },
+            "description": "Which checks to run. Default: all eleven."
+          },
+          "max_ids": {
+            "type": "integer",
+            "description": "Element ids listed per finding, 1 to 200. Default 20. The count always covers everything found."
+          },
+          "max_purge_ids": {
+            "type": "integer",
+            "description": "Element ids listed per purge_candidates group, 1 to 2000. Default 200. The group count is always complete and truncated says if the list was cut."
+          },
+          "time_budget_s": {
+            "type": "number",
+            "description": "Seconds for the whole audit, 1 to 25. Default 20. Shared between the checks by weight; a check that runs out reports truncated and the verdict becomes INCOMPLETE."
+          },
+          "max_elements": {
+            "type": "integer",
+            "description": "Most elements one scan reads, 1000 to 500000. Default 150000. Reaching it reports truncated for that check."
+          },
+          "tolerance_mm": {
+            "type": "number",
+            "description": "Distance in millimetres within which levels, grids and element locations count as the same place, 0.1 to 500. Default 5."
+          },
+          "overlap_ratio": {
+            "type": "number",
+            "description": "Share of the smaller element that must overlap before two elements are reported as overlapping, 0.5 to 1. Default 0.9."
+          },
+          "detail_line_warn": {
+            "type": "integer",
+            "description": "Detail lines in model views above this number are a WARN, otherwise INFO. Default 500."
+          }
+        },
+        "required": []
+      },
+      "surface": ["mcp"],
+      "execution_mode": "sync",
+      "is_mutating": false
+    }
+  ]
+}
