@@ -126,7 +126,13 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             try:
                 approval_provider.gate.update_plan_state(plan_id, "executed")
             except Exception:
-                pass
+                # The tool has already run, so don't fail the call and invite a
+                # retry of a completed mutation; make the stale plan visible instead.
+                logger.exception(
+                    "Tool '%s' executed but plan '%s' could not be marked executed",
+                    name,
+                    plan_id,
+                )
 
         redacted_result = redact_data(result)
 
