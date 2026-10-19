@@ -53,10 +53,10 @@
                                                       },
                                                       {
                                                           "name":  "MCP_REVIT_BRIDGE_URL",
-                                                          "description":  "Bridge URL, for example http://127.0.0.1:3000 (required when MCP_REVIT_MODE=bridge).",
+                                                          "description":  "Optional. Leave empty to find the running Revit automatically; set a URL only to pin one add-in.",
                                                           "isSecret":  false,
                                                           "isRequired":  false,
-                                                          "default":  "http://127.0.0.1:3000",
+                                                          "default":  "",
                                                           "format":  "string"
                                                       },
                                                       {

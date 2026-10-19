@@ -52,9 +52,9 @@
     "bridge_url": {
       "type": "string",
       "title": "Local bridge URL",
-      "description": "Address exposed by the AEC Model Bridge Revit add-in.",
-      "required": true,
-      "default": "http://127.0.0.1:3000"
+      "description": "Leave empty: the server finds the running Revit by itself. Set a URL only to pin one add-in.",
+      "required": false,
+      "default": ""
     }
   },
   "compatibility": {

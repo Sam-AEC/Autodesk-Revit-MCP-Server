@@ -99,6 +99,20 @@ class Config(BaseSettings):
         extra="forbid",
     )
 
+    @field_validator("bridge_url", mode="before")
+    def ignore_legacy_default_bridge_url(cls, value):
+        """An empty value, or the old shipped default http://127.0.0.1:3000, means "not set".
+
+        The add-in picks a random port at every Revit start and publishes it in the registry, so a config
+        that still pins :3000 (the old default in the DXT manifest, smithery and client configs) could
+        never connect. Treating that exact value as unset lets discovery find the live Revit. Any other
+        explicit URL stays pinned."""
+        if isinstance(value, str):
+            text = value.strip().rstrip("/").lower()
+            if text in ("", "http://127.0.0.1:3000", "http://localhost:3000"):
+                return None
+        return value
+
     @field_validator("approval_mode", mode="before")
     def check_approval_mode(cls, value):
         return normalize_approval_mode(value)
