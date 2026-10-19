@@ -8,7 +8,7 @@
   --amb-surface: #FFFFFF;
   --amb-surface-raised: #E9EEF4;
   --amb-line: #D3DAE3;
-  --amb-rail: #2B2B2B;
+  --amb-rail: #222933;
   --amb-rail-ink: #C9D4E2;
   --amb-brand: #0091A7;
   --amb-brand-strong: #046B80;
@@ -46,12 +46,12 @@
 :root[data-theme="dark"] {
   /* keep in sync with docs/design/tokens.md */
   color-scheme: dark;
-  --amb-ink: #EDEDED;
-  --amb-ink-muted: #BDBDBD;
-  --amb-bg: #2D2D2D;
-  --amb-surface: #363636;
-  --amb-surface-raised: #3F3F3F;
-  --amb-line: #505050;
+  --amb-ink: #E8EBEF;
+  --amb-ink-muted: #C8CFD9;
+  --amb-bg: #3B4453;
+  --amb-surface: #2F3846;
+  --amb-surface-raised: #434D5C;
+  --amb-line: #515C6B;
   --amb-brand: #3FC3D6;
   --amb-brand-strong: #6FD8E6;
   --amb-brand-wash: rgba(63, 195, 214, 0.14);
@@ -59,15 +59,15 @@
   --amb-primary-hover: #6FD8E6;
   --amb-danger: #FCAA9F;
   --amb-danger-wash: rgba(252, 170, 159, 0.14);
-  --amb-warning: #F2A63C;
+  --amb-warning: #F7BA60;
   --amb-info: #A3C0F8;
-  --amb-success: #3FCB8B;
-  --amb-pending: #C4AAF5;
-  --amb-idle: #BDBDBD;
+  --amb-success: #5ED9A0;
+  --amb-pending: #D3BDF8;
+  --amb-idle: #C8CFD9;
   --amb-on-brand: #06222A;
   --amb-ico-fill: rgba(63, 195, 214, 0.18);
-  --amb-ico-ring: #363636;
-  --amb-glass: rgba(54, 54, 54, 0.72);
+  --amb-ico-ring: #2F3846;
+  --amb-glass: rgba(47, 56, 70, 0.72);
   --amb-glass-line: rgba(255, 255, 255, 0.07);
   --amb-glass-filter: blur(14px) saturate(140%);
   --amb-shadow-1: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
@@ -84,12 +84,12 @@
      data-theme="light" explicitly (Revit is light even though the OS is
      dark), this block stops applying and the base :root light values win. */
   :root:not([data-theme="light"]) {
-    --amb-ink: #EDEDED;
-    --amb-ink-muted: #BDBDBD;
-    --amb-bg: #2D2D2D;
-    --amb-surface: #363636;
-    --amb-surface-raised: #3F3F3F;
-    --amb-line: #505050;
+    --amb-ink: #E8EBEF;
+    --amb-ink-muted: #C8CFD9;
+    --amb-bg: #3B4453;
+    --amb-surface: #2F3846;
+    --amb-surface-raised: #434D5C;
+    --amb-line: #515C6B;
     --amb-brand: #3FC3D6;
     --amb-brand-strong: #6FD8E6;
     --amb-brand-wash: rgba(63, 195, 214, 0.14);
@@ -97,15 +97,15 @@
     --amb-primary-hover: #6FD8E6;
     --amb-danger: #FCAA9F;
     --amb-danger-wash: rgba(252, 170, 159, 0.14);
-    --amb-warning: #F2A63C;
+    --amb-warning: #F7BA60;
     --amb-info: #A3C0F8;
-    --amb-success: #3FCB8B;
-    --amb-pending: #C4AAF5;
-    --amb-idle: #BDBDBD;
+    --amb-success: #5ED9A0;
+    --amb-pending: #D3BDF8;
+    --amb-idle: #C8CFD9;
     --amb-on-brand: #06222A;
     --amb-ico-fill: rgba(63, 195, 214, 0.18);
-  --amb-ico-ring: #363636;
-  --amb-glass: rgba(54, 54, 54, 0.72);
+  --amb-ico-ring: #2F3846;
+  --amb-glass: rgba(47, 56, 70, 0.72);
     --amb-glass-line: rgba(255, 255, 255, 0.07);
     --amb-glass-filter: blur(14px) saturate(140%);
     --amb-shadow-1: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
@@ -273,7 +273,7 @@ symbol .fi { fill: currentColor; }
 .nav:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.08);
   border-color: transparent;
-  color: #EDEDED;
+  color: #E8EBEF;
 }
 
 .nav.is-active {
@@ -624,19 +624,19 @@ p {
 .badge.idle    { background: var(--amb-idle); }
 
 :root[data-theme="dark"] .badge.error   { background: rgba(252,170,159,.14); border-color: rgba(252,170,159,.40); color: #FCAA9F; }
-:root[data-theme="dark"] .badge.warning { background: rgba(242,166, 60,.14); border-color: rgba(242,166, 60,.40); color: #F2A63C; }
+:root[data-theme="dark"] .badge.warning { background: rgba(247,186,96,.14); border-color: rgba(247,186,96,.40); color: #F7BA60; }
 :root[data-theme="dark"] .badge.info    { background: rgba(163,192,248,.14); border-color: rgba(163,192,248,.40); color: #A3C0F8; }
-:root[data-theme="dark"] .badge.success { background: rgba( 63,203,139,.14); border-color: rgba( 63,203,139,.40); color: #3FCB8B; }
-:root[data-theme="dark"] .badge.pending { background: rgba(196,170,245,.14); border-color: rgba(196,170,245,.40); color: #C4AAF5; }
-:root[data-theme="dark"] .badge.idle    { background: rgba(155,168,185,.14); border-color: rgba(155,168,185,.40); color: #BDBDBD; }
+:root[data-theme="dark"] .badge.success { background: rgba( 94,217,160,.14); border-color: rgba( 94,217,160,.40); color: #5ED9A0; }
+:root[data-theme="dark"] .badge.pending { background: rgba(211,189,248,.14); border-color: rgba(211,189,248,.40); color: #D3BDF8; }
+:root[data-theme="dark"] .badge.idle    { background: rgba(155,168,185,.14); border-color: rgba(155,168,185,.40); color: #C8CFD9; }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .badge.error   { background: rgba(252,170,159,.14); border-color: rgba(252,170,159,.40); color: #FCAA9F; }
-  :root:not([data-theme="light"]) .badge.warning { background: rgba(242,166, 60,.14); border-color: rgba(242,166, 60,.40); color: #F2A63C; }
+  :root:not([data-theme="light"]) .badge.warning { background: rgba(247,186,96,.14); border-color: rgba(247,186,96,.40); color: #F7BA60; }
   :root:not([data-theme="light"]) .badge.info    { background: rgba(163,192,248,.14); border-color: rgba(163,192,248,.40); color: #A3C0F8; }
-  :root:not([data-theme="light"]) .badge.success { background: rgba( 63,203,139,.14); border-color: rgba( 63,203,139,.40); color: #3FCB8B; }
-  :root:not([data-theme="light"]) .badge.pending { background: rgba(196,170,245,.14); border-color: rgba(196,170,245,.40); color: #C4AAF5; }
-  :root:not([data-theme="light"]) .badge.idle    { background: rgba(155,168,185,.14); border-color: rgba(155,168,185,.40); color: #BDBDBD; }
+  :root:not([data-theme="light"]) .badge.success { background: rgba( 94,217,160,.14); border-color: rgba( 94,217,160,.40); color: #5ED9A0; }
+  :root:not([data-theme="light"]) .badge.pending { background: rgba(211,189,248,.14); border-color: rgba(211,189,248,.40); color: #D3BDF8; }
+  :root:not([data-theme="light"]) .badge.idle    { background: rgba(155,168,185,.14); border-color: rgba(155,168,185,.40); color: #C8CFD9; }
 }
 
 .item p {

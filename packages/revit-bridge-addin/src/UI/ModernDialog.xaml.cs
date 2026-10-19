@@ -45,18 +45,18 @@ namespace RevitBridge.UI
             SolidColorBrush accent;
             if (isDark)
             {
-                _bgBrush = Rgb(0x2D, 0x2D, 0x2D);
-                _cardBgBrush = Rgb(0x36, 0x36, 0x36);
-                _textPrimaryBrush = Rgb(0xED, 0xED, 0xED);
-                _textSecondaryBrush = Rgb(0xBD, 0xBD, 0xBD);
-                _borderBrush = Rgb(0x50, 0x50, 0x50);
-                _headerBrush = Rgb(0x2B, 0x2B, 0x2B);
-                _footerBgBrush = Rgb(0x36, 0x36, 0x36);
-                _footerBorderBrush = Rgb(0x50, 0x50, 0x50);
+                _bgBrush = Rgb(0x3B, 0x44, 0x53);
+                _cardBgBrush = Rgb(0x2F, 0x38, 0x46);
+                _textPrimaryBrush = Rgb(0xE8, 0xEB, 0xEF);
+                _textSecondaryBrush = Rgb(0xC8, 0xCF, 0xD9);
+                _borderBrush = Rgb(0x51, 0x5C, 0x6B);
+                _headerBrush = Rgb(0x22, 0x29, 0x33);
+                _footerBgBrush = Rgb(0x2F, 0x38, 0x46);
+                _footerBorderBrush = Rgb(0x51, 0x5C, 0x6B);
                 accent = Rgb(0x3F, 0xC3, 0xD6);
                 _accentTextBrush = accent;
                 _onAccentBrush = Rgb(0x06, 0x22, 0x2A);
-                _successColor = Color.FromRgb(0x3F, 0xCB, 0x8B);
+                _successColor = Color.FromRgb(0x5E, 0xD9, 0xA0);
                 _dangerColor = Color.FromRgb(0xFC, 0xAA, 0x9F);
             }
             else
@@ -66,7 +66,7 @@ namespace RevitBridge.UI
                 _textPrimaryBrush = Rgb(0x18, 0x20, 0x2C);
                 _textSecondaryBrush = Rgb(0x5B, 0x66, 0x76);
                 _borderBrush = Rgb(0xD3, 0xDA, 0xE3);
-                _headerBrush = Rgb(0x2B, 0x2B, 0x2B);
+                _headerBrush = Rgb(0x22, 0x29, 0x33);
                 _footerBgBrush = Rgb(0xE9, 0xEE, 0xF4);
                 _footerBorderBrush = Rgb(0xD3, 0xDA, 0xE3);
                 accent = Rgb(0x00, 0x91, 0xA7);
