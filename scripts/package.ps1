@@ -141,7 +141,8 @@ $defaultConfig = @{
     }
     server  = @{
         mode      = "bridge"
-        workspace = @("C:\RevitProjects", "$env:USERPROFILE\Documents")
+        # Literal %USERPROFILE%: expanding it here baked the build machine's profile path into the release.
+        workspace = @('C:\RevitProjects', '%USERPROFILE%\Documents')
     }
 }
 

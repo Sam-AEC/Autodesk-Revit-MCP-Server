@@ -2158,15 +2158,23 @@ public static partial class BridgeCommandFactory
             })
             .ToList();
 
-        var parameters = sheet.Parameters
-            .Cast<Parameter>()
-            .Where(p => p.HasValue)
-            .Select(p => new
+        // A sheet can carry two parameters with the same name (built-in "Category" and a shared one),
+        // so a plain ToDictionary threw "An item with the same key has already been added".
+        var parameters = new Dictionary<string, string?>();
+        foreach (Parameter p in sheet.Parameters)
+        {
+            if (!p.HasValue) continue;
+            var name = p.Definition.Name;
+            var value = GetParameterValueAsString(p);
+            if (parameters.TryGetValue(name, out var existing))
             {
-                name = p.Definition.Name,
-                value = GetParameterValueAsString(p)
-            })
-            .ToDictionary(p => p.name, p => p.value);
+                if (existing == value) continue;
+                var n = 2;
+                while (parameters.ContainsKey($"{name} ({n})")) n++;
+                name = $"{name} ({n})";
+            }
+            parameters[name] = value;
+        }
 
         return new
         {

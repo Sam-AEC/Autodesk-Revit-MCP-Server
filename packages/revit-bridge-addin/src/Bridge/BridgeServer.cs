@@ -348,6 +348,7 @@ public class BridgeServer
             int pid = System.Diagnostics.Process.GetCurrentProcess().Id;
             var registryDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AECModelBridge", "registry");
             Directory.CreateDirectory(registryDir);
+            RemoveDeadRegistryFiles(registryDir, pid);
 
             RegistryFilePath = Path.Combine(registryDir, $"revit-{pid}.json");
 
@@ -371,6 +372,27 @@ public class BridgeServer
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to write registry file");
+        }
+    }
+
+    /// <summary>A force-closed Revit never runs Stop, so its revit-&lt;pid&gt;.json stays behind. Remove the ones whose process is gone.</summary>
+    private static void RemoveDeadRegistryFiles(string registryDir, int ownPid)
+    {
+        foreach (var file in Directory.EnumerateFiles(registryDir, "revit-*.json"))
+        {
+            try
+            {
+                var stem = Path.GetFileNameWithoutExtension(file).Substring("revit-".Length);
+                if (!int.TryParse(stem, out var pid) || pid == ownPid) continue;
+                try { System.Diagnostics.Process.GetProcessById(pid); continue; }
+                catch (ArgumentException) { /* no such process */ }
+                File.Delete(file);
+                Log.Information("Removed stale registry file {File}", file);
+            }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "Could not clean registry file {File}", file);
+            }
         }
     }
 

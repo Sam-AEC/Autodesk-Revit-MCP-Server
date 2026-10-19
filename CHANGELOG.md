@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fixed from a 1.4.0 user report (Revit 2027.2, Windows on ARM): `revit_set_parameter_value` and every other native write froze Revit because the transaction helper called itself (fixed earlier in 189e25a, first release 1.5.0); `revit.get_sheet_info` failed on sheets that carry two parameters with the same name (for example "Category"), now the second one is listed as "Category (2)"; a force-closed Revit leaves `revit-<pid>.json` behind, the add-in now removes entries of dead processes when it starts; `config\default.json` no longer carries the build machine's profile path (`%USERPROFILE%` is written literally).
+- Scripts: `revit_execute_python` in write mode gets `amb_transaction(doc, name)`; it dismisses Revit warnings (no dialog) and returns them in the result, errors roll back. stdout without a trailing newline is now flushed on IronPython 3 (the tail was dropped). UNVERIFIED in Revit. Removed two unreferenced files (`new_checks.txt`, `banner.png`).
+- Panel: the dark theme uses neutral Revit-style greys instead of the near-black blue (`docs/design/tokens.md` updated, dialogs match; status colours lightened to keep WCAG AA).
+
 ## 1.5.0 - 2026-10-14
 
 Status: on the dev branch, not yet released.

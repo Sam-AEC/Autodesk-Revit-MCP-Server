@@ -8,7 +8,7 @@
   --amb-surface: #FFFFFF;
   --amb-surface-raised: #E9EEF4;
   --amb-line: #D3DAE3;
-  --amb-rail: #141B24;
+  --amb-rail: #2B2B2B;
   --amb-rail-ink: #C9D4E2;
   --amb-brand: #0091A7;
   --amb-brand-strong: #046B80;
@@ -46,28 +46,28 @@
 :root[data-theme="dark"] {
   /* keep in sync with docs/design/tokens.md */
   color-scheme: dark;
-  --amb-ink: #E9EEF5;
-  --amb-ink-muted: #9BA8B9;
-  --amb-bg: #14181E;
-  --amb-surface: #1C222B;
-  --amb-surface-raised: #232A34;
-  --amb-line: #2F3945;
+  --amb-ink: #EDEDED;
+  --amb-ink-muted: #BDBDBD;
+  --amb-bg: #2D2D2D;
+  --amb-surface: #363636;
+  --amb-surface-raised: #3F3F3F;
+  --amb-line: #505050;
   --amb-brand: #3FC3D6;
   --amb-brand-strong: #6FD8E6;
   --amb-brand-wash: rgba(63, 195, 214, 0.14);
   --amb-primary-bg: #3FC3D6;
   --amb-primary-hover: #6FD8E6;
-  --amb-danger: #F0796B;
-  --amb-danger-wash: rgba(240, 121, 107, 0.14);
+  --amb-danger: #FCAA9F;
+  --amb-danger-wash: rgba(252, 170, 159, 0.14);
   --amb-warning: #F2A63C;
-  --amb-info: #7FA6F5;
+  --amb-info: #A3C0F8;
   --amb-success: #3FCB8B;
-  --amb-pending: #B79AF0;
-  --amb-idle: #9BA8B9;
+  --amb-pending: #C4AAF5;
+  --amb-idle: #BDBDBD;
   --amb-on-brand: #06222A;
   --amb-ico-fill: rgba(63, 195, 214, 0.18);
-  --amb-ico-ring: #1C222B;
-  --amb-glass: rgba(28, 34, 43, 0.72);
+  --amb-ico-ring: #363636;
+  --amb-glass: rgba(54, 54, 54, 0.72);
   --amb-glass-line: rgba(255, 255, 255, 0.07);
   --amb-glass-filter: blur(14px) saturate(140%);
   --amb-shadow-1: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
@@ -84,28 +84,28 @@
      data-theme="light" explicitly (Revit is light even though the OS is
      dark), this block stops applying and the base :root light values win. */
   :root:not([data-theme="light"]) {
-    --amb-ink: #E9EEF5;
-    --amb-ink-muted: #9BA8B9;
-    --amb-bg: #14181E;
-    --amb-surface: #1C222B;
-    --amb-surface-raised: #232A34;
-    --amb-line: #2F3945;
+    --amb-ink: #EDEDED;
+    --amb-ink-muted: #BDBDBD;
+    --amb-bg: #2D2D2D;
+    --amb-surface: #363636;
+    --amb-surface-raised: #3F3F3F;
+    --amb-line: #505050;
     --amb-brand: #3FC3D6;
     --amb-brand-strong: #6FD8E6;
     --amb-brand-wash: rgba(63, 195, 214, 0.14);
     --amb-primary-bg: #3FC3D6;
     --amb-primary-hover: #6FD8E6;
-    --amb-danger: #F0796B;
-    --amb-danger-wash: rgba(240, 121, 107, 0.14);
+    --amb-danger: #FCAA9F;
+    --amb-danger-wash: rgba(252, 170, 159, 0.14);
     --amb-warning: #F2A63C;
-    --amb-info: #7FA6F5;
+    --amb-info: #A3C0F8;
     --amb-success: #3FCB8B;
-    --amb-pending: #B79AF0;
-    --amb-idle: #9BA8B9;
+    --amb-pending: #C4AAF5;
+    --amb-idle: #BDBDBD;
     --amb-on-brand: #06222A;
     --amb-ico-fill: rgba(63, 195, 214, 0.18);
-  --amb-ico-ring: #1C222B;
-  --amb-glass: rgba(28, 34, 43, 0.72);
+  --amb-ico-ring: #363636;
+  --amb-glass: rgba(54, 54, 54, 0.72);
     --amb-glass-line: rgba(255, 255, 255, 0.07);
     --amb-glass-filter: blur(14px) saturate(140%);
     --amb-shadow-1: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
@@ -273,7 +273,7 @@ symbol .fi { fill: currentColor; }
 .nav:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.08);
   border-color: transparent;
-  color: #E9EEF5;
+  color: #EDEDED;
 }
 
 .nav.is-active {
@@ -623,20 +623,20 @@ p {
 .badge.pending { background: var(--amb-pending); }
 .badge.idle    { background: var(--amb-idle); }
 
-:root[data-theme="dark"] .badge.error   { background: rgba(240,121,107,.14); border-color: rgba(240,121,107,.40); color: #F0796B; }
+:root[data-theme="dark"] .badge.error   { background: rgba(252,170,159,.14); border-color: rgba(252,170,159,.40); color: #FCAA9F; }
 :root[data-theme="dark"] .badge.warning { background: rgba(242,166, 60,.14); border-color: rgba(242,166, 60,.40); color: #F2A63C; }
-:root[data-theme="dark"] .badge.info    { background: rgba(127,166,245,.14); border-color: rgba(127,166,245,.40); color: #7FA6F5; }
+:root[data-theme="dark"] .badge.info    { background: rgba(163,192,248,.14); border-color: rgba(163,192,248,.40); color: #A3C0F8; }
 :root[data-theme="dark"] .badge.success { background: rgba( 63,203,139,.14); border-color: rgba( 63,203,139,.40); color: #3FCB8B; }
-:root[data-theme="dark"] .badge.pending { background: rgba(183,154,240,.14); border-color: rgba(183,154,240,.40); color: #B79AF0; }
-:root[data-theme="dark"] .badge.idle    { background: rgba(155,168,185,.14); border-color: rgba(155,168,185,.40); color: #9BA8B9; }
+:root[data-theme="dark"] .badge.pending { background: rgba(196,170,245,.14); border-color: rgba(196,170,245,.40); color: #C4AAF5; }
+:root[data-theme="dark"] .badge.idle    { background: rgba(155,168,185,.14); border-color: rgba(155,168,185,.40); color: #BDBDBD; }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .badge.error   { background: rgba(240,121,107,.14); border-color: rgba(240,121,107,.40); color: #F0796B; }
+  :root:not([data-theme="light"]) .badge.error   { background: rgba(252,170,159,.14); border-color: rgba(252,170,159,.40); color: #FCAA9F; }
   :root:not([data-theme="light"]) .badge.warning { background: rgba(242,166, 60,.14); border-color: rgba(242,166, 60,.40); color: #F2A63C; }
-  :root:not([data-theme="light"]) .badge.info    { background: rgba(127,166,245,.14); border-color: rgba(127,166,245,.40); color: #7FA6F5; }
+  :root:not([data-theme="light"]) .badge.info    { background: rgba(163,192,248,.14); border-color: rgba(163,192,248,.40); color: #A3C0F8; }
   :root:not([data-theme="light"]) .badge.success { background: rgba( 63,203,139,.14); border-color: rgba( 63,203,139,.40); color: #3FCB8B; }
-  :root:not([data-theme="light"]) .badge.pending { background: rgba(183,154,240,.14); border-color: rgba(183,154,240,.40); color: #B79AF0; }
-  :root:not([data-theme="light"]) .badge.idle    { background: rgba(155,168,185,.14); border-color: rgba(155,168,185,.40); color: #9BA8B9; }
+  :root:not([data-theme="light"]) .badge.pending { background: rgba(196,170,245,.14); border-color: rgba(196,170,245,.40); color: #C4AAF5; }
+  :root:not([data-theme="light"]) .badge.idle    { background: rgba(155,168,185,.14); border-color: rgba(155,168,185,.40); color: #BDBDBD; }
 }
 
 .item p {

@@ -65,6 +65,7 @@ internal static class PythonScriptRunner
         ScriptScope? scope = null;
         var changedCount = 0;
         var savesBlocked = 0;
+        var scriptWarnings = new List<BridgeFailureMessage>();
         EventHandler<DocumentChangedEventArgs>? onChanged = null;
         EventHandler<DocumentSavingEventArgs>? onSaving = null;
         EventHandler<DocumentSavingAsEventArgs>? onSavingAs = null;
@@ -89,6 +90,14 @@ internal static class PythonScriptRunner
             scope.SetVariable("__output__", "");
             scope.SetVariable("__mode__", mode);
             scope.SetVariable("progress", new Action<object?>(progress.Add));
+            if (mode == ModeWrite)
+            {
+                // IronPython cannot subclass IFailuresPreprocessor, so scripts get a ready-made one:
+                //   t = amb_transaction(doc, "name"); t.Start(); ...; t.CommitChecked()
+                // Warnings are dismissed (no dialog) and returned in the result's "warnings"; errors roll back.
+                scope.SetVariable("amb_transaction", new Func<Document, string, BridgeTransaction>(
+                    (d, name) => new BridgeTransaction(d, name, messages => scriptWarnings.AddRange(messages))));
+            }
 
             if (mode == ModeRead)
             {
@@ -109,6 +118,7 @@ internal static class PythonScriptRunner
 
             ActiveProgress = progress;
             engine.Execute(script, scope);
+            FlushStandardStreams(engine, scope);
 
             outputMs.Position = 0;
             var output = new StreamReader(outputMs, Encoding.UTF8).ReadToEnd();
@@ -142,13 +152,15 @@ internal static class PythonScriptRunner
                 return Result(false, output, guardNote, mode, progress, "read_mode_guard_failed", changedCount, runtime);
             }
 
-            return Result(true, output, "", mode, progress, null, 0, runtime);
+            return BridgeTransactionResults.AppendWarnings(
+                Result(true, output, "", mode, progress, null, 0, runtime), scriptWarnings);
         }
         catch (Exception ex)
         {
             string error;
             try
             {
+                FlushStandardStreams(engine, scope);
                 errorMs.Position = 0;
                 var errText = new StreamReader(errorMs, Encoding.UTF8).ReadToEnd();
                 error = string.IsNullOrEmpty(errText) ? ex.Message : errText + "\n" + ex.Message;
@@ -185,6 +197,17 @@ internal static class PythonScriptRunner
             if (onSaving != null) app.Application.DocumentSaving -= onSaving;
             if (onSavingAs != null) app.Application.DocumentSavingAs -= onSavingAs;
         }
+    }
+
+    /// <summary>
+    /// IronPython 3 keeps sys.stdout/sys.stderr text that does not end in a newline in its own buffer, so
+    /// print("a", end="") or a final sys.stdout.write("x") never reached the MemoryStream. Flush before reading.
+    /// </summary>
+    private static void FlushStandardStreams(ScriptEngine? engine, ScriptScope? scope)
+    {
+        if (engine == null || scope == null) return;
+        try { engine.Execute("import sys\nsys.stdout.flush()\nsys.stderr.flush()", scope); }
+        catch { /* the script may have replaced sys.stdout; its own output is still returned */ }
     }
 
     /// <summary>
@@ -248,6 +271,11 @@ internal static class PythonScriptRunner
                             sub.RollBack();
                             rolledBack++;
                         }
+                        else if (order == 1 && candidate is BridgeTransaction bridgeTx && bridgeTx.GetStatus() == TransactionStatus.Started)
+                        {
+                            bridgeTx.RollBack();
+                            rolledBack++;
+                        }
                         else if (order == 1 && candidate is Transaction tx && tx.IsValidObject && tx.GetStatus() == TransactionStatus.Started)
                         {
                             tx.RollBack();
@@ -278,7 +306,7 @@ internal static class PythonScriptRunner
     private static void CollectTransactions(object? value, List<object> found, int depth)
     {
         if (value == null) return;
-        if (value is Transaction || value is SubTransaction || value is TransactionGroup)
+        if (value is Transaction || value is SubTransaction || value is TransactionGroup || value is BridgeTransaction)
         {
             if (!found.Contains(value)) found.Add(value);
             return;
