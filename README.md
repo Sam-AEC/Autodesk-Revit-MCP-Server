@@ -31,6 +31,7 @@ native Revit add-in. Read-only tools inspect the model straight away. Model
 changes need an approved plan by default.
 [See the approval flow](#how-approval-works).
 
+
 **Who it is for.** BIM coordinators and managers who want an AI assistant to
 check model quality, find affected elements and prepare parameter fixes, while a
 person stays in control of every change. You do not need to write scripts.
@@ -49,9 +50,15 @@ person stays in control of every change. You do not need to write scripts.
   and in [docs/security.md](docs/security.md).
 - The dev branch registers more tools (241 in mock mode at the time of writing; see the dev branch).
 
-<p align="center">
-  <img src="docs/images/readme/works-with.svg" alt="Works with: Claude Desktop, VS Code with GitHub Copilot, Cursor and Codex have documented setup. Other MCP clients such as Claude Code, Windsurf, Cline, Continue, Zed and Gemini CLI should work too. Applications: Revit 2024 to 2027, Rhino, Grasshopper, Navisworks (in progress). Data: IFC, Speckle, Excel, SQLite. Protocol: MCP over stdio with an approval gate." width="900">
-</p>
+## Star History
+
+<a href="https://www.star-history.com/?repos=sam-aec%2Faec-model-bridge&type=date&legend=top-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+ </picture>
+</a>
 
 Setup is documented for Claude Desktop, VS Code with GitHub Copilot, Cursor and
 Codex. The server is a standard MCP stdio server, so other clients such as
