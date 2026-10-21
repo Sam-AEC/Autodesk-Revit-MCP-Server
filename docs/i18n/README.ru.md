@@ -33,6 +33,16 @@ AEC Model Bridge — это MCP-сервер для Revit с открытым и
 
 В тот же сервер входят проверка IFC, автоматизация Rhino и Grasshopper и интеграция со Speckle. В разделе [Статус интеграций](#другие-интеграции) указано, какие провайдеры уже доступны, а какие ещё в разработке.
 
+## История звёзд
+
+<a href="https://www.star-history.com/?repos=sam-aec%2Faec-model-bridge&type=date&legend=top-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+ </picture>
+</a>
+
 ## Примеры рабочих процессов
 
 Для BIM-координаторов: проверить качество модели, просмотреть затронутые элементы, согласовать исправление параметров, затем проверить результат и выгрузить отчёт. В примерах используются инструменты из [текущего каталога](../tools-generated.md).

@@ -33,6 +33,16 @@ Die Einrichtung ist für Claude Desktop, VS Code mit GitHub Copilot, Cursor und 
 
 Derselbe Server enthält außerdem IFC-Prüfung, Rhino- und Grasshopper-Automatisierung sowie die Speckle-Anbindung. Der [Status der Integrationen](#weitere-integrationen) trennt verfügbare Provider von solchen, die noch in Arbeit sind.
 
+## Sterneverlauf
+
+<a href="https://www.star-history.com/?repos=sam-aec%2Faec-model-bridge&type=date&legend=top-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+ </picture>
+</a>
+
 ## Beispiel-Workflows
 
 Für BIM-Koordinatoren: Modellqualität prüfen, betroffene Elemente ansehen, eine Parameterkorrektur freigeben, dann das Ergebnis kontrollieren und einen Bericht exportieren. Die Beispiele nutzen Werkzeuge aus dem [aktuellen Katalog](../tools-generated.md).

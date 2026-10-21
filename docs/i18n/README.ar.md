@@ -39,6 +39,16 @@ AEC Model Bridge هو خادم MCP مفتوح المصدر لبرنامج Revit�
 
 يتضمن الخادم نفسه فحص ملفات IFC وأتمتة Rhino وGrasshopper والتكامل مع Speckle. يبيّن [حالة التكاملات](#تكاملات-أخرى) المزوّدات المتاحة وتلك التي ما زالت قيد التطوير.
 
+## سجل النجوم
+
+<a href="https://www.star-history.com/?repos=sam-aec%2Faec-model-bridge&type=date&legend=top-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+ </picture>
+</a>
+
 ## أمثلة على سير العمل
 
 لمنسّقي BIM: افحص جودة النموذج، وراجع العناصر المتأثرة، ووافق على تصحيح المعاملات (parameters)، ثم تحقق من النتائج وصدّر تقريرًا. تستخدم هذه الأمثلة أدوات من [الفهرس الحالي](../tools-generated.md).

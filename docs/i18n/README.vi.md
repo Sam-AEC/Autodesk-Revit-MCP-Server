@@ -33,6 +33,16 @@ Có tài liệu thiết lập cho Claude Desktop, VS Code với GitHub Copilot, 
 
 Cùng máy chủ này còn có chức năng kiểm tra IFC, tự động hóa Rhino và Grasshopper, và tích hợp Speckle. [Trạng thái tích hợp](#các-tích-hợp-khác) phân biệt các nhà cung cấp đã sẵn sàng với những phần đang được phát triển.
 
+## Lịch sử sao
+
+<a href="https://www.star-history.com/?repos=sam-aec%2Faec-model-bridge&type=date&legend=top-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+ </picture>
+</a>
+
 ## Quy trình mẫu
 
 Dành cho điều phối viên BIM: kiểm tra chất lượng mô hình, xem xét các phần tử bị ảnh hưởng, phê duyệt việc sửa tham số (parameter), sau đó kiểm tra kết quả và xuất báo cáo. Các ví dụ này dùng công cụ trong [danh mục hiện tại](../tools-generated.md).

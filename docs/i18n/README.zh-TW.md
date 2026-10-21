@@ -33,6 +33,16 @@ AEC Model Bridge 是開源的 Revit MCP 伺服器，讓 Claude、Codex、Cursor 
 
 同一個伺服器還包含 IFC 檢查、Rhino 與 Grasshopper 自動化，以及 Speckle 整合。[整合狀態](#其他整合)會區分哪些提供者已可使用、哪些仍在開發中。
 
+## 星標歷史
+
+<a href="https://www.star-history.com/?repos=sam-aec%2Faec-model-bridge&type=date&legend=top-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+ </picture>
+</a>
+
 ## 範例工作流程
 
 適用於 BIM 協調人員：檢查模型品質、檢視受影響的元件、核准參數修正，接著確認結果並匯出報告。這些範例使用[目前工具目錄](../tools-generated.md)中的工具。

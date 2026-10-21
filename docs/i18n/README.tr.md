@@ -33,6 +33,16 @@ Kurulum Claude Desktop, GitHub Copilot'lı VS Code, Cursor ve Codex için belgel
 
 Aynı sunucu IFC incelemesini, Rhino ve Grasshopper otomasyonunu ve Speckle entegrasyonunu da içerir. [Entegrasyon durumu](#diğer-entegrasyonlar), hazır sağlayıcıları üzerinde çalışılanlardan ayırır.
 
+## Yıldız geçmişi
+
+<a href="https://www.star-history.com/?repos=sam-aec%2Faec-model-bridge&type=date&legend=top-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+ </picture>
+</a>
+
 ## Örnek iş akışları
 
 BIM koordinatörleri için: model kalitesini inceleyin, etkilenen elemanları gözden geçirin, bir parametre düzeltmesini onaylayın, ardından sonuçları kontrol edip rapor dışa aktarın. Bu örnekler [güncel katalogdaki](../tools-generated.md) araçları kullanır.

@@ -33,6 +33,16 @@ AEC Model Bridge は、Claude、Codex、Cursor などの AI アシスタント�
 
 同じサーバーに、IFC の検査、Rhino と Grasshopper の自動化、Speckle 連携も含まれます。[連携の状況](#その他の連携)で、利用可能なプロバイダーと開発中のものを区別しています。
 
+## スター履歴
+
+<a href="https://www.star-history.com/?repos=sam-aec%2Faec-model-bridge&type=date&legend=top-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+ </picture>
+</a>
+
 ## ワークフローの例
 
 BIM コーディネーター向け：モデルの品質を調べ、影響を受ける要素を確認し、パラメータの修正を承認してから、結果を検証してレポートを書き出します。これらの例は[現行のカタログ](../tools-generated.md)にあるツールを使います。

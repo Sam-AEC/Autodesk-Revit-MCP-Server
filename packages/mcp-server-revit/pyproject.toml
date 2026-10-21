@@ -15,11 +15,11 @@ dependencies = [
     "pydantic-settings>=1.3",
     "httpx>=0.24",
     "python-dotenv>=1.0",
-    # 1.10 added Tool.title and Tool.annotations (readOnlyHint etc.), which
-    # tool_metadata.py sets on every listed tool. Capped below 2: mcp 2.x (Python
-    # 3.12+) removed the low-level `Server.list_tools()` decorators this server is
-    # built on, so an unpinned install crashed at import time.
-    "mcp>=1.10,<2",
+    # 1.30 fixes Streamable HTTP session exhaustion (GHSA-84m7-p3x7-pcfv).
+    # Capped below 2: mcp 2.x (Python 3.12+) removed the low-level
+    # `Server.list_tools()` decorators this server is built on, so an unpinned
+    # install crashed at import time.
+    "mcp>=1.30.0,<2",
     "ifcopenshell>=0.7.0",
     "networkx>=3.0",
     "specklepy>=3,<4",

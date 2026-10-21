@@ -33,6 +33,16 @@ AEC Model Bridge ओपन-सोर्स Revit MCP सर्वर है, ज
 
 इसी सर्वर में IFC जाँच, Rhino और Grasshopper ऑटोमेशन तथा Speckle इंटीग्रेशन भी शामिल हैं। [इंटीग्रेशन की स्थिति](#अन्य-इंटीग्रेशन) बताती है कि कौन-से प्रोवाइडर उपलब्ध हैं और कौन-से अभी बन रहे हैं।
 
+## स्टार इतिहास
+
+<a href="https://www.star-history.com/?repos=sam-aec%2Faec-model-bridge&type=date&legend=top-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+ </picture>
+</a>
+
 ## वर्कफ़्लो के उदाहरण
 
 BIM समन्वयकों के लिए: मॉडल की गुणवत्ता जाँचें, प्रभावित एलिमेंट देखें, पैरामीटर सुधार को मंज़ूरी दें, फिर नतीजे जाँचें और रिपोर्ट एक्सपोर्ट करें। ये उदाहरण [मौजूदा कैटलॉग](../tools-generated.md) के टूल इस्तेमाल करते हैं।

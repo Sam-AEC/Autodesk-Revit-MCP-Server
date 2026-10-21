@@ -33,6 +33,16 @@ Claude Desktop, GitHub Copilot과 함께 쓰는 VS Code, Cursor, Codex에 대한
 
 같은 서버에 IFC 검사, Rhino 및 Grasshopper 자동화, Speckle 연동도 포함되어 있습니다. [연동 현황](#기타-연동)에서 사용 가능한 프로바이더와 개발 중인 항목을 구분해 보여 줍니다.
 
+## 스타 기록
+
+<a href="https://www.star-history.com/?repos=sam-aec%2Faec-model-bridge&type=date&legend=top-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+ </picture>
+</a>
+
 ## 워크플로 예시
 
 BIM 코디네이터를 위한 흐름입니다. 모델 품질을 점검하고, 영향받는 요소를 검토하고, 매개변수 수정을 승인한 뒤, 결과를 확인하고 보고서를 내보냅니다. 이 예시는 [현재 도구 카탈로그](../tools-generated.md)의 도구를 사용합니다.

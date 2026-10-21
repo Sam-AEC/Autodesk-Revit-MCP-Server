@@ -33,6 +33,16 @@ La configurazione è documentata per Claude Desktop, VS Code con GitHub Copilot,
 
 Lo stesso server include l'ispezione IFC, l'automazione di Rhino e Grasshopper e l'integrazione con Speckle. Lo [stato delle integrazioni](#altre-integrazioni) distingue i provider disponibili da quelli ancora in sviluppo.
 
+## Cronologia delle stelle
+
+<a href="https://www.star-history.com/?repos=sam-aec%2Faec-model-bridge&type=date&legend=top-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=sam-aec/aec-model-bridge&type=date&legend=bottom-right" />
+ </picture>
+</a>
+
 ## Flussi di lavoro di esempio
 
 Per i coordinatori BIM: controllare la qualità del modello, esaminare gli elementi interessati, approvare una correzione dei parametri, poi verificare i risultati ed esportare un report. Questi esempi usano strumenti del [catalogo attuale](../tools-generated.md).
