@@ -33,7 +33,7 @@ public static class BridgeCommandFactory
     {
         var actionId = CurrentActionId;
         string txName = string.IsNullOrEmpty(actionId) ? $"AMB: {name}" : $"AMB: {name} #{actionId}";
-        return BridgeCommandFactory.CreateTransaction(doc, txName);
+        return new Transaction(doc, txName);
     }
 
     static BridgeCommandFactory()
